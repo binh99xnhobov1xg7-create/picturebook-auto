@@ -1,0 +1,84 @@
+# 出书验收单 v1.0
+
+每本书 PPT 生成后，按这张表逐项打勾。任何一项不达标 → 用 `--pages N` 单页重出。
+
+---
+
+## A. 大纲层面（生图前自查）
+
+- [ ] 文件名格式：`LX_BookNN_<EnglishTitle>.md`（数字 + 大写驼峰 + 下划线分词）
+- [ ] 头部字段齐：Title / Level / Book / CEFR / Lexile / Vocabulary
+- [ ] 8 个页面节点：1 个 `# Cover` + 7 个 `# Page 1..7`
+- [ ] 每页有 Text（封面除外）+ Scene
+- [ ] 每页文字词数符合 Level 上限（L0:≤3 / L1:≤5 / L2:≤7 / L3:≤9 / L4:≤15 / L5:≤18 / L6:≤25）
+- [ ] 单页人物 ≤ 4 个（含次要角色）
+- [ ] 次要角色用反例句明确：`(NOT a child, NOT Mia, NOT Tommy)`
+- [ ] 不想要爸妈出现的页面：scene 不含 `mom / dad / family / parent`
+- [ ] Text_Position 4 个角分散，避免连续两页同位置
+- [ ] L0-L3 用 `Vocabulary_Mastery + Vocabulary_Exposure` 双行；L4-L6 用 `Vocabulary` 单行
+
+---
+
+## B. PPT 版式验收
+
+| 页 | 必检项 |
+|---|---|
+| **p1 封面** | ☐ 书名居中靠上 ☐ 右上「Level X」「Book NN」橙胶囊 ☐ 上方 35% 留白干净 ☐ Poppins SemiBold 40pt |
+| **p2 故事 1** | ☐ 文字框落画面留白角 ☐ 页码圆在左下 ☐ 文字 22pt（20–24） |
+| **p3 故事 2** | ☐ 文字框 + 页码圆在**右下** |
+| **p4 故事 3** | ☐ 文字框 + 页码圆在**左下** |
+| **p5 故事 4** | ☐ 文字框 + 页码圆在**右下** |
+| **p6 故事 5** | ☐ 文字框 + 页码圆在**左下** |
+| **p7 故事 6** | ☐ 文字框 + 页码圆在**右下** |
+| **p8 故事 7** | ☐ 文字框 + 页码圆在**左下** |
+| **p9 元信息** | ☐ 左侧黑边大框 ☐ 6 项齐全（Level/Book/CEFR/Lexile/Word count/Vocabulary） |
+
+> 页码规则：**偶数页左下，奇数页右下**（page_number 偶则左，奇则右）
+
+---
+
+## C. 插画验收（每页过一遍）
+
+- [ ] 画风一致：干净水彩，柔和低饱和，无杂色斑、无大面积阴影
+- [ ] Mia：紫色系上衣 + 长棕马尾，**面孔与人设大表一致**
+- [ ] Tommy：蓝色系上衣 + 短棕发，**绝无马尾、绝无长发**
+- [ ] 父母（若出场）：Mom 奶白上衣+牛仔；Dad 灰 polo+卡其
+- [ ] 表情匹配文字情绪（excit / worry / amaz / curious 等）
+- [ ] 留白角清晰、足够大放下文字框（10–15%）
+- [ ] **零文字渗漏**：图里无英文/中文字母/数字/水印
+- [ ] 次要角色（kilt 人/羊/etc.）形象正确，不是 Mia/Tommy 克隆
+- [ ] 主要道具（地图/茶壶/风笛/古堡 等）在画面里
+
+---
+
+## D. 已知可接受瑕疵
+
+* **手指**：偶有多 1 指或畸形 → 1-2 页内可接受，多页可重抽
+* **背景小细节**：远景人物面部模糊 → 接受
+* **次要角色**：服装色与参考图轻微差异 → 接受
+
+---
+
+## E. 不可接受的硬性问题（**必须重出**）
+
+- [ ] 图里画了英文文字 / 书名（"Mia" / "Bommy" 等）
+- [ ] Mia 变性别或服装变蓝
+- [ ] Tommy 长出马尾或变女孩
+- [ ] 次要角色被克隆成 Mia/Tommy 复制粘贴
+- [ ] 整页插画风格脱离水彩（写实油画、3D、卡通过曝）
+- [ ] 全图严重过曝、色块斑驳明显
+
+---
+
+## F. 重出命令
+
+```powershell
+# 重出单页
+python scripts\run.py -i inputs\LX_BookNN_Title.md --real-images --pages 5
+
+# 重出多页
+python scripts\run.py -i inputs\LX_BookNN_Title.md --real-images --pages 0,4,6
+
+# 仅改字体/版式后重组 PPT（不重生图）
+python scripts\run.py -i inputs\LX_BookNN_Title.md --no-images
+```

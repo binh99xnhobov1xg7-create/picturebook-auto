@@ -1,0 +1,24 @@
+字体安装说明（Windows）
+========================
+
+PPT 中所有文字使用 Poppins SemiBold。请在本地安装该字体，否则 PowerPoint 打开时会回退到默认字体（Calibri）。
+
+1. 打开浏览器访问：
+   https://fonts.google.com/specimen/Poppins
+
+2. 右上角点 "Get font" → "Download all"，得到 Poppins.zip
+
+3. 解压后进入 static/ 文件夹（不要用 variable/），找到：
+   - Poppins-Regular.ttf
+   - Poppins-SemiBold.ttf   ← 必装
+   - Poppins-Bold.ttf       ← 可选，备用
+
+4. 选中 ttf → 右键 → 为所有用户安装（推荐）或仅自己安装
+
+5. 重启已经打开的 PowerPoint / WPS
+
+验证：在 PowerPoint 字体下拉框搜 "Poppins"，能看到 Poppins / Poppins SemiBold 即可。
+
+提示：
+- 标准要求是 SemiBold（中粗），不是 Bold（粗体）。SemiBold 视觉更清雅，适合儿童绘本。
+- GitHub Actions 工作流跑出来的 PPT 也用 Poppins SemiBold，下载到没装字体的电脑同样需要先装。
