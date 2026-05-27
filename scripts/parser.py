@@ -21,6 +21,7 @@ class PageSpec:
     scene: str = ""          # 场景描述（中/英均可）
     text_corner: str = ""    # "top-left" | "top-right" | "bottom-left" | "bottom-right"
     expression: str = ""     # 该页人物情绪（如 "excited" / "worried" / "amazed"）
+    shot: str = ""           # "close" | "medium" | "full" | "wide"，留空走默认 medium
 
     @property
     def label(self) -> str:
@@ -45,6 +46,16 @@ class BookOutline:
     vocabulary_mastery: list[str] = field(default_factory=list)
     vocabulary_exposure: list[str] = field(default_factory=list)
     vocabulary_simple: list[str] = field(default_factory=list)  # 单行模式
+
+    # 角色别名映射（如 {"anna": "mia", "kevin": "tommy"}）
+    # 让本书自定义角色名继承 Mia/Tommy 的视觉 IP（发型/服装/参考图）
+    aliases: dict[str, str] = field(default_factory=dict)
+
+    # 自定义独立角色（v1.3.2 新增）
+    # 形如 {"anna": "Anna: 12y GIRL, black hair in two short braids, mustard yellow cardigan, ..."}
+    # 出现在 Custom_<Name>: <description> outline 头部字段
+    # 这些角色是全新人物，不与 Mia/Tommy 共用参考图
+    custom_characters: dict[str, str] = field(default_factory=dict)
 
     @property
     def slug(self) -> str:
@@ -105,7 +116,7 @@ def parse_outline_text(text: str) -> BookOutline:
 
     field_re = re.compile(
         r"^(Title|Level|Book|CEFR|Lexile|Word_?count|IP_?Age|"
-        r"Vocabulary_?Mastery|Vocabulary_?Exposure|Vocabulary)\s*:\s*(.*)$",
+        r"Vocabulary_?Mastery|Vocabulary_?Exposure|Vocabulary|Aliases|Custom_\w+)\s*:\s*(.*)$",
         re.I,
     )
     page_header_re = re.compile(
@@ -115,6 +126,7 @@ def parse_outline_text(text: str) -> BookOutline:
     scene_re = re.compile(r"^Scene\s*:\s*(.*)$", re.I)
     pos_re = re.compile(r"^Text_?Position\s*:\s*(.*)$", re.I)
     expr_re = re.compile(r"^Expression\s*:\s*(.*)$", re.I)
+    shot_re = re.compile(r"^Shot\s*:\s*(.*)$", re.I)
 
     for raw in lines:
         line = raw.rstrip()
@@ -136,7 +148,12 @@ def parse_outline_text(text: str) -> BookOutline:
         if current is None:
             m_field = field_re.match(s)
             if m_field:
-                key = m_field.group(1).replace("_", "").lower()
+                raw_key = m_field.group(1)
+                # Custom_<Name> 保留下划线（之后特殊处理）
+                if raw_key.lower().startswith("custom_"):
+                    key = raw_key.lower()
+                else:
+                    key = raw_key.replace("_", "").lower()
                 meta[key] = m_field.group(2).strip()
                 continue
             # markdown 一级标题作书名
@@ -161,6 +178,10 @@ def parse_outline_text(text: str) -> BookOutline:
         if m_expr:
             current["expression"] = m_expr.group(1).strip()
             continue
+        m_shot = shot_re.match(s)
+        if m_shot:
+            current["shot"] = m_shot.group(1).strip().lower()
+            continue
         # 其它行：拼到 text
         if s:
             current["_text_lines"].append(s)
@@ -180,6 +201,16 @@ def parse_outline_text(text: str) -> BookOutline:
     voc_mastery = _split_words(meta.get("vocabularymastery", ""))
     voc_exposure = _split_words(meta.get("vocabularyexposure", ""))
 
+    # 角色别名：解析 "anna=mia, kevin=tommy" 形式
+    aliases = _parse_aliases(meta.get("aliases", ""))
+
+    # 自定义独立角色：解析所有 custom_<name> 字段
+    custom_characters: dict[str, str] = {}
+    for k, v in meta.items():
+        if k.startswith("custom_") and v.strip():
+            name = k[len("custom_"):]  # "anna"
+            custom_characters[name] = v.strip()
+
     # 整理 pages：始终 1 cover + 7 story
     pages = _normalize_pages(pages_raw, title)
 
@@ -195,6 +226,8 @@ def parse_outline_text(text: str) -> BookOutline:
         vocabulary_mastery=voc_mastery,
         vocabulary_exposure=voc_exposure,
         vocabulary_simple=voc_simple,
+        aliases=aliases,
+        custom_characters=custom_characters,
     )
     book.validate()
     return book
@@ -207,6 +240,24 @@ def _split_words(s: str) -> list[str]:
     return [p.strip() for p in parts if p.strip()]
 
 
+def _parse_aliases(s: str) -> dict[str, str]:
+    """解析 'anna=mia, kevin=tommy' 形式的别名映射。
+    只接受 mia/tommy 作为目标 IP。"""
+    if not s:
+        return {}
+    out: dict[str, str] = {}
+    for pair in re.split(r"[,，;；]+", s):
+        pair = pair.strip()
+        if "=" not in pair:
+            continue
+        alias, target = pair.split("=", 1)
+        alias = alias.strip().lower()
+        target = target.strip().lower()
+        if alias and target in ("mia", "tommy"):
+            out[alias] = target
+    return out
+
+
 _DEFAULT_CORNERS = [
     "top-left", "bottom-right", "top-right", "top-right",
     "top-right", "top-left", "top-right",
@@ -216,12 +267,16 @@ _DEFAULT_CORNERS = [
 def _normalize_pages(raw: list[dict], title: str) -> list[PageSpec]:
     cover_scene = ""
     cover_text = title
+    cover_shot = ""
     story: list[dict] = []
 
     for blk in raw:
         if blk["kind"] == "cover":
             cover_text = blk.get("text") or title
             cover_scene = blk.get("scene") or "Mia and Tommy on cover, friendly cover composition"
+            cover_shot = (blk.get("shot") or "").strip().lower()
+            if cover_shot not in ("close", "medium", "full", "wide", ""):
+                cover_shot = ""
         else:
             story.append(blk)
 
@@ -232,12 +287,17 @@ def _normalize_pages(raw: list[dict], title: str) -> list[PageSpec]:
         story.append({"kind": "story", "index": len(story) + 1, "text": "", "scene": ""})
 
     pages: list[PageSpec] = [
-        PageSpec(index=0, page_type="cover", text=cover_text, scene=cover_scene),
+        PageSpec(
+            index=0, page_type="cover", text=cover_text, scene=cover_scene, shot=cover_shot
+        ),
     ]
     for i, blk in enumerate(story, start=1):
         corner = (blk.get("text_corner") or _DEFAULT_CORNERS[i - 1]).strip()
         if corner not in ("top-left", "top-right", "bottom-left", "bottom-right"):
             corner = _DEFAULT_CORNERS[i - 1]
+        shot_raw = (blk.get("shot") or "").strip().lower()
+        if shot_raw not in ("close", "medium", "full", "wide", ""):
+            shot_raw = ""
         pages.append(
             PageSpec(
                 index=i,
@@ -246,6 +306,7 @@ def _normalize_pages(raw: list[dict], title: str) -> list[PageSpec]:
                 scene=blk.get("scene", "").strip() or blk.get("text", "")[:120],
                 text_corner=corner,
                 expression=blk.get("expression", "").strip(),
+                shot=shot_raw,
             )
         )
     return pages

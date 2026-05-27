@@ -1,6 +1,12 @@
-# 绘本制作标准 v1.0（L0–L6 统一规范）
+# 绘本制作标准 v1.3（L0–L6 统一规范）
 
-> **冻结基线**：本规范以 2026-05-26 完整跑通的 **L4 Visiting Scotland** 流程为蓝本。
+> **v1.3 升级（2026-05-27）**：沉淀官方 L4-6 完整人物总设定图（8/10/12 三档），
+> 按参考图回填 IP_BLOCKS（8 岁短袖 / 10 岁长袖卫衣 / 12 岁 Mia 长袖 Tommy 短袖 polo），
+> 删除 CONSISTENCY_LOCK 全局长袖硬规则，改为"严格按参考图"。
+> mia/tommy_age{N}.png 升至最高参考图优先级。
+> **v1.2 升级（2026-05-27）**：CONSISTENCY_LOCK 铁律段 + Mia 中后位单束马尾 + 禁手表/配饰。
+> **v1.1 升级（2026-05-27）**：立体水彩 + 主角占比 + 手部规则 + 多人物构图守则 + 镜头景别字段。
+> **v1.0 冻结基线（2026-05-26）**：L4 Visiting Scotland 完整跑通流程。
 > 所有 Level 0 ～ Level 6 的英文启蒙绘本**必须**遵守本规范。
 
 ---
@@ -68,12 +74,44 @@ Vocabulary:
 * 尺寸：**2304 × 1728（4:3）**（最低 3.69M 像素门槛）
 * 风格关键词（写入 prompt 头部）：
   ```
-  Clean watercolor children's book illustration,
-  smooth even wash, flat soft color, gentle gradient,
-  minimal background detail, no mottled patches,
-  no scattered noise, no harsh shadow, rounded smooth lines, 4:3 horizontal
+  Painterly dimensional watercolor children's book illustration,
+  layered wash with visible brush texture, soft volume and depth on faces and clothing,
+  rounded smooth lines, low saturation gentle gradient,
+  minimal background detail, no mottled patches, no scattered noise, no harsh shadow,
+  4:3 horizontal.
+  NOT chibi, NOT super-deformed, NOT flat anime sticker, NOT 3D render, NOT pixel art
   ```
 * 风格参考图：`assets/style/clean_watercolor_reference.png` 自动挂载
+
+### 1.5.A 镜头景别（v1.1 新增 —— 控制主角占比）
+
+每页可在大纲写 `Shot: <close|medium|full|wide>`，决定主角在画面中占比。**留空时默认 `medium`**。
+
+| Shot | 主角占画面高度 | 适用场景 | 写法示例 |
+|---|---|---|---|
+| `close` | **60%-75%** | 情绪页（开心/惊讶/担忧近景） | `Shot: close` |
+| `medium` ⭐默认 | **55%-65%** | 大部分故事页（互动、对话、找东西） | 不写即可 |
+| `full` | **45%-55%** | 全身动作页（跳舞、奔跑、挥手告别） | `Shot: full` |
+| `wide` | **30%-40%** | 地标页（城堡、风景全景） | `Shot: wide` |
+
+**硬规则：默认值 medium 替代过去的"任由模型出"，杜绝"人物缩到画面 30% 以下"的失败。**
+
+### 1.5.B 立体感与面部体积（v1.1 新增）
+
+* IP block 一律附加：`soft cheek volume with rosy blush, large expressive almond eyes with upper eyelid line, gentle nose shadow, defined chin`
+* 头部受保护段附加规则：`Faces painted with layered watercolor wash, NOT flat color fill, NOT sticker face`
+* 反例黑名单（永远禁掉）：`chibi / super-deformed / flat anime sticker / 3D render / pixel art`
+
+### 1.5.C 手部规则（v1.1 新增 —— 凡有人物页面必加）
+
+```
+Hands: each hand has exactly five fingers, anatomically correct human hands,
+natural finger placement, when holding props fingers wrap naturally around the object
+with all fingers visible, no extra fingers, no fused fingers, no twisted wrists, no deformed limbs
+```
+
+* 场景描述**避免**特写手部（`close-up of hands`），改用 `medium / full` shot 让手在画面中处于次要位置
+* 已知瑕疵：复杂动作页偶有 1 指错位 → 接受；明显 6 指 / 3 指 / 糊成块 → 重出
 
 ### 1.6 留白
 
@@ -81,13 +119,34 @@ Vocabulary:
 * 封面：上方 35% 留白，用于覆盖书名
 * prompt 尾部强制声明：`Reserve X%-Y% clean blank area at <corner>`
 
-### 1.7 IP 一致性强制条款
+### 1.7 IP 一致性强制条款（v1.3 按官方人物总设定图）
 
-* Mia 永远 = 紫色系上衣 + 长棕马尾
-* Tommy 永远 = 浅蓝系上衣 + 短棕发（**禁止马尾、禁止长发**）
-* Mom 永远 = 长棕波浪发 + 奶白长袖上衣 + 蓝牛仔
-* Dad 永远 = 短棕发 + 灰色 polo + 卡其裤
-* 任何页面出现这 4 人 ⇒ 必须挂 `character_bible_l*-*.png`（自动）+ `parents_reference.png`（仅有父母出场时）
+**官方资产**（不可改）：
+- `assets/characters/character_bible_l4-6.png` —— 总设定图（含 8/10/12 三档，含 Mia/Tommy 四视图+表情）
+- `assets/characters/character_bible_l4-6_clean.png` —— 去中文水印净版
+- `assets/characters/mia_age8.png` / `mia_age10.png` / `mia_age12.png` —— Mia 单角色四视图+六表情
+- `assets/characters/tommy_age8.png` / `tommy_age10.png` / `tommy_age12.png` —— Tommy 单角色四视图+六表情
+- `assets/characters/parents_reference.png` —— 父母合照
+
+**Mia 永恒形象**：
+- 发型：长棕发，中后位单束马尾（耳朵高度，**不是头顶高马尾**），面侧自然散发框脸
+- 配饰：**任何年龄段，绝无手表/手环/项链/眼镜/帽子**
+
+**Tommy 永恒形象**：
+- 发型：短棕发（10 岁略凌乱、8/12 岁整洁），**禁止马尾、禁止长发**
+- 配饰：**任何年龄段，绝无手表（尤其禁止左手腕黑表）**
+
+**衣服按年龄段差异**（严格按参考图）：
+| 年龄 | Level | Mia 上衣 | Tommy 上衣 | Mia 下装 | Tommy 下装 |
+|---|---|---|---|---|---|
+| 8 岁 | L0–L3 | 紫色**短袖** T | 蓝白条纹**短袖** T | 牛仔 + 白鞋 | 牛仔 + 白鞋 |
+| 10 岁 | L4–L5 | 紫色**长袖**卫衣 | 浅蓝**长袖**卫衣 | 灰色运动裤 + 白鞋 | 卡其直筒裤 + 白鞋 |
+| 12 岁 | L6 | 紫色**长袖**针织 | 海军蓝**短袖** polo | 白阔腿裤 + 白鞋 | 浅蓝牛仔 + 棕色系鞋 |
+
+**Mom 永恒形象**：长棕波浪发 + 奶白长袖上衣 + 蓝牛仔
+**Dad 永恒形象**：短棕发 + 灰色 polo + 卡其裤
+
+任何页面出现 Mia/Tommy ⇒ 自动挂 `{mia,tommy}_age{N}.png`（最高优先级，v1.3 升级）+ `character_bible_l4-6_clean.png`（兜底）+ `parents_reference.png`（仅有父母出场时）
 
 ---
 
@@ -163,14 +222,19 @@ Tommy: 10y BOY (NOT a girl, NO ponytail, never long hair) with short messy brown
 * 必须显式标 `GIRL` / `BOY`
 * Tommy 必须显式禁止 `ponytail` / `long hair`
 
-### 3.3 参考图优先级（即梦上限 4 张）
+### 3.3 参考图优先级（v1.3 重排，即梦上限 4 张）
 
 | 优先级 | 文件 | 何时挂载 |
 |---|---|---|
-| 1 | `character_bible_l*-*.png` | 主 IP 出现（**绝不丢**） |
-| 2 | `parents_reference.png` | 显式 mom/dad/family（**绝不丢**） |
-| 3 | 次要角色参考图 | 关键词命中（kilt / scotsman / bagpipes / sheep / shepherd…） |
-| 4 | `clean_watercolor_reference.png` | 风格兜底（满 4 张时被挤掉） |
+| **1** | `mia_age{N}.png` / `tommy_age{N}.png` | **主角单角色设定图（最高 IP 锁定，v1.3 新升级）** |
+| 2 | `character_bible_l4-6_clean.png` | 多角色合体设定图（兜底） |
+| 3 | `parents_reference.png` | 显式 mom/dad/family（绝不丢） |
+| 4 | 次要角色参考图 | 关键词命中（kilt / scotsman / bagpipes / sheep / shepherd…） |
+| 5 | `clean_watercolor_reference.png` | 风格兜底（满 4 张时被挤掉） |
+
+**v1.3 关键变更**：单角色专属设定图（如 `mia_age10.png`）从兜底位升至最高优先级。
+- 原因：合体设定图里 Mia 占比小，模型容易抓不到细节；单角色图能给到 4 视图+6 表情，IP 锁定更强。
+- 实现：`scripts/prompt_builder.py:_collect_references_v2` 当 cast["mia"] 时先挂 `mia_age{N}.png`。
 
 ### 3.4 次要角色关键词触发表
 
@@ -203,6 +267,7 @@ Tommy: 10y BOY (NOT a girl, NO ponytail, never long hair) with short messy brown
 
 * **每页同框人物 ≤ 4 个**（含次要角色）
 * 5+ 人物 → 模型会丢角色或把次要角色克隆成主角
+* **≥ 3 人物的页面**：prompt builder 自动追加多人物构图守则（见 4.5）
 
 ### 4.2 次要角色出场写法
 
@@ -231,6 +296,19 @@ mom, mum, dad, parent, mother, father, family
 
 * **代词 they / their / them 不算父母出场**（避免误挂参考图挤掉次要角色）
 * 不想要父母出现的页面，scene 描述中**不要**出现上述词
+
+### 4.5 多人物构图守则（v1.1 新增，≥3 人物自动注入）
+
+```
+Group composition: every character fully visible in frame, no character cropped at the edges,
+no character cut by frame border, main characters Mia and Tommy in foreground center occupying
+the largest area, secondary characters slightly behind or to the side at a smaller scale but
+still fully painted from head to feet
+```
+
+* 解决问题：v1.0 时 Page 7 苏格兰人被切到画框边、只露半身的失败
+* 触发条件：`detect_cast` 估算同框人物数 ≥ 3 时自动追加
+* 推荐配合 `Shot: full` 给出全身告别 / 合影场景
 
 ---
 
@@ -266,9 +344,13 @@ Scene: <封面画面描述，可中可英>
 # Page N
 Text: <英文台词，按 Level 控制词数>
 Scene: <场景描述，重要次要角色用反例句标注>
-Expression: <情绪短语，可省略>
+Expression: <情绪短语，可省略，系统会从 Text 自动推断>
+Shot: <close | medium | full | wide，可省略，默认 medium>
 Text_Position: top-left | top-right | bottom-left | bottom-right
 ```
+
+* `Shot` 字段是 v1.1 新增，决定主角占画面比例（见 1.5.A）
+* 选 shot 的速查：情绪近景 → `close`；找东西/对话 → 不写（默认 medium）；跳舞/挥手告别 → `full`；地标全景 → `wide`
 
 完整范例见 `inputs/L4_Book13_Visiting_Scotland.md`。
 
@@ -296,18 +378,26 @@ outputs/
 ```
 assets/
 ├── characters/
-│   ├── character_bible_l0-3.png       # ⚠️ 待补
-│   ├── character_bible_l4-5.png       # 或共用 l4-6
-│   ├── character_bible_l4-6.png       # 当前使用
-│   ├── character_bible_l6.png         # ⚠️ 待补
-│   ├── parents_reference.png
-│   ├── kilt_men_reference.png         # 苏格兰人（已裁去 Mia/Tommy）
-│   ├── mia_age8/10/12.png             # 备用单角色图
-│   └── tommy_age8/10/12.png
+│   ├── character_bible_l4-6.png        # ⭐ 官方总设定图（8/10/12 三档 + Mia/Tommy 四视图）
+│   ├── character_bible_l4-6_clean.png  # 去中文水印净版（兜底参考）
+│   ├── mia_age8.png                    # ⭐ Mia 8 岁单角色设定（最高 IP 优先级）
+│   ├── mia_age10.png                   # ⭐ Mia 10 岁单角色设定（最高 IP 优先级）
+│   ├── mia_age12.png                   # ⭐ Mia 12 岁单角色设定（最高 IP 优先级）
+│   ├── tommy_age8.png                  # ⭐ Tommy 8 岁单角色设定（最高 IP 优先级）
+│   ├── tommy_age10.png                 # ⭐ Tommy 10 岁单角色设定（最高 IP 优先级）
+│   ├── tommy_age12.png                 # ⭐ Tommy 12 岁单角色设定（最高 IP 优先级）
+│   ├── mia_reference.png               # 旧版冗余（同 mia_age10）
+│   ├── tommy_reference.png             # 旧版冗余（同 tommy_age10）
+│   ├── parents_reference.png           # 父母合照
+│   └── kilt_men_reference.png          # 次要角色：苏格兰人（已裁去 Mia/Tommy）
 └── style/
-    ├── clean_watercolor_reference.png # 当前风格基线
-    └── watercolor_style_sheet.png     # 备用
+    └── clean_watercolor_reference.png  # 风格基线（满 4 张参考图时被挤掉）
 ```
+
+**新增次要角色参考图流程**：
+1. 把图丢到 `assets/characters/<role>_reference.png`（先用 PIL 裁掉任何 Mia/Tommy 元素）
+2. 在 `scripts/prompt_builder.py:SECONDARY_CHAR_REFS` 加一行 `(r"\bkeyword\b", "<role>_reference.png")`
+3. 在大纲 scene 描述里出现关键词时自动挂载
 
 ---
 
@@ -357,7 +447,10 @@ python scripts\run.py -i inputs\L4_Book13_Visiting_Scotland.md --mock-images
 
 | 限制 | 触发条件 | 对策 |
 |---|---|---|
-| 手指畸形 / 多手 | 任何复杂动作页 | 场景描述避免 close-up of hands；prompt 加 "natural human hands"；接受 1–2 页轻微瑕疵 |
+| 主角太小 / 缩到角落 | 没指定景别 | v1.1：默认 `medium`，prompt 强制 55%-65% 占比；可选 `Shot: close/full/wide` |
+| 太卡通 / chibi 扁平脸 | 模型默认偏可爱化 | v1.1：STYLE 加 `painterly dimensional` + `NOT chibi NOT flat anime` 反例 |
+| 手指畸形 / 多手 | 复杂动作页或近景手 | v1.1：所有人物页面附加 HANDS_RULE；场景描述避免 close-up of hands；接受 1–2 页轻微瑕疵 |
+| 多人物切边、半身出框 | ≥3 人物且没说"fully visible" | v1.1：≥3 人自动注入 GROUP_COMPOSITION_RULE 强制全员入画不切边 |
 | 次要角色被克隆成 Mia/Tommy | 单页 ≥ 5 人物 + 强 IP 锚 | 减人 + 裁干净次要参考图 + 反例句 |
 | 模型把"reserved for title"理解成画上书名 | 封面 prompt 提到 title | 改为"clean empty sky area + ABSOLUTELY NO TEXT" |
 | 文字 / 字母被画到图里 | 任何页面 | tail 强制 `no text, no letters, no watermarks` |
@@ -382,7 +475,24 @@ python scripts\run.py -i inputs\L4_Book13_Visiting_Scotland.md --mock-images
 
 ## 12. 规范版本与更新
 
-* **v1.0** 2026-05-26 ——以 L4 Visiting Scotland 完整跑通为基线冻结
+* **v1.3** 2026-05-27 —— 官方人物总设定图沉淀
+  * 收齐 `mia/tommy_age{8,10,12}.png` 6 张单角色四视图+表情设定
+  * IP_BLOCKS 严格按设定图回填：8 岁短袖、10 岁长袖卫衣、12 岁 Mia 长袖 / Tommy 短袖 polo
+  * 删除 CONSISTENCY_LOCK 全局"所有人长袖"硬规则，改为"严格按参考图"
+  * `_collect_references_v2` 重排：单角色设定图升至最高优先级
+  * `NO_ACCESSORY` 加针对性反例：禁止 Tommy 左手腕黑表
+* **v1.2** 2026-05-27 —— CONSISTENCY_LOCK 一致性铁律段（沉淀自 L4 Visiting Scotland 第三/四轮）
+  * 新增 PONYTAIL_RULE / NO_ACCESSORY / 长袖硬规则
+  * Mia 发型由"高头顶马尾"修正为"中后位单束马尾 + 面侧散发框脸"
+  * Prompt 长度上限 1800 → 2000
+  * Prompt 结构重排：STYLE → SCENE → MUST_INCLUDE → IP_ANCHOR → LOCK → TAIL
+* **v1.1** 2026-05-27 —— 主角占比 + 立体水彩 + 手部规则 + 多人物构图守则 + Shot 字段
+  * STYLE_BIBLE 重写：`painterly dimensional` 替代 `flat soft color`，新增反 chibi 黑名单
+  * 新增 `SUBJECT_SCALE_BY_SHOT`（4 档景别）
+  * 新增 `HANDS_RULE` / `FACIAL_VOLUME_RULE` / `GROUP_COMPOSITION_RULE`
+  * `PageSpec.shot` 字段（默认 medium）
+  * Prompt 长度上限 1500 → 1800
+* **v1.0** 2026-05-26 —— 以 L4 Visiting Scotland 完整跑通为基线冻结
 * 未来变更：必须先在 `STANDARD.md` 提案 → 跑测试本验证 → 合并
 
 ---

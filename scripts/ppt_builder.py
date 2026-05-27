@@ -144,7 +144,13 @@ def _build_metadata(slide, outline: BookOutline) -> None:
     line(f"Word count: {outline.total_words}", head=True)
     line("Vocabulary:", head=True)
 
-    if outline.has_double_vocab:
+    try:
+        level_num = int(_clean_num(outline.level) or "0")
+    except ValueError:
+        level_num = 0
+    if level_num >= 3:
+        line(", ".join(outline.vocabulary_mastery) or "-", head=False, indent=1)
+    elif outline.has_double_vocab:
         line(f"Mastery: {', '.join(outline.vocabulary_mastery) or '-'}", head=False, indent=1)
         line(f"Exposure: {', '.join(outline.vocabulary_exposure) or '-'}", head=False, indent=1)
     else:
