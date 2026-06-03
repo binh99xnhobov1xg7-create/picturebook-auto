@@ -1,13 +1,21 @@
 [
   {
+    "key": "mia_8",
+    "name": "Mia (8y)",
+    "kind": "protagonist",
+    "gender": "girl",
+    "age": 8,
+    "desc": "亚洲女孩，棕色长发扎单束高马尾（必须是马尾，不能散开）+齐刘海，淡紫色短袖T恤+蓝色牛仔裤+白色低帮运动鞋",
+    "image": "assets/ip_library/mia_8.png"
+  },
+  {
     "key": "mia_10",
     "name": "Mia (10y)",
     "kind": "protagonist",
     "gender": "girl",
     "age": 10,
-    "desc": "亚洲女孩，棕色长发扎单束高马尾+齐刘海，淡紫色长袖polo+白色长裤+白色低帮运动鞋",
-    "image": "assets/ip_library/mia_10.png",
-    "size_kb": 2651
+    "desc": "亚洲女孩，棕色长发扎单束高马尾（必须是马尾，不能散开）+齐刘海，淡紫色长袖圆领卫衣+浅灰色运动长裤+白色低帮运动鞋",
+    "image": "assets/ip_library/mia_10.png"
   },
   {
     "key": "mia_12",
@@ -15,9 +23,17 @@
     "kind": "protagonist",
     "gender": "girl",
     "age": 12,
-    "desc": "亚洲女孩，棕色长发扎单束高马尾+齐刘海，淡紫色长袖polo+白色长裤+白色低帮运动鞋",
-    "image": "assets/ip_library/mia_12.png",
-    "size_kb": 3420
+    "desc": "亚洲女孩，棕色长发扎单束高马尾（必须是马尾，不能散开）+齐刘海，淡紫色长袖翻领套衫+米白色阔腿长裤+白色低帮运动鞋",
+    "image": "assets/ip_library/mia_12.png"
+  },
+  {
+    "key": "tommy_8",
+    "name": "Tommy (8y)",
+    "kind": "protagonist",
+    "gender": "boy",
+    "age": 8,
+    "desc": "亚洲男孩（短发，绝不能有马尾或长发），棕色蓬松短发，蓝白条纹短袖T恤+蓝色牛仔裤+白色低帮运动鞋",
+    "image": "assets/ip_library/tommy_8.png"
   },
   {
     "key": "tommy_10",
@@ -25,9 +41,8 @@
     "kind": "protagonist",
     "gender": "boy",
     "age": 10,
-    "desc": "亚洲男孩，棕色蓬松短发清爽，蓝色短袖polo+蓝色牛仔裤+白色低帮运动鞋",
-    "image": "assets/ip_library/tommy_10.png",
-    "size_kb": 4060
+    "desc": "亚洲男孩（短发，绝不能有马尾或长发），棕色蓬松短发，浅蓝色长袖圆领卫衣+卡其色直筒长裤+白色低帮运动鞋",
+    "image": "assets/ip_library/tommy_10.png"
   },
   {
     "key": "tommy_12",
@@ -35,9 +50,17 @@
     "kind": "protagonist",
     "gender": "boy",
     "age": 12,
-    "desc": "亚洲男孩，棕色蓬松短发清爽，蓝色短袖polo+蓝色牛仔裤+白色低帮运动鞋",
-    "image": "assets/ip_library/tommy_12.png",
-    "size_kb": 4526
+    "desc": "亚洲男孩（短发，绝不能有马尾或长发），棕色蓬松短发，藏青色短袖翻领polo衫+蓝色牛仔裤+白色低帮运动鞋",
+    "image": "assets/ip_library/tommy_12.png"
+  },
+  {
+    "key": "anna_12",
+    "name": "Anna (12y)",
+    "kind": "protagonist",
+    "gender": "girl",
+    "age": 12,
+    "desc": "亚洲女孩（与Mia、Tommy完全不同的新角色），黑色齐下巴直发bob+斜刘海，头顶戴一条细白色发箍（必须有发箍，是Anna识别符号，不能丢），纯绿色长袖圆领毛衣（plain无图案）+卡其色直筒长裤+白色低帮运动鞋，绝不扎马尾/双马尾/辫子、不戴眼镜，大眼睛圆脸小鼻子腮粉，温和微笑",
+    "image": "assets/ip_library/anna_12.png"
   },
   {
     "key": "ali_6",
@@ -45,9 +68,8 @@
     "kind": "supporting",
     "gender": "boy",
     "age": 6,
-    "desc": "深肤色小男孩，黑色卷短发，亮黄色短袖T恤+橙色短裤",
-    "image": "assets/ip_library/ali_6.png",
-    "size_kb": 2501
+    "desc": "深肤色小男孩（不是Tommy），黑色卷短发，亮黄色短袖T恤+棕色短裤+白色运动鞋，开朗笑容",
+    "image": "assets/ip_library/ali_6.png"
   },
   {
     "key": "cate_8",
@@ -55,9 +77,8 @@
     "kind": "supporting",
     "gender": "girl",
     "age": 8,
-    "desc": "亚洲女孩，棕色齐肩波浪长发自然散开，粉色长袖+米色裙子",
-    "image": "assets/ip_library/cate_8.png",
-    "size_kb": 2665
+    "desc": "亚洲女孩（不是Mia），棕色齐下巴波浪短发bob（不是马尾），绿色小花耳环，蓝绿色眼睛，白色长袖上衣+粉色长裤+白色运动鞋，腮粉",
+    "image": "assets/ip_library/cate_8.png"
   },
   {
     "key": "cate_10",
@@ -65,9 +86,8 @@
     "kind": "supporting",
     "gender": "girl",
     "age": 10,
-    "desc": "亚洲女孩，棕色齐肩波浪长发自然散开，粉色长袖+米色裙子",
-    "image": "assets/ip_library/cate_10.png",
-    "size_kb": 2668
+    "desc": "亚洲女孩（不是Mia），棕色齐下巴波浪短发bob（不是马尾），绿色小花耳环，蓝绿色眼睛，白色长袖上衣+粉色长裤+白色运动鞋，腮粉",
+    "image": "assets/ip_library/cate_10.png"
   },
   {
     "key": "black_girl_12",
@@ -76,8 +96,7 @@
     "gender": "girl",
     "age": 12,
     "desc": "非洲裔黑人女孩，黑色卷曲长发，亮色T恤+牛仔裤",
-    "image": "assets/ip_library/black_girl_12.jpg",
-    "size_kb": 933
+    "image": "assets/ip_library/black_girl_12.jpg"
   },
   {
     "key": "black_girl_10",
@@ -86,8 +105,7 @@
     "gender": "girl",
     "age": 10,
     "desc": "非洲裔黑人小女孩，黑色双扎卷发，亮色T恤+短裤",
-    "image": "assets/ip_library/black_girl_10.jpg",
-    "size_kb": 1844
+    "image": "assets/ip_library/black_girl_10.jpg"
   },
   {
     "key": "black_girl_8",
@@ -96,8 +114,7 @@
     "gender": "girl",
     "age": 8,
     "desc": "非洲裔黑人小女孩，黑色蓬松短卷发，亮色T恤+短裤",
-    "image": "assets/ip_library/black_girl_8.jpg",
-    "size_kb": 870
+    "image": "assets/ip_library/black_girl_8.jpg"
   },
   {
     "key": "black_boy_12",
@@ -106,8 +123,7 @@
     "gender": "boy",
     "age": 12,
     "desc": "非洲裔黑人男孩，黑色短卷发，T恤+长裤",
-    "image": "assets/ip_library/black_boy_12.jpg",
-    "size_kb": 853
+    "image": "assets/ip_library/black_boy_12.jpg"
   },
   {
     "key": "black_boy_10",
@@ -116,8 +132,7 @@
     "gender": "boy",
     "age": 10,
     "desc": "非洲裔黑人男孩，黑色短卷发，T恤+短裤",
-    "image": "assets/ip_library/black_boy_10.jpg",
-    "size_kb": 1087
+    "image": "assets/ip_library/black_boy_10.jpg"
   },
   {
     "key": "black_boy_8",
@@ -126,8 +141,7 @@
     "gender": "boy",
     "age": 8,
     "desc": "非洲裔黑人小男孩，黑色短卷发，T恤+短裤",
-    "image": "assets/ip_library/black_boy_8.jpg",
-    "size_kb": 759
+    "image": "assets/ip_library/black_boy_8.jpg"
   },
   {
     "key": "mom",
@@ -135,9 +149,8 @@
     "kind": "family",
     "gender": "woman",
     "age": 35,
-    "desc": "亚洲妈妈，棕色长卷发，温柔微笑，米白色长袖+深色长裤",
-    "image": "assets/ip_library/mom.png",
-    "size_kb": 3769
+    "desc": "亚洲妈妈（成年女性，不是小孩），棕色长波浪发，白色宽松长袖上衣+浅蓝色牛仔长裤+白色运动鞋，温柔微笑",
+    "image": "assets/ip_library/mom.png"
   },
   {
     "key": "dad",
@@ -145,9 +158,8 @@
     "kind": "family",
     "gender": "man",
     "age": 38,
-    "desc": "亚洲爸爸，棕色短发，温和眼镜，深蓝色长袖衬衫+卡其裤",
-    "image": "assets/ip_library/dad.png",
-    "size_kb": 4352
+    "desc": "亚洲爸爸（成年男性，不是小孩），棕色短发，灰色短袖polo衫+卡其色长裤+棕色皮鞋，温和微笑，不戴眼镜",
+    "image": "assets/ip_library/dad.png"
   },
   {
     "key": "grandma",
@@ -155,9 +167,8 @@
     "kind": "family",
     "gender": "woman",
     "age": 65,
-    "desc": "亚洲奶奶，白色短卷发，慈祥微笑，淡蓝色开衫+深色长裙",
-    "image": "assets/ip_library/grandma.png",
-    "size_kb": 2931
+    "desc": "亚洲奶奶（年长女性，明显皱纹），银灰色发髻，淡紫色开衫+米色内搭+橄榄绿长裙+棕色鞋，慈祥微笑",
+    "image": "assets/ip_library/grandma.png"
   },
   {
     "key": "grandpa",
@@ -165,9 +176,8 @@
     "kind": "family",
     "gender": "man",
     "age": 68,
-    "desc": "亚洲爷爷，白色短发，慈祥微笑，米色毛衣+深色长裤",
-    "image": "assets/ip_library/grandpa.png",
-    "size_kb": 3158
+    "desc": "亚洲爷爷（年长男性，明显皱纹），银灰色短发+圆框眼镜，灰色V领毛背心+深蓝色衬衫+卡其色长裤+棕色鞋，慈祥微笑",
+    "image": "assets/ip_library/grandpa.png"
   },
   {
     "key": "teacher",
@@ -175,19 +185,17 @@
     "kind": "adult",
     "gender": "woman",
     "age": 28,
-    "desc": "亚洲女老师，棕色齐肩短发，亲切微笑，浅色长袖+深色长裙",
-    "image": "assets/ip_library/teacher.png",
-    "size_kb": 6746
+    "desc": "成年女老师（不是小孩），金色波浪齐肩发，蓝绿色眼睛，橙色短袖翻领衬衫+蓝色高腰阔腿牛仔裤+白色运动鞋，亲切自信微笑，不戴眼镜",
+    "image": "assets/ip_library/teacher.png"
   },
   {
     "key": "cat",
-    "name": "Cat",
+    "name": "Cat (Winnie)",
     "kind": "pet",
     "gender": "",
     "age": 0,
-    "desc": "橘色卡通水彩猫",
-    "image": "assets/ip_library/cat.png",
-    "size_kb": 12760
+    "desc": "灰色虎斑小猫，白色肚皮和爪子，琥珀色大眼，粉色鼻子，体型小巧，水彩绘本风格（非写实）",
+    "image": "assets/ip_library/cat.png"
   },
   {
     "key": "dino",
@@ -195,18 +203,7 @@
     "kind": "brand",
     "gender": "",
     "age": 0,
-    "desc": "黄色卡通小恐龙IP，VIPKID Dino Reading Club 品牌形象",
-    "image": "assets/ip_library/dino.png",
-    "size_kb": 4189
-  },
-  {
-    "key": "anna_12",
-    "name": "Anna (12y)",
-    "kind": "protagonist",
-    "gender": "girl",
-    "age": 12,
-    "desc": "亚洲女孩，黑色头发扎两条低马尾(耳下)+中分轻刘海，芥末黄色圆领针织毛衣+卡其色直筒长裤+白色低帮运动鞋，不戴眼镜不戴发箍，大眼睛圆脸小鼻子腮粉，温和微笑",
-    "image": "assets/ip_library/anna_12.png",
-    "size_kb": 1314
+    "desc": "黄色卡通小恐龙IP（VIPKID官方吉祥物Dino），橙色背鳍+奶白色肚皮，圆脸大眼憨态可掬，严格使用官方造型不得修改",
+    "image": "assets/ip_library/dino.png"
   }
 ]

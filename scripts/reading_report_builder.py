@@ -16,6 +16,7 @@
 """
 from __future__ import annotations
 
+import math
 from pathlib import Path
 from typing import Optional
 
@@ -28,12 +29,34 @@ from docx.shared import Cm, Pt
 
 import config
 from parser import BookOutline
-from text_format import _to_us_spelling, format_word_answer, format_sentence_answer
+from text_format import _to_us_spelling, capitalize_names, format_word_answer, format_sentence_answer
 
 
 FONT_EN = "Poppins"
 FONT_CN = "阿里巴巴普惠体 2.0 55 Regular"
 EMOJI_FONT = "Segoe UI Emoji"
+# 符号字体：★ □ 等几何符号统一用 Arial 渲染（Poppins/CJK 缺字会变 tofu/乱码）
+SYMBOL_FONT = "Arial"
+EMPTY_BOX = "\u25A1"  # □ WHITE SQUARE（比 ☐ U+2610 兼容性更好）
+
+
+def _strip_wrapping_quotes(text: str) -> str:
+    """去掉整段被引号包裹的情况（QA：主体文本粘贴时不要带引号）。
+
+    仅当整段以引号开头且以引号结尾时去壳；保留句内正常对话引号。
+    """
+    s = (text or "").strip()
+    pairs = {'"': '"', "'": "'", "\u201c": "\u201d", "\u2018": "\u2019",
+             "\u300c": "\u300d", "\u00ab": "\u00bb"}
+    changed = True
+    while changed and len(s) >= 2:
+        changed = False
+        for lq, rq in pairs.items():
+            if s.startswith(lq) and s.endswith(rq) and len(s) >= 2:
+                s = s[1:-1].strip()
+                changed = True
+                break
+    return s
 
 # 表格列宽（严格按 sample，dxa 即 1/20 pt）
 COL_WIDTHS_DXA = [1428, 1307, 1293, 1246, 1369, 1308, 1292, 1243]
@@ -51,11 +74,12 @@ ENGAGE_ROW_TWIPS = 900
 
 HEADER_FILL = "F1F1F1"
 
-# 字号 / 行距口径（pt）
-TITLE_PT = 16
+# 字号 / 行距口径（pt）—— 对齐官方 RR Sample 模板（标题17 / 章节头14左对齐 / 难度14）
+TITLE_PT = 17
 NAME_PT = 11
-SECTION_PT = 13
-BODY_PT = 11
+SECTION_PT = 14          # 章节标题（官方模板：Poppins 14pt 粗体，左对齐）
+DIFF_PT = 14             # 阅读难度内容（类型/字数/词汇难度/语法难度，官方 14pt）
+BODY_PT = 11             # 正文/题目/词汇（紧凑，保证 1 页）
 LINE_SPACING = 1.2
 PARA_AFTER_PT = 1   # 段后空隙（题目 / 难度 / 故事正文统一）
 
@@ -67,9 +91,116 @@ LOGO_PATH = config.BRAND_DIR / "dino_reading_logo.png"
 
 
 # ============================================================================
+# 自适应排版规划器 —— 严格 1 页的核心
+# ----------------------------------------------------------------------------
+# 思路：A4 portrait 可用高度固定，按"实际内容"估算每个 section 撑开的高度，
+# 从大字号档位逐档下探，选第一个能整体落进一页预算的档位（字号/行距/行高/段后）。
+# 这样无论故事多长、题目多长、语法行多长，都能自动收进一页而不溢出。
+# ============================================================================
+def _plan_layout(outline) -> dict:
+    PAGE_H = 16838           # 29.7cm A4 高 (twips)
+    MARGINS = 1020           # 上下各 0.9cm
+    TITLE_BLOCK = 1050       # 标题行（含 logo）估高
+    NAME_LINE = 360          # 姓名/日期行
+    SAFETY = 420             # 安全余量（边框/取整误差）
+    budget = PAGE_H - MARGINS - TITLE_BLOCK - NAME_LINE - SAFETY
+
+    def cpl(pt: float) -> int:
+        """满表宽下每行英文字符数（保守略小 → 多估行数，避免溢出）。"""
+        return max(20, int(960 / pt))
+
+    def line_h(pt: float, ls: float) -> int:
+        return int(pt * 20 * ls * 1.16)
+
+    grammar = _normalize_grammar_cn(outline.grammar_focus) or "—"
+    passage = _strip_wrapping_quotes(" ".join(
+        _strip_wrapping_quotes((p.text or "").strip())
+        for p in outline.pages
+        if p.page_type == "story" and p.text and p.text.strip()
+    ))
+    title = outline.title or ""
+    p_chars = len(passage) + len(title) + 2
+
+    qs = _resolve_rr_questions(outline)
+    q_lens: list[int] = []
+    for q in qs:
+        extra = 4 + (6 if q.get("page") is not None else 0)
+        q_lens.append(len((q.get("q") or "")) + extra)
+
+    phon = (_normalize_morphology(outline.phonics, outline)
+            if _is_morphology_level(outline.level)
+            else _normalize_phonics(outline.phonics)) or ""
+    vocab_ok = any(_vocab_words_for_rr(outline))
+
+    profiles = [
+        dict(body=11.0, diff=14.0, sec=14.0, ls=1.20, pa=1),
+        dict(body=11.0, diff=13.0, sec=14.0, ls=1.15, pa=1),
+        dict(body=10.5, diff=13.0, sec=13.0, ls=1.12, pa=0),
+        dict(body=10.0, diff=12.0, sec=13.0, ls=1.10, pa=0),
+        dict(body=10.0, diff=12.0, sec=12.0, ls=1.05, pa=0),
+        dict(body=9.5,  diff=11.0, sec=12.0, ls=1.05, pa=0),
+        dict(body=9.0,  diff=11.0, sec=11.0, ls=1.00, pa=0),
+    ]
+
+    def estimate(prof: dict):
+        body, diff, sec, ls, pa = prof["body"], prof["diff"], prof["sec"], prof["ls"], prof["pa"]
+        pa_tw = int(pa * 20)
+        lh_b, lh_d = line_h(body, ls), line_h(diff, ls)
+
+        header_h = max(420, line_h(sec, 1.0) + 150)
+        headers = 6 * header_h
+
+        g_eff = len("语法难度：") * 2 + len(grammar)   # 中文标签约占 2x 宽
+        g_lines = max(1, math.ceil(g_eff / cpl(diff)))
+        diff_h = max((3 + g_lines) * lh_d + 4 * pa_tw, lh_d + 80)
+
+        vocab_h = max(lh_b + 150, 500) if vocab_ok else 340
+
+        ph_lines = max(1, math.ceil((len(phon) + 10) / cpl(body)))
+        phon_h = max(ph_lines * lh_b + 100, 360)
+
+        fl_lines = 1 + max(1, math.ceil(p_chars / cpl(body)))
+        fluency_h = fl_lines * lh_b + 80
+
+        q_lines = sum(max(1, math.ceil(L / cpl(body))) for L in q_lens) or 1
+        questions_h = q_lines * lh_b + len(q_lens) * pa_tw + 80
+
+        engage_h = max(lh_b + 120, 580)
+
+        total = headers + diff_h + vocab_h + phon_h + fluency_h + questions_h + engage_h
+        mins = dict(header_h=int(header_h), diff_h=int(diff_h), vocab_h=int(vocab_h),
+                    phon_h=int(phon_h), fluency_h=int(fluency_h),
+                    questions_h=int(questions_h), engage_h=int(engage_h))
+        return total, mins
+
+    chosen, mins = profiles[-1], None
+    for prof in profiles:
+        total, mins_ = estimate(prof)
+        if total <= budget:
+            chosen, mins = prof, mins_
+            break
+    if mins is None:
+        _, mins = estimate(profiles[-1])
+        chosen = profiles[-1]
+
+    plan = dict(chosen)
+    plan.update(mins)
+    plan["grammar"] = grammar
+    return plan
+
+
+def _lp(outline) -> dict:
+    return getattr(outline, "_rr_lp", {}) or {}
+
+
+# ============================================================================
 # 公开入口
 # ============================================================================
-def build_reading_report(outline: BookOutline, out_path: Path) -> Path:
+def build_reading_report(outline: BookOutline, out_path: Path,
+                         *, with_answers: bool = False) -> Path:
+    """生成阅读报告。with_answers=True → 示例答案版（演示）；False → 空白版（教师手填）。"""
+    setattr(outline, "_rr_with_answers", bool(with_answers))
+    setattr(outline, "_rr_lp", _plan_layout(outline))
     doc = Document()
     _set_a4_portrait(doc)
     _set_default_style(doc)
@@ -92,20 +223,38 @@ def build_reading_report(outline: BookOutline, out_path: Path) -> Path:
 # 标题 / 姓名段
 # ============================================================================
 def _build_title_paragraph(doc, outline: BookOutline) -> None:
-    p = doc.add_paragraph()
-    p.alignment = WD_ALIGN_PARAGRAPH.LEFT
-    pf = p.paragraph_format
-    pf.space_before = Pt(0)
-    pf.space_after = Pt(4)
-    pf.line_spacing = 1.0
+    """标题行：左侧书名（17pt 粗体），右侧 VIPKID Dino logo —— 用无边框两列表布局，
+    保证长书名不会把 logo 挤到下一行（对齐官方模板：标题左、logo 右上）。"""
+    title_str = f"阅读报告 {_level_label(outline.level)} - {capitalize_names(outline.title or '')}"
 
-    title_str = f"阅读报告 {_level_label(outline.level)} - {outline.title}"
-    run = p.add_run(title_str)
+    table = doc.add_table(rows=1, cols=2)
+    table.autofit = False
+    _set_tbl_w(table, TABLE_WIDTH_DXA)
+    _set_tbl_grid(table, [int(TABLE_WIDTH_DXA * 0.70), TABLE_WIDTH_DXA - int(TABLE_WIDTH_DXA * 0.70)])
+    _set_tbl_no_borders(table)
+
+    left = table.rows[0].cells[0]
+    right = table.rows[0].cells[1]
+    _vert_center(left)
+    _vert_center(right)
+
+    _clear_paragraphs(left)
+    pl = left.paragraphs[0]
+    pl.alignment = WD_ALIGN_PARAGRAPH.LEFT
+    pl.paragraph_format.space_before = Pt(0)
+    pl.paragraph_format.space_after = Pt(0)
+    pl.paragraph_format.line_spacing = 1.0
+    run = pl.add_run(title_str)
     _bind_run(run, ascii_font=FONT_EN, east_asia=FONT_CN, size_pt=TITLE_PT, bold=True)
 
     if LOGO_PATH.exists():
-        logo_run = p.add_run()
-        logo_run.add_picture(str(LOGO_PATH), width=Cm(5.0))
+        _clear_paragraphs(right)
+        pr = right.paragraphs[0]
+        pr.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+        pr.paragraph_format.space_before = Pt(0)
+        pr.paragraph_format.space_after = Pt(0)
+        logo_run = pr.add_run()
+        logo_run.add_picture(str(LOGO_PATH), width=Cm(4.6))
 
 
 def _build_name_date_paragraph(doc) -> None:
@@ -132,30 +281,34 @@ def _build_main_table(doc, outline: BookOutline) -> None:
     _set_tbl_borders(table)
     _set_tbl_grid(table, COL_WIDTHS_DXA)
 
+    lp = _lp(outline)
+    sec_pt = lp.get("sec", SECTION_PT)
+    header_h = lp.get("header_h", HEADER_ROW_TWIPS)
+
     # v1.8.3：L5-L6 把"自然拼读"行替换为"构词法"行
     phonics_label = "构词法" if _is_morphology_level(outline.level) else "自然拼读"
     sections = [
-        ("阅读难度", DIFF_ROW_TWIPS, _fill_difficulty),
-        ("词汇掌握", VOCAB_ROW_TWIPS, _fill_vocab),
-        (phonics_label, PHONICS_ROW_TWIPS, _fill_phonics),
-        ("阅读流利度", FLUENCY_ROW_TWIPS, _fill_fluency),
-        ("阅读表达", QUESTIONS_ROW_TWIPS, _fill_questions),
-        ("课堂参与度", ENGAGE_ROW_TWIPS, _fill_engagement),
+        ("阅读难度", lp.get("diff_h", DIFF_ROW_TWIPS), _fill_difficulty),
+        ("词汇掌握", lp.get("vocab_h", VOCAB_ROW_TWIPS), _fill_vocab),
+        (phonics_label, lp.get("phon_h", PHONICS_ROW_TWIPS), _fill_phonics),
+        ("阅读流利度", lp.get("fluency_h", FLUENCY_ROW_TWIPS), _fill_fluency),
+        ("阅读表达", lp.get("questions_h", QUESTIONS_ROW_TWIPS), _fill_questions),
+        ("课堂参与度", lp.get("engage_h", ENGAGE_ROW_TWIPS), _fill_engagement),
     ]
 
     for sec_idx, (label, content_h, content_filler) in enumerate(sections):
         header_row = table.rows[sec_idx * 2]
         content_row = table.rows[sec_idx * 2 + 1]
 
-        # ---- header row：合并 8 列 + 灰底 + 居中粗体 ----
-        _set_row_height(header_row, HEADER_ROW_TWIPS)
+        # ---- header row：合并 8 列 + 灰底 + 左对齐粗体（对齐官方模板）----
+        _set_row_height(header_row, header_h)
         header_cell = _merge_row(header_row)
         _shade_cell(header_cell, HEADER_FILL)
         _vert_center(header_cell)
         _clear_and_fill_text(
             header_cell, label,
-            size_pt=SECTION_PT, bold=True,
-            align=WD_ALIGN_PARAGRAPH.CENTER,
+            size_pt=sec_pt, bold=True,
+            align=WD_ALIGN_PARAGRAPH.LEFT,
         )
 
         # ---- content row：高度 + 由 filler 决定是否合并 ----
@@ -168,7 +321,7 @@ def _build_main_table(doc, outline: BookOutline) -> None:
 # ----------------------------------------------------------------------------
 def _fill_difficulty(row, outline: BookOutline) -> None:
     cell = _merge_row(row)
-    _vert_top(cell)
+    _vert_center(cell)
     _clear_paragraphs(cell)
 
     # Reader Type 按 Level 强制映射（v1.8）
@@ -179,30 +332,36 @@ def _fill_difficulty(row, outline: BookOutline) -> None:
     # v2.0：按官方 L5-1 实测样本，词汇难度只显示短码（A2/B1），不带 "CEFR" 前缀和 Lexile
     vocab_code = _default_cefr_short_code(outline)
 
+    lp = _lp(outline)
+    diff_pt = lp.get("diff", DIFF_PT)
+    ls = lp.get("ls", LINE_SPACING)
+    pa = lp.get("pa", PARA_AFTER_PT)
+
     pairs = [
         ("类型：", reader_type),
         ("阅读字数：", str(outline.total_words or "—")),
         ("词汇难度：", vocab_code),
-        ("语法难度：", _normalize_grammar_cn(outline.grammar_focus) or "—"),
+        ("语法难度：", lp.get("grammar") or _normalize_grammar_cn(outline.grammar_focus) or "—"),
     ]
     for i, (label, value) in enumerate(pairs):
         p = cell.paragraphs[0] if i == 0 else cell.add_paragraph()
         p.alignment = WD_ALIGN_PARAGRAPH.LEFT
         p.paragraph_format.space_before = Pt(0)
-        p.paragraph_format.space_after = Pt(PARA_AFTER_PT)
-        p.paragraph_format.line_spacing = LINE_SPACING
+        p.paragraph_format.space_after = Pt(pa)
+        p.paragraph_format.line_spacing = ls
         r_lbl = p.add_run(label)
-        _bind_run(r_lbl, FONT_EN, FONT_CN, size_pt=BODY_PT, bold=True)
+        _bind_run(r_lbl, FONT_EN, FONT_CN, size_pt=diff_pt, bold=True)
         r_val = p.add_run(value)
-        _bind_run(r_val, FONT_EN, FONT_CN, size_pt=BODY_PT, bold=False)
+        _bind_run(r_val, FONT_EN, FONT_CN, size_pt=diff_pt, bold=False)
 
 
 def _fill_vocab(row, outline: BookOutline) -> None:
     """8 cells：4 词放 c0/c2/c4/c6，c1/c3/c5/c7 留空白打勾位。"""
+    body_pt = _lp(outline).get("body", BODY_PT)
     words = _vocab_words_for_rr(outline)
     for col_idx in range(8):
         cell = row.cells[col_idx]
-        _vert_top(cell)
+        _vert_center(cell)
         _clear_paragraphs(cell)
         if col_idx % 2 == 0:
             word_idx = col_idx // 2
@@ -213,47 +372,61 @@ def _fill_vocab(row, outline: BookOutline) -> None:
                 p.paragraph_format.space_before = Pt(0)
                 p.paragraph_format.space_after = Pt(0)
                 run = p.add_run(text)
-                _bind_run(run, FONT_EN, FONT_CN, size_pt=BODY_PT, bold=False)
+                _bind_run(run, FONT_EN, FONT_CN, size_pt=body_pt, bold=False)
+        else:
+            # QA：单词后配一个空格框，供老师打勾/打分
+            word_idx = col_idx // 2
+            if word_idx < len(words) and words[word_idx]:
+                p = cell.paragraphs[0]
+                p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                p.paragraph_format.space_before = Pt(0)
+                p.paragraph_format.space_after = Pt(0)
+                r_box = p.add_run(EMPTY_BOX)
+                _bind_run(r_box, SYMBOL_FONT, SYMBOL_FONT, size_pt=body_pt + 2, bold=False)
 
 
 def _fill_phonics(row, outline: BookOutline) -> None:
     """自然拼读（L0-L4）/ 构词法（L5-L6）。"""
     cell = _merge_row(row)
-    _vert_top(cell)
+    _vert_center(cell)
     _clear_paragraphs(cell)
+    lp = _lp(outline)
+    body_pt = lp.get("body", BODY_PT)
     p = cell.paragraphs[0]
     p.alignment = WD_ALIGN_PARAGRAPH.LEFT
     p.paragraph_format.space_before = Pt(0)
     p.paragraph_format.space_after = Pt(0)
-    p.paragraph_format.line_spacing = LINE_SPACING
+    p.paragraph_format.line_spacing = lp.get("ls", LINE_SPACING)
 
     if _is_morphology_level(outline.level):
         text = _normalize_morphology(outline.phonics, outline)
     else:
         text = _normalize_phonics(outline.phonics)
     run = p.add_run(text)
-    _bind_run(run, FONT_EN, FONT_CN, size_pt=BODY_PT, bold=False)
+    _bind_run(run, FONT_EN, FONT_CN, size_pt=body_pt, bold=False)
 
 
 def _fill_fluency(row, outline: BookOutline) -> None:
     cell = _merge_row(row)
-    _vert_top(cell)
+    _vert_center(cell)
     _clear_paragraphs(cell)
 
-    body_text = " ".join(
-        page.text.strip()
+    lp = _lp(outline)
+    ls = lp.get("ls", LINE_SPACING)
+    body_text = capitalize_names(_strip_wrapping_quotes(" ".join(
+        _strip_wrapping_quotes(page.text.strip())
         for page in outline.pages
         if page.page_type == "story" and page.text and page.text.strip()
-    )
-    # 故事内容超 250 字时再降到 10pt 进一步保证 1 页
-    body_size = BODY_PT if len(body_text) <= 250 else 10
+    )))
+    # 字号由自适应规划器统一决定（保证 1 页）
+    body_size = lp.get("body", BODY_PT)
 
     p_title = cell.paragraphs[0]
     p_title.alignment = WD_ALIGN_PARAGRAPH.LEFT
     p_title.paragraph_format.space_before = Pt(0)
     p_title.paragraph_format.space_after = Pt(0)
-    p_title.paragraph_format.line_spacing = LINE_SPACING
-    r_title = p_title.add_run(outline.title or "")
+    p_title.paragraph_format.line_spacing = ls
+    r_title = p_title.add_run(capitalize_names(outline.title or ""))
     _bind_run(r_title, FONT_EN, FONT_CN, size_pt=body_size, bold=False)
 
     if body_text:
@@ -261,15 +434,20 @@ def _fill_fluency(row, outline: BookOutline) -> None:
         p_body.alignment = WD_ALIGN_PARAGRAPH.LEFT
         p_body.paragraph_format.space_before = Pt(0)
         p_body.paragraph_format.space_after = Pt(0)
-        p_body.paragraph_format.line_spacing = LINE_SPACING
+        p_body.paragraph_format.line_spacing = ls
         r_body = p_body.add_run(body_text)
         _bind_run(r_body, FONT_EN, FONT_CN, size_pt=body_size, bold=False)
 
 
 def _fill_questions(row, outline: BookOutline) -> None:
     cell = _merge_row(row)
-    _vert_top(cell)
+    _vert_center(cell)
     _clear_paragraphs(cell)
+
+    lp = _lp(outline)
+    body_pt = lp.get("body", BODY_PT)
+    ls = lp.get("ls", LINE_SPACING)
+    pa = lp.get("pa", PARA_AFTER_PT)
 
     questions = _resolve_rr_questions(outline)
 
@@ -277,12 +455,13 @@ def _fill_questions(row, outline: BookOutline) -> None:
         p = cell.paragraphs[0] if i == 1 else cell.add_paragraph()
         p.alignment = WD_ALIGN_PARAGRAPH.LEFT
         p.paragraph_format.space_before = Pt(0)
-        p.paragraph_format.space_after = Pt(PARA_AFTER_PT)
-        p.paragraph_format.line_spacing = LINE_SPACING
+        p.paragraph_format.space_after = Pt(pa)
+        p.paragraph_format.line_spacing = ls
 
         # 题干：美式拼写 + 独立 i 大写 + 首字母大写 + 句末问号
         import re as _re
         text = _to_us_spelling(q["q"].strip().rstrip(".！？!?")).strip()
+        text = capitalize_names(text)
         text = _re.sub(r"\bi\b", "I", text)
         text = _re.sub(r"\bi(['\u2019])", r"I\1", text)
         if text:
@@ -293,17 +472,30 @@ def _fill_questions(row, outline: BookOutline) -> None:
         stars = max(1, min(int(q.get("stars") or 1), 3))
 
         r_q = p.add_run(f"{i}. {text}")
-        _bind_run(r_q, FONT_EN, FONT_CN, size_pt=BODY_PT, bold=False)
+        _bind_run(r_q, FONT_EN, FONT_CN, size_pt=body_pt, bold=False)
 
         if page is not None:
             r_p = p.add_run(f" (P{page})")
-            _bind_run(r_p, FONT_EN, FONT_CN, size_pt=BODY_PT, bold=False)
+            _bind_run(r_p, FONT_EN, FONT_CN, size_pt=body_pt, bold=False)
 
-        # 实心五角星 ★ (U+2605) — Poppins / Arial 都能正确渲染，避免 emoji ⭐ 在 Word/WPS
-        # 渲染时 fallback 成 '*' 的问题。颜色用 sample 的橙红 #E97A24。
-        r_s = p.add_run(" " + ("★" * stars))
-        _bind_run(r_s, FONT_EN, FONT_CN, size_pt=BODY_PT, bold=False)
-        _set_run_color(r_s, STAR_COLOR)
+        # 金黄实心星 ⭐ (U+2B50) emoji —— 对齐官方真人样本（彩色填充星，而非橙色空心 ★）。
+        # 用 Segoe UI Emoji 字体渲染（Word/WPS/LibreOffice 均能显示彩色 emoji）。
+        r_s = p.add_run(" " + ("\u2B50" * stars))
+        _bind_run(r_s, EMOJI_FONT, EMOJI_FONT, size_pt=body_pt, bold=False)
+
+        # 示例答案版：题干下方加一行灰色斜体示例答案（空白版不渲染）
+        if getattr(outline, "_rr_with_answers", False):
+            ans = (q.get("answer") or "").strip()
+            if ans:
+                ap = cell.add_paragraph()
+                ap.alignment = WD_ALIGN_PARAGRAPH.LEFT
+                ap.paragraph_format.space_before = Pt(0)
+                ap.paragraph_format.space_after = Pt(pa)
+                ap.paragraph_format.line_spacing = ls
+                r_a = ap.add_run(f"   A: {capitalize_names(_to_us_spelling(ans))}")
+                _bind_run(r_a, FONT_EN, FONT_CN, size_pt=body_pt, bold=False)
+                r_a.italic = True
+                _set_run_color(r_a, STAR_COLOR)
 
 
 def _fill_engagement(row, outline: BookOutline) -> None:
@@ -317,19 +509,20 @@ def _fill_engagement(row, outline: BookOutline) -> None:
     p.paragraph_format.space_after = Pt(0)
     p.paragraph_format.line_spacing = 1.0
 
-    items = [("😆", "Excellent"), ("😄", "Great"), ("🙂", "Good")]
-    for idx, (emoji, label) in enumerate(items):
-        r_e = p.add_run(emoji)
-        _bind_run(r_e, EMOJI_FONT, FONT_CN, size_pt=BODY_PT + 2, bold=False)
-        r_l = p.add_run(" " + label)
-        _bind_run(r_l, FONT_EN, FONT_CN, size_pt=BODY_PT, bold=False)
-        r_sp1 = p.add_run("  ")
-        _bind_run(r_sp1, FONT_EN, FONT_CN, size_pt=BODY_PT, bold=False)
-        r_box = p.add_run("☐")
-        _bind_run(r_box, FONT_EN, FONT_CN, size_pt=BODY_PT + 4, bold=False)
+    # 对齐官方真人样本：笑脸 emoji + label + 空白方框（学生打勾）。
+    # 😎 Excellent / 😄 Great / 🙂 Good，emoji 用 Segoe UI Emoji 渲染（彩色）。
+    body_pt = _lp(outline).get("body", BODY_PT)
+    items = [("\U0001F60E", "Excellent"), ("\U0001F604", "Great"), ("\U0001F642", "Good")]
+    for idx, (face, label) in enumerate(items):
+        r_f = p.add_run(face)
+        _bind_run(r_f, EMOJI_FONT, EMOJI_FONT, size_pt=body_pt + 2, bold=False)
+        r_l = p.add_run(" " + label + " ")
+        _bind_run(r_l, FONT_EN, FONT_CN, size_pt=body_pt, bold=False)
+        r_box = p.add_run(EMPTY_BOX)
+        _bind_run(r_box, SYMBOL_FONT, SYMBOL_FONT, size_pt=body_pt + 4, bold=False)
         if idx < len(items) - 1:
             r_gap = p.add_run("          ")
-            _bind_run(r_gap, FONT_EN, FONT_CN, size_pt=BODY_PT, bold=False)
+            _bind_run(r_gap, FONT_EN, FONT_CN, size_pt=body_pt, bold=False)
 
 
 # ============================================================================
@@ -390,6 +583,7 @@ def _resolve_rr_questions(outline: BookOutline) -> list[dict]:
                 "q": str(q.get("q") or q.get("question") or "").strip(),
                 "stars": stars,
                 "page": page,
+                "answer": str(q.get("answer") or q.get("sample") or "").strip(),
             })
         while len(normalized) < len(dist):
             i = len(normalized)
@@ -518,8 +712,15 @@ def _normalize_grammar_cn(raw: str) -> str:
     s = (raw or "").strip()
     if not s:
         return ""
-    # 已经含中文时态字眼 → 原样返回（去掉句末标点）
+    # 已经含中文时态字眼 → 去掉冗长英文括注（如动词清单）后返回，保留简短中文括注
     if _re.search(r"[一二三过将完现][般去来成在]", s):
+        def _drop_long_paren(m):
+            inner = m.group(1)
+            # 长括注（>14 字）且含英文字母 → 删除（避免语法行撑成多行）
+            if len(inner) > 14 and _re.search(r"[A-Za-z]", inner):
+                return ""
+            return m.group(0)
+        s = _re.sub(r"\s*[\(（]([^)）]*)[\)）]", _drop_long_paren, s)
         return s.rstrip("。.；; ").strip()
 
     low = s.lower()
@@ -817,6 +1018,26 @@ def _set_tbl_borders(table) -> None:
         b.set(qn("w:sz"), "4")
         b.set(qn("w:space"), "0")
         b.set(qn("w:color"), "BFBFBF")
+        tblBorders.append(b)
+    tblPr.append(tblBorders)
+
+
+def _set_tbl_no_borders(table) -> None:
+    """把表格所有边框设为 none（用于标题行的无边框布局表）。"""
+    tbl = table._element
+    tblPr = tbl.find(qn("w:tblPr"))
+    if tblPr is None:
+        tblPr = OxmlElement("w:tblPr")
+        tbl.insert(0, tblPr)
+    old = tblPr.find(qn("w:tblBorders"))
+    if old is not None:
+        tblPr.remove(old)
+    tblBorders = OxmlElement("w:tblBorders")
+    for kind in ("top", "left", "bottom", "right", "insideH", "insideV"):
+        b = OxmlElement(f"w:{kind}")
+        b.set(qn("w:val"), "none")
+        b.set(qn("w:sz"), "0")
+        b.set(qn("w:space"), "0")
         tblBorders.append(b)
     tblPr.append(tblBorders)
 

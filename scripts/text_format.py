@@ -1,9 +1,10 @@
 """v1.8 文本规整工具（worksheet / reading report 共用）。
 
-提供三组函数：
+提供这些函数：
   - _to_us_spelling(text)  : BrE → AmE 拼写替换（colour→color, favourite→favorite 等）
+  - capitalize_names(text) : 把 IP 角色专有名词在句中强制首字母大写（anna→Anna, mia→Mia ...）
   - format_word_answer(w)  : 单词类答案：小写、无标点
-  - format_sentence_answer(s): 句子类答案：首字母大写、句末加句号、smart-quote → straight
+  - format_sentence_answer(s): 句子类答案：首字母大写、句末加句号、smart-quote → straight、人名大写
   - is_sentence_like(text)  : 判断文本是不是句子（含动词/超过 3 词/含逗号空格等）
 """
 from __future__ import annotations
@@ -106,6 +107,31 @@ def _to_us_spelling(text: str) -> str:
 
 
 # ----------------------------------------------------------------------------
+# IP 角色专有名词 → 句中强制首字母大写
+# ----------------------------------------------------------------------------
+# 只放「永远是专有名词、永远不会当普通名词用」的人名/宠物名，
+# 避免误伤（故意不含 mom/dad/grandma/grandpa——它们在 "my mom" 里应小写）。
+# 与 character_registry.REGISTRY 的单词型人名 key 保持一致。
+_PROPER_NOUNS = ("Anna", "Mia", "Tommy", "Ali", "Cate", "Winnie", "Dino", "Kim")
+_NAME_CANON = {n.lower(): n for n in _PROPER_NOUNS}
+_NAME_PATTERN = re.compile(
+    r"\b(" + "|".join(re.escape(n) for n in _PROPER_NOUNS) + r")\b",
+    flags=re.IGNORECASE,
+)
+
+
+def capitalize_names(text: str) -> str:
+    """把文本中的 IP 角色专有名词（Anna/Mia/Tommy/...）整词强制首字母大写。
+
+    保留所有格与缩写：anna's → Anna's、tommys → Tommy（仅整词匹配）。
+    例：'anna helped mia and tommy.' → 'Anna helped Mia and Tommy.'
+    """
+    if not text:
+        return text
+    return _NAME_PATTERN.sub(lambda m: _NAME_CANON[m.group(0).lower()], text)
+
+
+# ----------------------------------------------------------------------------
 # 答案格式
 # ----------------------------------------------------------------------------
 def _strip_quotes(s: str) -> str:
@@ -164,6 +190,8 @@ def format_sentence_answer(text: str) -> str:
            .replace("\u2018", "'").replace("\u2019", "'"))
     # 美式拼写
     t = _to_us_spelling(t)
+    # IP 人名专有名词强制大写（Anna/Mia/Tommy...）
+    t = capitalize_names(t)
     # 独立 i / i'xx 单词强制大写 I
     t = re.sub(r"\bi\b", "I", t)
     t = re.sub(r"\bi(['\u2019])", r"I\1", t)

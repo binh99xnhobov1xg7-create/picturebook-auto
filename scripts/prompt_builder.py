@@ -136,14 +136,14 @@ COMPACT_PARENTS_BLOCK = "Mom: long brown wavy hair, cream top, blue jeans. Dad: 
 
 # IP_BLOCKS：与官方人物设定图（L4-6 三个年龄段）一一对应
 IP_BLOCKS: dict[tuple[str, int], str] = {
-    # ----- 8 岁档（L0-L3 启蒙绘本，参考设定图 = 短袖夏装）-----
+    # ----- 8 岁档（L0-L2 启蒙绘本，参考设定图 = 短袖夏装）-----
     ("mia", 8):    "Mia: 8y GIRL, " + _MIA_PONYTAIL + ", "
                    "lavender purple SHORT-SLEEVE tee, denim jeans, white sneakers, "
                    "bare wrists, " + NO_ACCESSORY,
     ("tommy", 8):  "Tommy: 8y BOY (NOT a girl, NO ponytail, NO long hair), short tidy brown hair, "
                    "blue-and-white striped SHORT-SLEEVE tee, denim jeans, white sneakers, "
                    "bare wrists, " + NO_ACCESSORY,
-    # ----- 10 岁档（L4-L5 中级绘本，参考设定图 = 长袖卫衣）-----
+    # ----- 10 岁档（L3-L4 中级绘本，参考设定图 = 长袖卫衣）-----
     ("mia", 10):   "Mia: 10y GIRL, " + _MIA_PONYTAIL + ", "
                    "lavender purple LONG-SLEEVE sweatshirt (sleeves cover wrists), "
                    "light gray sweatpants, white sneakers, bare wrists, " + NO_ACCESSORY,

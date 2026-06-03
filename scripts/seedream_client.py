@@ -23,10 +23,14 @@ import requests
 from PIL import Image, ImageDraw
 
 from config import (
+    IMAGE_DELIVER_PRINT,
     IMAGE_HOST_PROVIDER,
     IMAGE_POLL_INTERVAL,
     IMAGE_POLL_MAX_TRIES,
     IMAGE_SIZE,
+    IMAGE_TARGET_PRINT,
+    IMAGE_TARGET_RATIO,
+    IMAGE_UPSCALE_METHOD,
     JIMENG_API_KEY,
     JIMENG_BASE_URL,
     JIMENG_MODEL,
@@ -35,6 +39,61 @@ from config import (
 )
 
 _UA = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) picturebook-auto/1.0"}
+
+
+# ============================================================
+#  后处理：3:2 直出 → 居中裁 4:3 → 放大到精细印刷 2000×1500（方案A）
+# ============================================================
+def crop_to_ratio(img: "Image.Image", ratio: tuple[int, int] = IMAGE_TARGET_RATIO) -> "Image.Image":
+    """居中裁切到目标宽高比（默认 4:3）。3:2(1536x1024) → 4:3(1365x1024)。"""
+    rw, rh = ratio
+    w, h = img.size
+    target_ar = rw / rh
+    cur_ar = w / h
+    if abs(cur_ar - target_ar) < 1e-3:
+        return img
+    if cur_ar > target_ar:
+        # 太宽 → 裁左右
+        new_w = int(round(h * target_ar))
+        left = (w - new_w) // 2
+        return img.crop((left, 0, left + new_w, h))
+    # 太高 → 裁上下
+    new_h = int(round(w / target_ar))
+    top = (h - new_h) // 2
+    return img.crop((0, top, w, top + new_h))
+
+
+def _upscale_esrgan(img: "Image.Image", target: tuple[int, int]) -> "Image.Image | None":
+    """尝试用 Real-ESRGAN 超分；未安装则返回 None 让调用方回退 Lanczos。"""
+    try:
+        from realesrgan_ncnn_py import Realesrgan  # type: ignore
+        import numpy as np  # type: ignore
+
+        engine = Realesrgan(gpuid=0)
+        out = engine.process_pil(img.convert("RGB"))
+        return out.resize(target, Image.LANCZOS) if out.size != target else out
+    except Exception:
+        return None
+
+
+def postprocess_4k(path: Path) -> Path:
+    """对已落地的图做 方案A 后处理：居中裁 4:3 → 放大到精细印刷尺寸。原地覆盖 path。"""
+    if not IMAGE_DELIVER_PRINT:
+        return path
+    try:
+        with Image.open(path) as im:
+            im = im.convert("RGB")
+            im = crop_to_ratio(im, IMAGE_TARGET_RATIO)
+            out = None
+            if IMAGE_UPSCALE_METHOD.lower() == "esrgan":
+                out = _upscale_esrgan(im, IMAGE_TARGET_PRINT)
+            if out is None:
+                out = im.resize(IMAGE_TARGET_PRINT, Image.LANCZOS)
+            out.save(path)
+    except Exception as e:
+        # 后处理失败不影响主流程：保留原图
+        print(f"[postprocess_4k] 跳过放大（保留原图）: {e}")
+    return path
 
 
 # ============================================================
@@ -105,6 +164,147 @@ def _resolve_reference_url(references: Iterable[Path | str]) -> str | None:
 
 
 # ============================================================
+#  合成「定妆参考图」（解决 gpt-image-2 单参考图 → 多角色页崩形）
+# ============================================================
+#  gpt-image-2 只能吃 1 张参考图，多角色页若只发主角那张，其余角色会被模型瞎编。
+#  这里把本页所有角色的固定定妆图横向拼成 1 张「定妆合集」白底图，作为唯一参考发出去，
+#  一张图里同时锁住每个人的长相/发型/服装，配合 prompt 里的姓名即可稳定还原。
+def build_reference_sheet(
+    refs: list[Path | str],
+    dest: Path,
+    labels: list[str] | None = None,
+    *,
+    panel_h: int = 768,
+    gap: int = 32,
+    pad: int = 40,
+    label_h: int = 64,
+) -> Path | None:
+    """把多张角色定妆图横向拼成一张白底「定妆合集」图。
+
+    Args:
+        refs: 角色定妆图路径列表（本地文件；URL 会被跳过——拼图需要本地像素）。
+        dest: 输出路径。
+        labels: 与 refs 对应的名字标签（英文名渲染良好；缺失/失败则不画标签）。
+    Returns:
+        拼好的图路径；可用本地图不足 2 张时返回 None（调用方应回退到原单图逻辑）。
+    """
+    imgs: list[Image.Image] = []
+    used_labels: list[str] = []
+    for i, r in enumerate(refs):
+        if not r:
+            continue
+        s = str(r)
+        if s.startswith("http://") or s.startswith("https://"):
+            continue  # 拼图需要本地像素
+        p = Path(s)
+        if not p.exists():
+            continue
+        try:
+            im = Image.open(p).convert("RGBA")
+        except Exception:
+            continue
+        # 贴到白底，去透明
+        bg = Image.new("RGBA", im.size, (255, 255, 255, 255))
+        im = Image.alpha_composite(bg, im).convert("RGB")
+        # 统一高度
+        w, h = im.size
+        new_w = max(1, int(w * panel_h / h))
+        im = im.resize((new_w, panel_h), Image.LANCZOS)
+        imgs.append(im)
+        used_labels.append((labels[i] if labels and i < len(labels) else "") or "")
+
+    if len(imgs) < 2:
+        return None  # 不足两张本地图，没必要拼，回退原逻辑
+
+    total_w = pad * 2 + sum(im.width for im in imgs) + gap * (len(imgs) - 1)
+    has_labels = any(used_labels)
+    total_h = pad * 2 + panel_h + (label_h if has_labels else 0)
+    sheet = Image.new("RGB", (total_w, total_h), (255, 255, 255))
+    draw = ImageDraw.Draw(sheet)
+
+    font = None
+    if has_labels:
+        try:
+            from PIL import ImageFont
+            font = ImageFont.truetype("arial.ttf", 36)
+        except Exception:
+            try:
+                from PIL import ImageFont
+                font = ImageFont.load_default()
+            except Exception:
+                font = None
+
+    x = pad
+    for im, lab in zip(imgs, used_labels):
+        sheet.paste(im, (x, pad))
+        if has_labels and lab and font is not None:
+            try:
+                tb = draw.textbbox((0, 0), lab, font=font)
+                tw = tb[2] - tb[0]
+            except Exception:
+                tw = len(lab) * 18
+            tx = x + max(0, (im.width - tw) // 2)
+            ty = pad + panel_h + (label_h - 40) // 2
+            draw.text((tx, ty), lab, fill=(40, 40, 40), font=font)
+        x += im.width + gap
+
+    dest = Path(dest)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    sheet.save(dest, "PNG")
+    return dest
+
+
+# ============================================================
+#  发送前敏感词清洗（避免 Azure 图像安全审核误判 safety_violations）
+# ============================================================
+#  说明：最终 prompt = 正向 + 负向 拼成一整段文本。Azure 的内容安全审核只看“词本身”，
+#  不区分“禁止出现 XX”这种否定语境，因此即使我们是在负向里禁止它，也会被判定违规拦截。
+#  这里在真正发送前，把这些高危词整体抹掉/替换为中性表达，保证安全意图不靠“写出敏感词”实现。
+_MODERATION_BLOCKLIST: tuple[str, ...] = (
+    "裸露", "性感", "暴露着装", "紧身暴露", "暴露",
+    "血腥", "暴力", "惊悚", "恐怖", "怪兽",
+    "持刀", "利器", "玩火", "成人隐喻", "成人化妆", "成人内容",
+    "宗教符号", "政治",
+    "nude", "naked", "nsfw", "sexy", "sexual", "violence", "blood", "gore",
+)
+
+
+def _sanitize_prompt_for_moderation(text: str) -> str:
+    """剔除发送给 gpt-image-2 的高危敏感词（不区分大小写）。
+
+    这些词通常出现在“请勿出现 XX”的负向里，但 Azure 审核只看词本身会误判。
+    抹掉后留下的孤立分隔符（、；,）会被收敛，避免产生空洞标点。
+    """
+    if not text:
+        return text
+    out = text
+    for w in _MODERATION_BLOCKLIST:
+        if not w:
+            continue
+        # 大小写不敏感替换
+        low = out.lower()
+        token = w.lower()
+        if token in low:
+            start = 0
+            pieces = []
+            while True:
+                i = low.find(token, start)
+                if i < 0:
+                    pieces.append(out[start:])
+                    break
+                pieces.append(out[start:i])
+                start = i + len(token)
+            out = "".join(pieces)
+            low = out.lower()
+    # 收敛被掏空后残留的标点/空白
+    for sep in ("、、", "；；", "，，", ";;", ",,", "//", "  "):
+        while sep in out:
+            out = out.replace(sep, sep[0])
+    out = out.replace("、；", "；").replace("，；", "；").replace("；、", "；")
+    return out.strip(" 、，；,;\n")
+
+
+# ============================================================
 #  gpt-image-2 异步生图
 # ============================================================
 def generate_image(
@@ -140,9 +340,10 @@ def generate_image(
         "Authorization": f"Bearer {JIMENG_API_KEY}",
         "Content-Type": "application/json",
     }
+    safe_prompt = _sanitize_prompt_for_moderation(prompt)
     payload: dict = {
         "model": JIMENG_MODEL,
-        "prompt": prompt[:4000],
+        "prompt": safe_prompt[:4000],
         "size": img_size,
         "n": 1,
     }
@@ -156,6 +357,7 @@ def generate_image(
             img_url = _poll_task(task_id, headers)
             img_bytes = requests.get(img_url, timeout=REQUEST_TIMEOUT).content
             dest.write_bytes(img_bytes)
+            postprocess_4k(dest)   # 方案A：居中裁 4:3 → 升 4K
             return dest
         except Exception as e:
             last_err = e

@@ -1,15 +1,15 @@
 """Teacher's Guide DOCX 生成器（9 大段长文）。
 
 骨架严格对齐官方 Spring Days(L1) 与 Visiting Scotland(L4) 样本：
+固定 8 模块顺序（不可缺、不可改）：
   1. Lesson Guide (Overview)         — Basic Info / Vocab&Phonics Goal / Key Objectives
   2. Pre-Reading Support              — Warm up / Phonics Focus 4 steps / Vocabulary Preview
   3. During Reading Strategies        — Picture Walk per page + Reading Routine + Rereading
-  4. Post-Reading Practice (Book Activities)
-  5. Post-Reading Practice (Worksheet)
-  6. Reading Check                    — Words / Fluency / Comprehension
-  7. Portfolio Creation Task          — 3 options (Creative / Oral / Critical Thinking)
-  8. Independent Reading
-  9. Lesson Close
+  4. Post-Reading Practice            — Book Activities + Worksheet Activities(含 Answer Key)
+  5. Reading Check                    — Words / Fluency / Comprehension
+  6. Portfolio Creation Task          — 3 options (Creative / Oral / Critical Thinking)
+  7. Independent Reading
+  8. Lesson Close
 
 每段标题用 Heading 2，正文 Poppins 11pt + Alibaba PuHuiTi 中文 fallback。
 内容由 ai_extractor 抽取的 outline 信息 + 模板字符串组合而成；可在 web 端再编辑。
@@ -25,6 +25,7 @@ from docx.oxml.ns import qn
 from docx.shared import Cm, Pt, RGBColor
 
 from parser import BookOutline
+from text_format import capitalize_names
 
 
 FONT_EN = "Poppins"
@@ -111,25 +112,29 @@ def build_teacher_guide(outline: BookOutline, out_path: Path) -> Path:
     _para(doc, "Round 1: Read with expression, matching the emotion of each page.")
     _para(doc, "Round 2: Read with rhythm; tap a foot to keep a steady pace.")
 
-    # === 4. Post-Reading Practice (Book Activities) ===
-    _heading(doc, "Post-Reading Practice (Book Activities)")
+    # === 4. Post-Reading Practice（单一顶层模块，内含 Book + Worksheet 两小节）===
+    _heading(doc, "Post-Reading Practice")
+
+    _heading(doc, "Book Activities", level=3)
     _para(doc, "Use the post-reading book pages to consolidate learning. "
                "Walk through each activity, model the first item, then have students complete the rest independently.")
 
-    # === 5. Post-Reading Practice (Worksheet) ===
-    _heading(doc, "Post-Reading Practice (Worksheet)")
-    ws_qs = getattr(outline, "_worksheet_questions", []) or []
+    _heading(doc, "Worksheet Activities", level=3)
+    ws_qs = _worksheet_activities(outline)
     for i, ws in enumerate(ws_qs[:6], 1):
-        _heading(doc, f"Activity {i}: {ws.get('title', 'Activity')}", level=3)
+        _heading(doc, f"Activity {i}: {ws.get('title', 'Activity')}", level=4)
         instr = ws.get("instruction", "")
         if instr:
             _para(doc, f"Goal: {instr}")
-        _para(doc, "Teacher Script: Model the first item, then have students complete the activity. "
-                   "Walk around and give targeted feedback.")
+        _para(doc, "Teacher Script (I Do): Model the first item aloud. "
+                   "(You Do): Students complete the rest; walk around and give targeted feedback.")
         if ws.get("extra"):
             _para(doc, f"Note: {ws['extra']}")
+        ak = ws.get("answer_key")
+        if ak:
+            _para(doc, f"Answer Key: {ak}")
 
-    # === 6. Reading Check ===
+    # === 5. Reading Check ===
     _heading(doc, "Reading Check")
     _para(doc, "Purpose: Check word understanding, reading fluency, and reading comprehension.")
     _para(doc, "Step 1: Words Recognition — Teacher points to the words one by one. "
@@ -139,7 +144,7 @@ def build_teacher_guide(outline: BookOutline, out_path: Path) -> Path:
     _para(doc, "Step 3: Reading Comprehension and Expression — Teacher asks the questions. "
                "Student answers independently. Teacher ticks the questions answered correctly.")
 
-    # === 7. Portfolio Creation Task ===
+    # === 6. Portfolio Creation Task ===
     _heading(doc, "Portfolio Creation Task")
     _para(doc, "Purpose: Create visible evidence of learning.")
     _heading(doc, "Option 1: Creative Arts:", level=3)
@@ -149,12 +154,12 @@ def build_teacher_guide(outline: BookOutline, out_path: Path) -> Path:
     _heading(doc, "Option 3: Critical Thinking:", level=3)
     _para(doc, _portfolio_critical(outline))
 
-    # === 8. Independent Reading ===
+    # === 7. Independent Reading ===
     _heading(doc, "Independent Reading (Optional)")
     _para(doc, "Student Task: Choose 2 books from the library on a related theme.")
     _para(doc, "Teacher Prompts: \"Look at the pictures.\" \"Try to read.\" \"Tell me one thing about the book.\"")
 
-    # === 9. Lesson Close ===
+    # === 8. Lesson Close ===
     _heading(doc, "Lesson Close")
     _heading(doc, "Summarize:", level=3)
     _para(doc, _build_objectives(outline))
@@ -169,6 +174,44 @@ def build_teacher_guide(outline: BookOutline, out_path: Path) -> Path:
 
 
 # ---------- 内容生成器 ----------
+def _worksheet_activities(outline: BookOutline) -> list[dict]:
+    """TG 的 Worksheet 小节与练习册同源：读 outline._worksheet_questions（原始 6 题），
+    并把 answer_key 规整成可读字符串，保证 TG Answer Key 与 Worksheet 逐题一致。
+    """
+    qs = getattr(outline, "_worksheet_questions", None) or []
+    out: list[dict] = []
+    for ws in qs[:6]:
+        if not isinstance(ws, dict):
+            continue
+        ak = ws.get("answer_key")
+        ak_str = _format_answer_key(ak, ws.get("items"))
+        out.append({
+            "title": ws.get("title") or ws.get("type", "Activity"),
+            "instruction": ws.get("instruction", ""),
+            "extra": ws.get("extra", ""),
+            "answer_key": ak_str,
+        })
+    return out
+
+
+def _format_answer_key(ak, items) -> str:
+    """把 answer_key / items 里的答案规整成 '1. xxx; 2. yyy' 字符串。"""
+    vals: list[str] = []
+    if isinstance(ak, list) and ak:
+        vals = [str(a) for a in ak if str(a).strip()]
+    elif isinstance(ak, dict) and ak:
+        vals = [f"{k}: {v}" for k, v in ak.items()]
+    elif isinstance(items, list):
+        for it in items:
+            if isinstance(it, dict):
+                a = it.get("answer") or it.get("correct")
+                if a is not None and str(a).strip():
+                    vals.append(str(a))
+    if not vals:
+        return ""
+    return "; ".join(f"{i + 1}. {v}" for i, v in enumerate(vals))
+
+
 def _vocab_words(outline: BookOutline) -> list[str]:
     if outline.vocabulary_simple:
         return outline.vocabulary_simple
@@ -244,7 +287,7 @@ def _set_a4_margins(doc: Document) -> None:
 
 def _heading(doc, text: str, level: int = 2) -> None:
     h = doc.add_heading(level=level)
-    run = h.add_run(text)
+    run = h.add_run(capitalize_names(text))
     sizes = {1: 22, 2: 16, 3: 13, 4: 12}
     _font(run, size_pt=sizes.get(level, 12), bold=True)
 
@@ -252,7 +295,7 @@ def _heading(doc, text: str, level: int = 2) -> None:
 def _para(doc, text: str) -> None:
     p = doc.add_paragraph()
     p.alignment = WD_ALIGN_PARAGRAPH.LEFT
-    run = p.add_run(text)
+    run = p.add_run(capitalize_names(text))
     _font(run, size_pt=11)
 
 

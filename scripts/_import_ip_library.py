@@ -61,9 +61,10 @@ EXTRA = [
     # Anna (已在项目内，作为 L5 What Makes a Good Friend 专书主角)
     (Path(r"C:\Users\Jered\picturebook-auto\assets\characters\anna_age12.png"),
      "anna_12", "Anna (12y)", "protagonist", "girl", 12,
-     "亚洲女孩，黑色头发扎两条低马尾(耳下)+中分轻刘海，"
-     "芥末黄色圆领针织毛衣+卡其色直筒长裤+白色低帮运动鞋，"
-     "不戴眼镜不戴发箍，大眼睛圆脸小鼻子腮粉，温和微笑"),
+     "亚洲女孩（与Mia、Tommy完全不同的新角色），黑色齐下巴直发bob+斜刘海，"
+     "头顶戴一条细白色发箍（必须有发箍，是Anna识别符号，不能丢），"
+     "纯绿色长袖圆领毛衣（plain无图案）+卡其色直筒长裤+白色低帮运动鞋，"
+     "绝不扎马尾/双马尾/辫子、不戴眼镜，大眼睛圆脸小鼻子腮粉，温和微笑"),
 ]
 
 

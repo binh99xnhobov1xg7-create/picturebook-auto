@@ -19,6 +19,7 @@ from config import (
     WHITE, text_box_position,
 )
 from parser import BookOutline, PageSpec
+from text_format import capitalize_names
 
 
 def build_picturebook_pptx(
@@ -68,7 +69,7 @@ def _build_cover(slide, outline: BookOutline, image_path: Path) -> None:
     tf.margin_left = tf.margin_right = Inches(0.05)
     p = tf.paragraphs[0]
     p.alignment = PP_ALIGN.CENTER
-    _set_run(p.add_run() if p.runs else _ensure_run(p), outline.title, Pt(FONT_SIZE_TITLE), BLACK)
+    _set_run(p.add_run() if p.runs else _ensure_run(p), capitalize_names(outline.title), Pt(FONT_SIZE_TITLE), BLACK)
 
     # 右上双徽章 Level X / Book N
     badge_w, badge_h = Inches(1.5), Inches(0.5)
@@ -108,7 +109,7 @@ def _build_story(slide, page: PageSpec, image_path: Path, page_number: int) -> N
     tf.margin_top = tf.margin_bottom = Inches(TEXT_BOX_PADDING_IN)
     p = tf.paragraphs[0]
     p.alignment = PP_ALIGN.LEFT
-    _set_run(_ensure_run(p), page.text, Pt(FONT_SIZE_BODY), BLACK)
+    _set_run(_ensure_run(p), capitalize_names(page.text), Pt(FONT_SIZE_BODY), BLACK)
 
     # 页码：偶数页左下，奇数页右下
     _add_page_number(slide, page_number)

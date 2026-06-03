@@ -34,6 +34,7 @@ from config import (
     DOUBAO_API_KEY, JIMENG_API_KEY, MOCK_AI_EXTRACT, MOCK_IMAGES,
     OUTPUTS_DIR, brand_color_hex, resolve_ip_age, rr_question_distribution,
     COMPOSITION_POLICY,
+    render_global_standards_md, render_deliverable_spec_md, DELIVERABLE_SPECS,
 )
 from cn_prompt_builder import build_cn_page_prompt, page_display_name
 from parser import BookOutline, PageSpec
@@ -63,11 +64,18 @@ SHOT_OPTIONS = ["close", "medium", "full", "wide"]
 
 BOOK_STEPS = [
     (1, "📚 输入 + AI 抽取"),
-    (2, "📐 底层逻辑（只读）"),
     (3, "🎭 IP + 🎨 画风锁定"),
     (4, "🖼️ 生图工作台"),
     (5, "📦 组装 4 件套"),
 ]
+
+
+# 内部步骤号（历史遗留 1/3/4/5，2 已并入）→ 给用户看的连续序号 1/2/3/4
+_STEP_DISPLAY = {num: i + 1 for i, (num, _t) in enumerate(BOOK_STEPS)}
+
+
+def _step_display(step_num: int) -> int:
+    return _STEP_DISPLAY.get(step_num, step_num)
 
 
 def _step_status(step_num: int) -> str:
@@ -97,7 +105,7 @@ def _render_progress_bar() -> None:
             f"background:{bg};border-radius:8px;border:2px solid {color};'>"
             f"<div style='font-size:1.2rem'>{icon}</div>"
             f"<div style='font-size:0.7rem;color:{color};font-weight:600;'>"
-            f"Step {num}</div>"
+            f"Step {_step_display(num)}</div>"
             f"<div style='font-size:0.65rem;color:#6b7280;'>{title}</div>"
             f"</div>",
             unsafe_allow_html=True,
@@ -117,7 +125,7 @@ def _locked_step_expander(step_num: int, title: str, default_expanded: bool = Tr
         st.markdown(
             f"<div style='padding:0.7rem 1rem;background:#f9fafb;border-radius:8px;"
             f"color:#9ca3af;margin:0.4rem 0;border:1px dashed #d1d5db;'>"
-            f"{icon} <b>Step {step_num}：{title}</b> &nbsp;&nbsp;"
+            f"{icon} <b>Step {_step_display(step_num)}：{title}</b> &nbsp;&nbsp;"
             f"<span style='font-size:0.85rem'>（请先完成上一步并点 ✅ 确认才能解锁）</span>"
             f"</div>",
             unsafe_allow_html=True,
@@ -126,7 +134,7 @@ def _locked_step_expander(step_num: int, title: str, default_expanded: bool = Tr
 
     expanded = (status == "active") and default_expanded
     label_color = {"done": "#10b981", "active": "#f59e0b"}[status]
-    return st.expander(f"{icon} **Step {step_num}：{title}**", expanded=expanded)
+    return st.expander(f"{icon} **Step {_step_display(step_num)}：{title}**", expanded=expanded)
 
 
 def _confirm_next_step(step_num: int, label: str = "", help_text: str = "") -> None:
@@ -137,7 +145,7 @@ def _confirm_next_step(step_num: int, label: str = "", help_text: str = "") -> N
     cols = st.columns([3, 1])
     cols[0].caption(help_text or "👉 确认无误后，点击右侧按钮解锁下一步")
     if cols[1].button(
-        label or f"✅ 确认 Step {step_num} 并进入下一步",
+        label or f"✅ 确认 Step {_step_display(step_num)} 并进入下一步",
         type="primary",
         key=f"confirm_step_{step_num}",
         width="stretch",
@@ -246,12 +254,14 @@ TEXT_SAFE_POSITION = [
     "无文字 / 不留",
 ]
 
+# 注意：这些会拼进发给 gpt-image-2 的负向文本，Azure 安全审核只看词本身，
+# 不能写敏感词（暴力/血腥/裸露等），否则误判 safety_violations 拦截整页。
 _DEFAULT_GLOBAL_AVOID = (
     "丑陋 / 畸形\n"
     "多手指 / 错位关节\n"
     "字幕 / 水印 / logo\n"
-    "暴力 / 血腥 / 恐怖\n"
-    "成人化妆容\n"
+    "阴暗压抑画风\n"
+    "浓妆 / 成熟感\n"
     "低分辨率 / 模糊"
 )
 
@@ -366,7 +376,7 @@ def _render_style_panel_step(step_num: int, embed: bool = False) -> None:
                 value=defaults.get("global_must", ""),
                 height=120,
                 key="cfg_must",
-                placeholder="例如：\nAnna 戴琥珀色细框眼镜\nMia 始终扎双低马尾\n所有场景必有教室元素",
+                placeholder="例如：\nAnna 头戴白色发箍\nMia 始终扎单束高马尾\n所有场景必有教室元素",
             )
         with col8:
             global_avoid = st.text_area(
@@ -584,7 +594,7 @@ def _render_step4_combined(step_num: int, embed: bool = False) -> None:
                         height=110,
                         key=f"s4_must_{idx}",
                         label_visibility="collapsed",
-                        placeholder="Anna 戴琥珀色细框眼镜\n桌上 5 本课本",
+                        placeholder="Anna 头戴白色发箍\n桌上 5 本课本",
                     )
                 with fc2:
                     st.caption("④ 必避免（每行一条）")
@@ -984,7 +994,7 @@ def _render_step4_page_facts(step_num: int) -> None:
                     height=100,
                     key=f"s4_must_{idx}",
                     label_visibility="collapsed",
-                    placeholder="Anna 戴琥珀色细框眼镜\nAnna 黑色双低马尾\n桌上 5 本课本\n教室背景：绿色黑板",
+                    placeholder="Anna 头戴白色发箍、穿绿色毛衣\nAnna 黑色齐下巴bob短发\n桌上 5 本课本\n教室背景：绿色黑板",
                 )
             with c4:
                 st.caption("④ 必避免（每行一条，会追加到反向提示词）")
@@ -1328,6 +1338,18 @@ def _render_step_rules(step_num: int) -> None:
             f"- 背景占 **{cp['background_pct']}**，环境清晰但不喧宾夺主\n"
             f"- 视角：{cp['perspective']}　·　画风：{cp['style']}"
         )
+        st.markdown(
+            "**🧼 画面平滑 / 统一（自动注入每页正向 + 反向提示词）**\n"
+            "- 整体**干净、平滑、统一**，强调**大色块叙事**与整体轮廓\n"
+            "- **不要细碎噪点 / 高频纹理 / 脏污颗粒 / 密集小装饰**\n"
+            "- 边缘清晰利落、表面干净、画面呼吸感强、一目了然"
+        )
+        st.markdown(
+            "**🎭 系列默认 IP + 全本一致性（自动套用）**\n"
+            "- 系列固定主角 **Mia（女孩）/ Tommy（男孩）**\n"
+            "- 故事**没出现命名主角时**：女孩默认套 **Mia** 形象、男孩默认套 **Tommy** 形象\n"
+            "- 一旦定下角色形象，**发型 / 服装 / 配饰 / 五官每页保持一致**，绝不跨页跳变"
+        )
         st.divider()
 
         c1, c2 = st.columns(2)
@@ -1398,6 +1420,104 @@ def _render_step_workbench(step_num: int) -> None:
         )
 
 
+def _render_batch_mode() -> None:
+    """📚 批量生产：N 个大纲 → N×4 件套。详细实现见 batch_runner。"""
+    st.subheader("📚 批量生产（输入 N 个大纲 → 每本自动产出 4 件套）")
+    st.caption(
+        "每本之间数据严格隔离；绘本图全自动生成（标记『待人工抽查』，可事后回单本模式逐页重生）。"
+    )
+    st.info(
+        "粘贴多本大纲，每本用 `===` 分隔。每本第一行 = `Title | Level | Book#`，其后为故事原文。"
+    )
+    st.text_area(
+        "批量大纲",
+        height=220,
+        key="batch_outlines_raw",
+        placeholder=(
+            "Spring Days | L1 | 02\n"
+            "Mia sees a flower. ...\n"
+            "===\n"
+            "What Makes a Good Friend? | L5 | 01\n"
+            "Anna felt nervous ...\n"
+        ),
+    )
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        st.number_input("并发上限", min_value=1, max_value=8, value=2, key="batch_concurrency")
+    with c2:
+        st.selectbox("输出方式", ["每本子文件夹", "平铺 + 规范命名"], key="batch_output_mode")
+    with c3:
+        st.checkbox("打包 ZIP", value=True, key="batch_zip")
+    if st.button("🚀 开始批量生产", type="primary"):
+        try:
+            from batch_runner import run_batch_from_ui
+            run_batch_from_ui()
+        except Exception as e:
+            st.error(f"批量生产启动失败：{e}")
+
+
+def _render_global_standards_panel() -> None:
+    """Section 0：全局底层逻辑（只读）。放在最前，让老师一眼看清今天的硬标准。
+
+    数据来自 config 单一数据源（render_global_standards_md），与各 builder 同源。
+    """
+    outline = st.session_state.get("outline")
+    level = outline.level if outline else None
+    with st.expander("📐 全局底层逻辑（只读 · 所有交付物 100% 强制套用）", expanded=(outline is None)):
+        st.caption("💡 这些是系统**全自动套用**的硬标准，无需你输入。批量生产时同样对每一本生效。")
+        st.markdown(render_global_standards_md(level))
+        st.divider()
+        st.markdown("##### 五、4 大交付物尺寸 / 规格（点开看每件细则）")
+        cols = st.columns(4)
+        for i, key in enumerate(["book", "worksheet", "rr", "tg"]):
+            spec = DELIVERABLE_SPECS[key]
+            with cols[i]:
+                with st.popover(f"{spec['icon']} {spec['name']}"):
+                    st.markdown(render_deliverable_spec_md(key, level))
+
+
+def _render_evals_sidebar() -> None:
+    """侧边栏：一键体检（evals）— 对当前 outline 跑纯规则检查，出红/黄/绿报告。"""
+    with st.sidebar:
+        st.markdown("### 🔬 一键体检 (evals)")
+        st.caption("对当前故事跑规则检查：词汇 lemma/小写/专有名词、绘本 IP+年龄、Worksheet 结构、RR 星级。")
+        if not st.button("运行体检", width="stretch", key="run_evals_btn"):
+            return
+        outline = st.session_state.get("outline")
+        ec = st.session_state.get("extracted")
+        if not outline:
+            st.warning("请先完成 AI 抽取，再运行体检。")
+            return
+        try:
+            from evals import run_all, format_report, OK, WARN, ERROR
+            ws = getattr(ec, "worksheet_questions", None) if ec else None
+            rr = (getattr(ec, "reading_report", None)
+                  or getattr(ec, "rr_items", None)) if ec else None
+            report = run_all(
+                outline=outline,
+                worksheet_questions=ws,
+                rr_items=rr,
+                cast_pool=st.session_state.get("story_cast_pool") or None,
+                generic_overrides=st.session_state.get("generic_overrides") or None,
+            )
+            if report.passed and report.n_warn == 0:
+                st.success("✅ 全部通过，无问题")
+            elif report.passed:
+                st.info(f"✅ 无硬性错误，{report.n_warn} 条提醒")
+            else:
+                st.error(f"❌ {report.n_error} 条硬性问题需修，{report.n_warn} 条提醒")
+            for it in report.issues:
+                if it.level == ERROR:
+                    st.markdown(f"❌ **[{it.category}]** {it.msg}")
+                elif it.level == WARN:
+                    st.markdown(f"⚠️ [{it.category}] {it.msg}")
+                else:
+                    st.markdown(f"✅ <span style='color:#888'>[{it.category}] {it.msg}</span>",
+                                unsafe_allow_html=True)
+        except Exception as e:
+            st.warning(f"体检执行出错：{e}")
+
+
 def main() -> None:
     st.set_page_config(
         page_title="VIPKID Dino 绘本工作流",
@@ -1419,6 +1539,23 @@ def main() -> None:
         st.session_state.extracted = None
     if "outline" not in st.session_state:
         st.session_state.outline = None
+
+    _render_evals_sidebar()
+
+    # ---------- Section 0：全局底层逻辑（只读·一眼看清今天要做什么）----------
+    _render_global_standards_panel()
+
+    # ---------- 模式：单本 / 批量 ----------
+    mode = st.radio(
+        "制作模式",
+        ["📖 单本制作", "📚 批量生产"],
+        horizontal=True,
+        key="produce_mode",
+        help="单本：逐本精调出图 + 4 件套。批量：一次跑多本大纲 → 每本 4 件套（绘本全自动出图）。",
+    )
+    if mode == "📚 批量生产":
+        _render_batch_mode()
+        return
 
     # ---------- Section A：输入表单 ----------
     # v1.8.2：极简输入 — 必填只有 3 项，其余全自动 + 透明展示
@@ -1480,12 +1617,23 @@ def main() -> None:
                     value="",
                     help="Smart/L0/L1=Pre-A1, L2=A1, L3=A1+, L4=A2, L5=B1, L6=B1+",
                 )
+                # 年龄焊死：由 Level 自动决定（Smart/L0-2=8、L3-4=10、L5-6=12），
+                # 默认锁定，只有勾选「高级手改」才允许覆盖，避免人物年龄跑偏。
                 ip_age_default = resolve_ip_age(level)
-                ip_age = st.number_input(
-                    "IP 年龄（默认按 Level）",
-                    min_value=6, max_value=14, value=ip_age_default,
-                    help="Smart/L0-3 = 8 岁；L4 = 10 岁；L5-6 = 12 岁",
+                st.markdown(
+                    f"**IP 年龄：{ip_age_default} 岁** 🔒（按 Level 自动焊死）"
                 )
+                _age_override = st.checkbox(
+                    "高级：手动覆盖年龄", value=False,
+                    help="一般不需要。Smart/L0-2=8 岁；L3-4=10 岁；L5-6=12 岁，由 Level 决定",
+                )
+                if _age_override:
+                    ip_age = st.number_input(
+                        "手动 IP 年龄", min_value=6, max_value=14,
+                        value=ip_age_default,
+                    )
+                else:
+                    ip_age = ip_age_default
             with col3:
                 # L3-6 才让选 Fiction / Non-Fiction
                 level_digits = "".join(ch for ch in level if ch.isdigit())
@@ -1496,9 +1644,10 @@ def main() -> None:
                 if lvl_n >= 3:
                     fiction_type = st.selectbox(
                         "Reader Type (L3-6)",
-                        ["fiction", "non-fiction"],
+                        ["（AI 自动判断）", "fiction", "non-fiction"],
                         index=0,
-                        help="L3-6 在 Reading Report 第一行显示为 'Fiction' 或 'Non-Fiction'",
+                        help="L3-6 在 Reading Report 第一行显示为 'Fiction' 或 'Non-Fiction'。"
+                             "默认让 AI 按故事内容判断；如需强制可手选。",
                     )
                 else:
                     fiction_type = ""
@@ -1523,7 +1672,8 @@ def main() -> None:
                         emoji = {"protagonist": "⭐", "supporting": "👥", "adult": "👩‍🏫",
                                  "pet": "🐱", "brand": "🦖", "family": "👨‍👩‍👧"}.get(ch["kind"], "•")
                         check = "✅" if ch["reference_exists"] else "⚠️"
-                        st.markdown(f"{emoji} **{ch['key']}** ({ages_str}) {check}")
+                        disp_name = ch["key"].replace("_", " ").title()
+                        st.markdown(f"{emoji} **{disp_name}** ({ages_str}) {check}")
                 st.caption("✅ = 有官方参考图  ⚠️ = 缺参考图。出现这些名字时系统会自动加载形象。")
             except Exception as e:
                 st.warning(f"角色注册表加载失败：{e}")
@@ -1545,7 +1695,9 @@ def main() -> None:
             # 用户没填 cefr / theme / fiction_type 时，用自动值兜底
             cefr_final = cefr.strip() or auto["cefr"]
             theme_final = theme.strip() or auto["theme"]
-            fiction_final = fiction_type.strip() or auto["fiction_type"]
+            # Reader Type：默认「（AI 自动判断）」→ 用 AI 判定值；否则用老师手选值
+            _ft = (fiction_type or "").strip()
+            fiction_final = auto["fiction_type"] if _ft.startswith("（AI") else (_ft or auto["fiction_type"])
 
             ec = extract_all(
                 raw_story=raw_story,
@@ -1594,48 +1746,47 @@ def main() -> None:
 
     # ---------- v2.0：7 步严格解锁绘本组装工作流 ----------
     if st.session_state.extracted is not None:
-        # 抽取完成 → 至少解锁到 Step 2
-        if st.session_state.get("book_unlocked_step", 1) < 2:
-            st.session_state["book_unlocked_step"] = 2
+        # 抽取完成 → 底层逻辑已前置为全局只读面板，绘本轨直接解锁到 Step 3（IP+画风）
+        if st.session_state.get("book_unlocked_step", 1) < 3:
+            st.session_state["book_unlocked_step"] = 3
 
         st.divider()
-        st.subheader("🛠️ 制作工作台（绘本 / Worksheet 双轨并行）")
-        st.caption(
-            "两条轨道**共享同一份 AI 抽取数据**（词表/分页/题目）。"
-            "📘 绘本轨负责出图；📝 Worksheet 轨负责逐题打磨。"
-            "最终 4 件套在「📘 绘本轨 · Step 5 组装」一键打包（含 Worksheet / Reading Report / Teacher Guide）。"
-        )
+        st.subheader("🛠️ 4 交付物工作台（4 个角标 · 共享同一份 AI 抽取数据 · 一起产出）")
 
-        tab_book, tab_ws = st.tabs(["📘 绘本工作流", "📝 Worksheet / 阅读报告 工作流"])
+        # 共享抽取数据（词表/语法/拼读/读者类型）— 4 件套都用，放在角标上方
+        _render_shared_extract_panel()
+
+        tab_book, tab_ws, tab_rr, tab_tg = st.tabs([
+            "📖 绘本 PPT", "📝 练习册 Worksheet",
+            "📄 阅读报告 RR", "👩‍🏫 教师指南 TG",
+        ])
 
         with tab_book:
-            st.subheader("📘 绘本组装工作流（5 步严格解锁 · 每步点 ✅ 才能进入下一步）")
+            st.markdown(render_deliverable_spec_md("book", st.session_state.outline.level))
+            st.caption("先按 IP/场景锁定 → 生图工作台逐页出图/图生图 → 底部一键产出 4 件套。")
             _render_progress_bar()
 
             col_reset, _ = st.columns([1, 5])
             with col_reset:
                 _reset_workflow_button()
 
-            # Step 2：📐 底层逻辑（只读硬规则）— 上移到最前，先让老师心里有数
-            _render_step_rules(step_num=2)
-
-            # Step 3：🎭 人物 IP + 🎨 画风（合并）
+            # Step 2：🎭 人物 IP + 🎨 画风（底层逻辑已前置为全局只读面板）
             _render_step_ip_style(step_num=3)
-
-            # Step 4：🖼️ 生图工作台（提示词编辑 + 生成 + 审核重生）
+            # Step 3：🖼️ 生图工作台（提示词编辑 + 生成 + 审核重生 + 图生图）
             _render_step_workbench(step_num=4)
-
-            # Step 5：📦 组装 4 件套
+            # Step 4：📦 一键产出 4 件套
             _render_step7_assemble(step_num=5)
 
         with tab_ws:
-            st.subheader("📝 Worksheet / Reading Report 过程性出题")
-            st.caption(
-                "💡 在这里逐题打磨题目：①换题型/难度 ②🤖 AI 重出 ③手动改。"
-                "词表为两轨共享（绘本 PPT 也用）。改完点「👀 生成 Worksheet 初稿」预览，"
-                "或回「📘 绘本工作流 · Step 5」一键组装 4 件套。"
-            )
-            _render_editable_preview()
+            st.caption("逐题打磨：①换题型/难度 ②🤖 AI 重出 ③手动改 ④配图来源。改完点「👀 生成初稿」预览。")
+            _render_worksheet_editor()
+
+        with tab_rr:
+            st.caption("阅读报告字段与阅读表达题预览/单题改；空白版/示例版双模式在组装时选。")
+            _render_rr_editor()
+
+        with tab_tg:
+            _render_tg_panel()
 
 
 # =============================== 编辑器 ===============================
@@ -1886,6 +2037,8 @@ def _generate_worksheet_preview() -> None:
                 outline,
                 draft_path,
                 image_paths=image_paths or None,
+                sentence_image_mode=_ws_sentence_mode(),
+                second_reading_mode=_ws_second_reading_mode(),
             )
     except Exception as e:
         st.error(f"Worksheet 初稿生成失败：{e}")
@@ -1985,7 +2138,7 @@ def _render_unified_page_panel() -> None:
                     placeholder=(
                         "AI 应该生成 120-220 字连贯描述：\n"
                         "主体（人物+具体外观）+ 动作（具体动词姿势）+ 环境（可见物品）+ 氛围（光照）\n"
-                        "例：教室一角，12 岁 Anna 戴琥珀色细框眼镜...坐在木课桌后双手颤抖..."
+                        "例：教室一角，Anna 坐在木课桌后，双手紧握放在桌面微微颤抖，眼神紧张（只写动作表情，不写外观）..."
                     ),
                 )
                 if new_scene_cn != ec_page.get("scene_cn", ""):
@@ -2033,8 +2186,7 @@ def _render_unified_page_panel() -> None:
                     label_visibility="collapsed",
                     placeholder=(
                         "（可选）写明必须画上的元素，例如：\n"
-                        "Anna 戴琥珀色细框眼镜\n"
-                        "Anna 黑色双低马尾，每条垂在肩前\n"
+                        "Anna 头戴白色发箍\n"
                         "桌上有一摞 5 本课本\n"
                         "教室背景：绿色黑板 + 几张课桌"
                     ),
@@ -2067,14 +2219,19 @@ def _render_unified_page_panel() -> None:
 
 
 def _render_editable_preview() -> None:
+    """兼容旧调用：依次渲染 共享抽取 + RR + Worksheet（单页布局）。"""
+    _render_shared_extract_panel()
+    _render_rr_editor()
+    _render_worksheet_editor()
+
+
+def _render_shared_extract_panel() -> None:
+    """共享：词汇/语法/拼读/读者类型（4 件套都用到，放在 Tab 上方或绘本轨内）。"""
     ec = st.session_state.extracted
     outline: BookOutline = st.session_state.outline
 
-    st.divider()
-    st.subheader("✏️  AI 抽取结果（请核对/微调）")
-
     # 词表
-    with st.expander("📚 词汇表 / 语法 / 拼读 / 读者类型", expanded=True):
+    with st.expander("📚 词汇表 / 语法 / 拼读 / 读者类型（4 件套共享）", expanded=True):
         col1, col2 = st.columns(2)
         is_dual = outline.is_dual_vocab_level
         with col1:
@@ -2091,15 +2248,40 @@ def _render_editable_preview() -> None:
                 "Grammar Focus", value=ec.grammar_focus, key="grammar")
             ec.phonics = st.text_input(
                 "Phonics", value=ec.phonics, key="phonics")
-            ec.reader_type = st.text_input(
-                "Reader Type", value=ec.reader_type, key="reader")
+            _rt_opts = _reader_type_options(st.session_state.outline.level)
+            if len(_rt_opts) == 1:
+                ec.reader_type = _rt_opts[0]
+                st.text_input("Reader Type", value=_rt_opts[0], disabled=True,
+                              key="reader", help="L0-2 按 Level 固定体裁类，无需选择。")
+            else:
+                _norm = {"fiction": "Fiction", "non-fiction": "Non-Fiction",
+                         "nonfiction": "Non-Fiction"}
+                _cur = _norm.get((ec.reader_type or "").strip().lower(),
+                                 (ec.reader_type or "").strip())
+                if _cur not in _rt_opts:
+                    _cur = _rt_opts[0]
+                ec.reader_type = st.selectbox(
+                    "Reader Type", _rt_opts, index=_rt_opts.index(_cur), key="reader",
+                    help="L3-6 = Fiction / Non-Fiction。")
             ec.word_count = st.number_input(
                 "Word Count", min_value=0, value=int(ec.word_count or 0), key="wc")
 
     # v2.0：unified_page_panel 已被 Step 4 + Step 5 取代，这里不再渲染
 
+
+def _render_rr_editor() -> None:
+    """📄 阅读报告 Tab：阅读表达题（按 Level 题量梯度）+ 预览/单题改。"""
+    ec = st.session_state.extracted
+    st.markdown(render_deliverable_spec_md("rr", st.session_state.outline.level))
+    st.radio(
+        "输出版本",
+        ["空白版（教师手填）", "示例答案版（演示）"],
+        horizontal=True,
+        key="rr_answer_mode",
+        help="示例答案版会在每题下方加灰色斜体示例答案；组装 4 件套时按此设置生成。",
+    )
     # RR 题目
-    with st.expander("📝 Reading Report 阅读表达题（按 Level 题量梯度）", expanded=False):
+    with st.expander("📝 Reading Report 阅读表达题（按 Level 题量梯度）", expanded=True):
         for i, q in enumerate(ec.rr_questions):
             star = "⭐" * int(q.get("stars") or 1)
             cols = st.columns([10, 2])
@@ -2120,8 +2302,73 @@ def _render_editable_preview() -> None:
                         help="P1 = 封面，故事页是 P2-P8",
                     )
 
+
+def _ws_sentence_mode() -> str:
+    """读取 Sentence 页配图来源选择 → builder 参数。"""
+    return "none" if st.session_state.get("ws_sentence_image_mode", "").startswith("不配图") else "reuse"
+
+
+# 第 2 张 Reading 页内容：UI 文案 → builder 参数
+_SECOND_READING_LABELS: dict[str, str] = {
+    "自动（L0-2 思维导图 / L3-6 写作）": "auto",
+    "思维导图 SWBST 复述": "mindmap",
+    "写作脚手架": "writing",
+    "PBL 迷你项目": "pbl",
+    "阅读理解延伸（再来一页阅读题）": "reading",
+}
+
+
+def _ws_second_reading_mode() -> str:
+    """读取『第 2 张 Reading 页内容』选择 → builder 参数（默认 auto）。"""
+    label = st.session_state.get("ws_second_reading_mode", "")
+    return _SECOND_READING_LABELS.get(label, "auto")
+
+
+# Reader Type 分级体裁（用户拍板）：L3-6 = Fiction/Non-Fiction；L0-2 = 固定体裁类
+_L02_READER_TYPES = {
+    "smart": "Concept & Knowledge-Building Readers",
+    "0": "Concept & Knowledge-Building Readers",
+    "1": "Patterned Narrative & Informational Readers",
+    "2": "Early Independent Genre-Exposure Readers",
+}
+
+
+def _reader_type_options(level: str) -> list[str]:
+    """按级别返回 Reader Type 候选。L3-6 给 Fiction/Non-Fiction 两选；L0-2 固定一类。"""
+    digits = "".join(ch for ch in (level or "") if ch.isdigit())
+    try:
+        n = int(digits) if digits else 0
+    except ValueError:
+        n = 0
+    if n >= 3:
+        return ["Fiction", "Non-Fiction"]
+    key = (level or "").lower()
+    return [_L02_READER_TYPES.get(key,
+            _L02_READER_TYPES.get(digits, "Early Independent Genre-Exposure Readers"))]
+
+
+def _render_worksheet_editor() -> None:
+    """📝 练习册 Tab：6 题(2 词汇+2 句型+2 阅读)逐题打磨 + 配图 + 预览。"""
+    ec = st.session_state.extracted
+    outline: BookOutline = st.session_state.outline
+    st.markdown(render_deliverable_spec_md("worksheet", outline.level))
+    st.radio(
+        "Sentence 页配图来源",
+        ["复用绘本图（默认）", "不配图"],
+        horizontal=True,
+        key="ws_sentence_image_mode",
+        help="句子题默认复用绘本插画（page_02 起）；选『不配图』则选项满宽展开。",
+    )
+    st.selectbox(
+        "第 2 张 Reading 页内容",
+        list(_SECOND_READING_LABELS.keys()),
+        index=0,
+        key="ws_second_reading_mode",
+        help="练习册固定 6 页：2 词汇 + 2 句型 + 2 阅读。第 1 张 Reading 是阅读理解，"
+             "第 2 张可选思维导图/写作/PBL/阅读延伸（标题统一 Reading）。默认按级别。",
+    )
     # Worksheet 题目
-    with st.expander("📋 Worksheet 6 道题（题型 + 题项 JSON）", expanded=False):
+    with st.expander("📋 Worksheet 6 道题（题型 + 题项 JSON）", expanded=True):
         st.caption("题项是 JSON 格式（list of dict），如需自由编辑可直接改下面文本框。")
 
         # v2.0：Reading MC 页题数选择（4/6/8）
@@ -2199,6 +2446,35 @@ def _render_editable_preview() -> None:
                 _render_ws_item_editor(ws, i)
 
 
+def _render_tg_panel() -> None:
+    """👩‍🏫 教师指南 Tab：展示 8 模块规格 + 生成预览（DOCX）。"""
+    outline: BookOutline = st.session_state.outline
+    st.markdown(render_deliverable_spec_md("tg", outline.level))
+    st.caption(
+        "教师指南 100% 英文、按 8 固定模块顺序生成；Answer Key 与 Worksheet 同源一致。"
+        "内容全部取自大纲，不编造。"
+    )
+    if st.button("👀 生成 Teacher's Guide 预览（DOCX）", key="tg_preview_btn"):
+        try:
+            run_dir, _, name_prefix = _ensure_run_dir()
+            tg_path = run_dir / f"{name_prefix}_教师指南.docx"
+            build_teacher_guide(outline, tg_path)
+            st.session_state["tg_draft_path"] = str(tg_path)
+        except Exception as e:
+            st.error(f"生成失败：{e}")
+    tg_draft = st.session_state.get("tg_draft_path")
+    if tg_draft and Path(tg_draft).exists():
+        st.success(f"✅ 已生成：`{Path(tg_draft).name}`（约 {Path(tg_draft).stat().st_size//1024} KB）")
+        with open(tg_draft, "rb") as f:
+            st.download_button(
+                "⬇️ 下载 Teacher's Guide DOCX",
+                data=f.read(),
+                file_name=Path(tg_draft).name,
+                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                key="tg_draft_dl",
+            )
+
+
 # ============================================================================
 # v3.3 过程性出题：题型切换 / 单题 AI 重出 / 难度梯度说明
 # ============================================================================
@@ -2208,39 +2484,38 @@ _WS_SECTION_BY_SLOT = ["vocab", "vocab", "sentence", "sentence", "reading", "rea
 
 # 每个 section 允许切换的题型（限定在 builder 能正确排版的范围内）
 # (legacy type id, 中文/英文短标签, 难度星级)
+# v3.4：彻底删除涂色/纯涂圈/纯绘画类（无明确语言输出）；低龄改为看图类（有图、有词/句输出）。
 _WS_TYPE_CHOICES: dict[str, list[tuple[str, str, int]]] = {
     "vocab": [
-        ("color_match", "Color the Words", 1),
-        ("circle_match", "Match Pictures", 1),
-        ("word_to_pic", "Word ↔ Picture", 1),
-        ("fill_blank_simple", "Fill Blanks (simple)", 1),
-        ("unscramble", "Unscramble Letters", 2),
-        ("fill_blank", "Fill Blanks", 2),
-        ("emotion_fill", "Choose the Emotion", 3),
-        ("fill_blank_advanced", "Fill Blanks (advanced)", 3),
-        ("match_definition", "Match Word ↔ Definition", 3),
+        ("word_to_pic", "看图选词 Look & Choose Word", 1),
+        ("circle_match", "词↔图连线 Picture-Word Match", 1),
+        ("fill_blank_simple", "看图填词 Fill the Word (simple)", 1),
+        ("unscramble", "拼词 Unscramble Letters", 2),
+        ("fill_blank", "填空 Fill Blanks", 2),
+        ("emotion_fill", "选情绪词 Choose the Emotion", 3),
+        ("fill_blank_advanced", "进阶填空 Fill Blanks (advanced)", 3),
+        ("match_definition", "词↔义连线 Match Word ↔ Definition", 3),
     ],
     "sentence": [
-        ("true_false_simple", "True / False (simple)", 1),
-        ("word_order_simple", "Word Order (simple)", 1),
-        ("true_false", "True / False", 2),
-        ("word_order", "Sentence Order", 2),
-        ("fill_blank", "Complete the Sentence", 2),
-        ("story_sequence", "Story Sequence", 3),
-        ("rewrite_tense", "Rewrite (tense)", 3),
-        ("rewrite_voice", "Rewrite (voice/style)", 3),
+        ("true_false_simple", "看图判断 True / False (simple)", 1),
+        ("word_order_simple", "看图排词 Word Order (simple)", 1),
+        ("true_false", "判断对错 True / False", 2),
+        ("word_order", "句子排序 Sentence Order", 2),
+        ("fill_blank", "看图填句 Complete the Sentence", 2),
+        ("story_sequence", "故事排序 Story Sequence", 3),
+        ("rewrite_tense", "句型改写 Rewrite (tense)", 3),
+        ("rewrite_voice", "句型改写 Rewrite (voice/style)", 3),
     ],
     "reading": [
-        ("draw_favorite", "Draw Favorite Page", 1),
-        ("personal_simple", "About Me", 1),
-        ("plot_chart", "Story Chart", 2),
-        ("inference", "Read & Infer (MCQ)", 3),
-        ("plot_chart_pbl", "Plot & Reflection", 3),
-        ("compare_contrast", "Compare & Contrast", 3),
-        ("personal_write", "Write About Yourself", 3),
-        ("open_ended_pbl", "Project Response", 3),
-        ("essay_short", "Short Essay", 3),
-        ("research_pbl", "Mini Research", 3),
+        ("personal_simple", "看图写我 About Me", 1),
+        ("plot_chart", "故事图表 Story Chart", 2),
+        ("inference", "阅读单选 Read & Infer (MCQ)", 3),
+        ("plot_chart_pbl", "情节反思 Plot & Reflection", 3),
+        ("compare_contrast", "对比 Compare & Contrast", 3),
+        ("personal_write", "写你自己 Write About Yourself", 3),
+        ("open_ended_pbl", "项目表达 Project Response", 3),
+        ("essay_short", "短文写作 Short Essay", 3),
+        ("research_pbl", "微型调研 Mini Research", 3),
     ],
 }
 
@@ -2329,7 +2604,16 @@ def _render_ws_item_editor(ws: dict, idx: int) -> None:
       其他 → 简化的 items JSON
     """
     qtype = (ws.get("type") or "").lower()
-    items = ws.get("items") or []
+    # 健壮归一化：items 可能是 list / dict（{idx: item} 映射或单个 item dict）/ 其它
+    _raw_items = ws.get("items")
+    if isinstance(_raw_items, dict):
+        _vals = list(_raw_items.values())
+        # 全是子 dict → 当作 {idx: item} 映射取 values；否则视为单个 item dict
+        items = _vals if (_vals and all(isinstance(v, dict) for v in _vals)) else [_raw_items]
+    elif isinstance(_raw_items, list):
+        items = _raw_items
+    else:
+        items = []
 
     if qtype == "match_definition":
         st.caption("每行：单词 → 词典定义（小学生能看懂的简单解释）")
@@ -2569,8 +2853,57 @@ def _build_final_prompt_for_page(page, outline: BookOutline, ip_age: int) -> tup
             refs.remove(prot_ref)
         refs.insert(0, prot_ref)
 
+    # v4 支柱一：多角色页「合成定妆参考图」——gpt-image-2 单参考图限制下，
+    # 把本页所有角色定妆图拼成 1 张白底合集作唯一参考，锁住每个人的长相/发型/服装，
+    # 解决「只发主角参考、Tommy/Mia 等配角崩形」的根因。
+    refs = _maybe_build_reference_sheet(refs, page)
+    if isinstance(refs, tuple):
+        refs, sheet_note = refs
+        if sheet_note:
+            positive = positive.rstrip() + "\n\n" + sheet_note
+
     final_prompt = BuiltPromptCN.join(positive, negative)
     return final_prompt, refs
+
+
+def _ip_name_for_ref(ref_path: Path) -> str:
+    """把一张参考图路径反查成 IP 名字（用于定妆合集的标签）。"""
+    try:
+        from ip_library import load_library
+        rp = str(Path(ref_path)).lower()
+        for e in load_library():
+            if str(e.image_path).lower() == rp:
+                return e.name_base
+    except Exception:
+        pass
+    return ""
+
+
+def _maybe_build_reference_sheet(refs: list[Path], page):
+    """≥2 张本地参考图时合成一张定妆合集，返回 ([sheet], prompt_note)。
+    否则原样返回 refs（不带 note）。
+    """
+    local = [Path(r) for r in refs if r and not str(r).startswith(("http://", "https://")) and Path(r).exists()]
+    if len(local) < 2:
+        return refs
+    try:
+        from seedream_client import build_reference_sheet
+        _, img_dir, _ = _ensure_run_dir()
+        sheet_dir = img_dir / "_refsheets"
+        dest = sheet_dir / f"sheet_p{page.index:02d}.png"
+        labels = [_ip_name_for_ref(r) for r in local]
+        sheet = build_reference_sheet(local, dest, labels)
+        if sheet is None:
+            return refs
+        names = "、".join(n for n in labels if n) or "本页角色"
+        note = (
+            "【参考图说明】所提供的参考图是本页所有角色的「定妆合集」（白底并排，附名字标签："
+            f"{names}）。请严格按合集中每个对应角色的长相、发型、发色、服装、配饰来绘制该角色，"
+            "做到与定妆图完全一致；但**不要照搬合集的并排排版/白底**，要把各角色自然地放进本页的真实场景与动作中。"
+        )
+        return ([sheet], note)
+    except Exception:
+        return refs
 
 
 @st.cache_data(show_spinner=False)
@@ -2776,7 +3109,7 @@ def _render_image_review_panel(mock_imgs: bool) -> None:
                     value=cur_must,
                     height=70,
                     key=f"reedit_must_{idx}",
-                    placeholder="例如：\nAnna 必须戴琥珀色细框眼镜\nTommy 必须微笑看向 Anna",
+                    placeholder="例如：\nAnna 必须头戴白色发箍\nTommy 必须微笑看向 Anna",
                 )
                 if st.button(f"💾 保存并重生 {display_name}", key=f"reedit_save_{idx}"):
                     pp["prompt"] = new_prompt
@@ -2839,7 +3172,7 @@ def _render_image_feedback_panel(idx: int, mock_imgs: bool) -> None:
             "其他问题（自由写一句，自动加进反向）",
             value=entry.get("feedback_free", ""),
             key=f"fb_free_{idx}",
-            placeholder="例：Anna 的眼镜框颜色不对，应该是琥珀色",
+            placeholder="例：Anna 的发箍丢了，应该头戴白色发箍",
         )
 
         # 实时拼出"会注入的负向 prompt"预览
@@ -2910,12 +3243,15 @@ def _run_docs_assembly() -> None:
     # 2. Worksheet
     progress.progress(2 / 5, "生成 Worksheet PPTX...")
     ws_path = run_dir / f"{name_prefix}_练习册.pptx"
-    build_worksheet(outline, ws_path, image_paths=image_paths)
+    build_worksheet(outline, ws_path, image_paths=image_paths,
+                    sentence_image_mode=_ws_sentence_mode(),
+                    second_reading_mode=_ws_second_reading_mode())
 
     # 3. Reading Report
     progress.progress(3 / 5, "生成 Reading Report DOCX...")
     rr_path = run_dir / f"{name_prefix}_阅读报告.docx"
-    build_reading_report(outline, rr_path)
+    rr_with_answers = st.session_state.get("rr_answer_mode", "").startswith("示例")
+    build_reading_report(outline, rr_path, with_answers=rr_with_answers)
 
     # 4. Teacher's Guide
     progress.progress(4 / 5, "生成 Teacher's Guide DOCX...")

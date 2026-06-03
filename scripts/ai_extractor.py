@@ -122,6 +122,8 @@ class ExtractedContent:
     word_count: int = 0
     rr_questions: list[dict] = field(default_factory=list)  # [{q, stars, page}]
     worksheet_questions: list[dict] = field(default_factory=list)  # [{type, title, instruction, items, answer_key}]
+    # 专用阅读理解题（worksheet 阅读页用）：[{kind: mc|tf|short, q, options, correct, answer, page}]
+    reading_questions: list[dict] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -135,6 +137,7 @@ class ExtractedContent:
             "word_count": self.word_count,
             "rr_questions": self.rr_questions,
             "worksheet_questions": self.worksheet_questions,
+            "reading_questions": self.reading_questions,
         }
 
 
@@ -331,6 +334,8 @@ def _build_system_prompt(level_key: str, is_dual: bool, rr_dist: list[int], pool
     pool_str = ", ".join(pool)
     rr_count = len(rr_dist)
     star_pattern = " + ".join(f"{rr_dist.count(s)}×{'⭐' * s}" for s in sorted(set(rr_dist)))
+    # worksheet 阅读页专用题量：L0-4 一个阅读页 → 4-6 题；L5-6 两个阅读页 → 8 题
+    rd_count = 8 if level_key in ("5", "6") else 6
 
     # v2.1: 注入 VIPKID 标准 31 题型库推荐
     try:
@@ -372,24 +377,40 @@ def _build_system_prompt(level_key: str, is_dual: bool, rr_dist: list[int], pool
   "reader_type": "<one of: Concept & Knowledge-Building Readers / Patterned Narrative & Informational Readers / Early Independent Genre-Exposure Readers / Fiction / Informational Text>",
   "word_count": <total word count int>,
   "rr_questions": [
-    {{"q": "<English question, NO embedded (P#) in question text>", "stars": 1, "page": 2}},
+    {{"q": "<English question, NO embedded (P#) in question text>", "stars": 1, "page": 2, "answer": "<short model answer in English, for the sample-answer version>"}},
     ... {rr_count} entries with stars distribution {star_pattern}
   ],
   "worksheet_questions": [
     {{"type": "<one of: {pool_str}>", "items": [...], "answer_key": [...], "extra": "<optional context>"}},
     ... 6 entries, one of each type from the pool
+  ],
+  "reading_questions": [
+    {{"kind": "mc", "q": "<comprehension question>", "options": ["...", "...", "..."], "correct": 0, "page": 2}},
+    {{"kind": "tf", "q": "<statement about the story>", "answer": "T", "page": 3}},
+    {{"kind": "short", "q": "<open comprehension question>", "answer": "<model answer>", "page": 5}},
+    ... {rd_count} entries total (see reading_questions rules below)
   ]
 }}
 
-## CRITICAL: pages[].scene_cn (used by Doubao Seedream 4.5 to draw images — MUST be high quality)
-Write ONE continuous Chinese paragraph (120-220 字) that contains ALL of:
-  1. WHO (with explicit appearance lock: hair/clothes/age/glasses if any) — names from story, OR generic "girl/boy" as fallback to Mia/Tommy
+## CRITICAL: pages[].scene_cn (used by the image model to draw — MUST be high quality)
+Write ONE continuous Chinese paragraph (120-220 字) describing ONLY action + environment + atmosphere. It MUST contain:
+  1. WHO — refer to each character BY NAME ONLY (Anna / Mia / Tommy / 一个男孩 ...).
+     **NEVER describe any appearance** — no hair, hairstyle, clothes, colors, glasses, age-look, face/features.
+     Appearance is 100% locked by the IP reference images downstream; if you write it here you create a WRONG/conflicting character. This is the #1 rule.
+     **Pronoun resolution (CRITICAL for correctness)**: resolve every "she/her/he/him/they/I" to its ACTUAL antecedent in THIS page + previous pages.
+       - If the sentence is about Anna, then "she/her" = Anna — do NOT pull in Mia or Tommy.
+       - Only when the story introduces a brand-new UNNAMED child ("a girl"/"a boy" with no name) do you map that child to Mia (girl) / Tommy (boy); keep that same identity for later pronouns about them.
+       - Text with only "I" and no name → the speaker is the book's protagonist (default Tommy unless the book is clearly Mia's / a named character's), kept consistent for the whole book.
+       - Text with "We" (no names) → BOTH series protagonists Tommy AND Mia together, with balanced/equal presence.
+     Series principle: Tommy (boy) and Mia (girl) are the FIXED protagonists of this whole picture-book series; this is a SET of books, not one book.
+     Do NOT add any character who is not actually present in this page's sentence; supporting characters max 2, background only.
   2. WHAT (concrete action verb + body posture + interaction) — e.g. "蹲下伸手指" not just "看着"
-  3. WHERE (environment objects you can SEE: desk shape/color, blackboard, hamster, books, light source)
-  4. ATMOSPHERE (warm morning light from right window, soft watercolor)
-Do NOT just translate the English story sentence — REWRITE it as a visual scene a painter could draw.
+  3. WHERE (environment objects you can SEE: desk shape/color, blackboard, books, light source) — cozy and tidy, NOT empty/blank
+  4. ATMOSPHERE (warm soft light direction, soft watercolor mood)
+Do NOT just translate the English sentence — REWRITE it as a visual scene a painter could draw, but with ZERO appearance words.
 Example for "Anna felt nervous on her first day in the new class. Her hands shook as she sat down at a small wooden desk.":
-  scene_cn: "教室一角，12 岁亚洲女孩 Anna 戴琥珀色细框眼镜、黑色长发扎两条低马尾分别垂在两肩前、穿芥末黄色长袖针织开衫和灰色及膝裙、坐在一张浅棕色木质小课桌后，双手紧握放在桌面微微颤抖，眼神紧张地看向左前方；桌上摊开一本练习本和一支削好的铅笔；背景是浅米色墙面，可见一块淡绿色黑板和几张同样的木课桌，柔和的早晨阳光从右侧窗户斜射入，温暖治愈的水彩氛围。"
+  scene_cn: "教室靠窗的一角，Anna 独自在一张浅棕色木质小课桌后坐下，双手紧握放在桌面、微微颤抖，肩膀微微缩起，眉头轻蹙，眼神紧张地望向前方；桌上摊开一本练习本和一支削好的铅笔；背景是浅米色墙面与一块淡绿色黑板、几张同样的木课桌，柔和的早晨阳光从右侧窗户斜射进来，温暖治愈的水彩氛围。"
+  （注意：示例里只有动作、表情、环境、光线——没有任何发型/眼镜/衣服/颜色/长相词。这是必须遵守的写法。）
 
 ## CRITICAL: worksheet content quality (NO placeholder text)
 - For match_definition: items=[{{"word": "nervous", "def": "feeling worried about something that will happen"}}, ...]
@@ -400,6 +421,25 @@ Example for "Anna felt nervous on her first day in the new class. Her hands shoo
   → Each item MUST include "options" (3 strings) and "correct" (int 0/1/2). NO "Question 1?" placeholders.
 - For true_false: items=[{{"statement": "Anna shared pencils with a quiet boy.", "answer": "T"}}, ...] (statements from real story facts)
 - For all types: NEVER output literal "Option A", "Question N", "sentence N" — these are placeholders, write real content.
+
+## CRITICAL: pagination (split raw story into EXACTLY 7 story pages)
+- The teacher's raw input may be ONE paragraph, OR already split (e.g. "Page 1: ..."). EITHER WAY, re-segment by SCENE / VISUAL BEAT, NOT line-by-line and NOT one-sentence-per-page.
+- Goal: 7 pages that flow as a continuous story arc and TOGETHER cover the WHOLE input — beginning → events → ending. No content dropped, no scene crammed.
+- Each page = one coherent visual moment (a painter could draw it). It is fine for a page to contain 1-2 short sentences if they describe the SAME moment; split a long sentence across pages only if it spans two distinct scenes.
+- Keep narrative continuity: page N+1 must read as the next beat after page N. Rewrite into clean book sentences but KEEP meaning and KEEP every key event.
+
+## CRITICAL: vocabulary selection (content words only — NEVER proper nouns)
+- Vocabulary = IMPORTANT content words from the story: common NOUNS / VERBS / ADJECTIVES / adverbs that carry meaning and are worth teaching.
+- NEVER pick proper nouns: character names (Anna, Mia, Tommy, ...), place names (Scotland, ...), brand names, days, titles. NEVER pick function words (the, a, on, her, was, first/second as ordinals, ...).
+- Prefer words that recur or are central to the theme. Each word must actually appear (or its lemma appears) in the story text.
+
+## CRITICAL: reading_questions (worksheet Reading page — comprehension tied to the FULL passage)
+- Produce EXACTLY {rd_count} questions that test understanding of the story passage (NOT vocabulary, NOT grammar).
+- "kind" must be one of: "mc" (3 options A/B/C + correct index 0/1/2), "tf" (a statement + answer "T"/"F"), "short" (open question + model "answer").
+- Level guidance: L0-2 → mostly "tf" and easy "mc"; L3-4 → mostly "mc"; L5-6 → "mc" + 2-3 "short" answer questions.
+- Cover different layers: literal detail, sequence, cause/effect, inference, main idea. Order easiest → hardest.
+- Every question MUST be answerable from the passage. Real content only — NEVER "Question 1?" / "Option A" placeholders.
+- "page" = story page the answer is on (2-8); P1 is the cover, never use P1.
 
 ## Critical rules
 - Vocabulary MUST be in lemma form: 'walk' not 'walks/walking', 'friend' not 'friends'. Lowercase. No punctuation.
@@ -457,9 +497,10 @@ def _parse_doubao_payload(
     while len(pages) < 7:
         pages.append({"index": len(pages) + 1, "text": "", "scene": "", "expression": "", "shot": "medium"})
 
-    mastery = _clean_words(data.get("mastery"))
-    exposure = _clean_words(data.get("exposure"))
-    vocab = _clean_words(data.get("vocabulary"))
+    proper = _proper_nouns_from_story(raw_story)
+    mastery = _clean_words(data.get("mastery"), proper)
+    exposure = _clean_words(data.get("exposure"), proper)
+    vocab = _clean_words(data.get("vocabulary"), proper)
 
     if is_dual:
         if not mastery and vocab:
@@ -470,11 +511,16 @@ def _parse_doubao_payload(
         if not vocab:
             vocab = (mastery or exposure)[:4]
         vocab = vocab[:4]
-        while len(vocab) < 4:
-            vocab.append("word")
+        if len(vocab) < 4:  # 用故事里的真实内容词补足，绝不用 "word" 占位
+            for w in _content_word_candidates(raw_story, proper):
+                if w not in vocab:
+                    vocab.append(w)
+                if len(vocab) >= 4:
+                    break
 
     rr_questions = _normalize_rr(data.get("rr_questions"), rr_dist)
     ws_questions = _normalize_ws(data.get("worksheet_questions"), level_key)
+    reading_questions = _normalize_reading_questions(data.get("reading_questions"))
 
     return ExtractedContent(
         pages=pages,
@@ -487,6 +533,7 @@ def _parse_doubao_payload(
         word_count=int(data.get("word_count") or _count_words(raw_story)),
         rr_questions=rr_questions,
         worksheet_questions=ws_questions,
+        reading_questions=reading_questions,
     )
 
 
@@ -542,7 +589,49 @@ def _normalize_rr(items: Any, dist: list[int]) -> list[dict]:
                 page = i + 2
             # P1 是封面 → 至少 P2；最多 P8
             page = max(2, min(8, page))
-        out.append({"q": q, "stars": target_stars, "page": page})
+        answer = str(item.get("answer") or item.get("sample") or "").strip()
+        out.append({"q": q, "stars": target_stars, "page": page, "answer": answer})
+    return out
+
+
+def _normalize_reading_questions(items: Any) -> list[dict]:
+    """规整 worksheet 阅读理解题。统一成 {kind, q, options, correct, answer, page}。
+    丢弃明显占位（'Question N?' / 空题干 / mc 选项不足）。"""
+    raw = items if isinstance(items, list) else []
+    out: list[dict] = []
+    for it in raw:
+        if not isinstance(it, dict):
+            continue
+        q = str(it.get("q") or it.get("question") or "").strip()
+        if not q or re.fullmatch(r"question\s*\d*\??", q.lower()):
+            continue
+        kind = str(it.get("kind") or "").strip().lower()
+        opts = [str(o).strip() for o in (it.get("options") or []) if str(o).strip()]
+        if not kind:
+            kind = "mc" if len(opts) >= 2 else ("tf" if it.get("answer") in ("T", "F", "t", "f") else "short")
+        page = it.get("page")
+        try:
+            page = int(page) if page is not None else None
+        except (TypeError, ValueError):
+            page = None
+        if page is not None and page < 2:
+            page = None
+        rec: dict = {"kind": kind, "q": q, "page": page}
+        if kind == "mc":
+            if len(opts) < 2:
+                continue
+            rec["options"] = opts[:3]
+            try:
+                rec["correct"] = max(0, min(len(rec["options"]) - 1, int(it.get("correct", 0))))
+            except (TypeError, ValueError):
+                rec["correct"] = 0
+            rec["answer"] = rec["options"][rec["correct"]]
+        elif kind == "tf":
+            rec["answer"] = "T" if str(it.get("answer", "T")).strip().upper().startswith("T") else "F"
+        else:  # short
+            rec["kind"] = "short"
+            rec["answer"] = str(it.get("answer", "")).strip()
+        out.append(rec)
     return out
 
 
@@ -565,16 +654,83 @@ def _normalize_ws(items: Any, level_key: str) -> list[dict]:
     return out
 
 
-def _clean_words(raw: Any) -> list[str]:
+# 永远不当作词汇的固定 IP 人名 / 常见专有名词种子
+_KNOWN_PROPER = {
+    "mia", "tommy", "anna", "winnie", "dino", "kim", "ms", "mr", "mrs",
+}
+# 常以大写出现但不是专有名词的功能词/代词，避免被误判
+_NOT_PROPER = {"i", "i'm", "i'll", "i've", "i'd"}
+
+
+def _proper_nouns_from_story(raw_story: str) -> set[str]:
+    """从原文里推断专有名词：出现在句中（非句首）且首字母大写、且全文从未以小写出现过的词。
+    叠加固定 IP 人名种子。用于把人名/地名从词汇表里剔除。"""
+    proper = set(_KNOWN_PROPER)
+    if not raw_story:
+        return proper
+    cap_mid: set[str] = set()
+    seen_lower: set[str] = set()
+    # 句首：字符串开头、换行、或 .!?: 之后
+    at_start = True
+    for m in re.finditer(r"([.!?:\n]+\s*)|([A-Za-z][A-Za-z'’-]*)", raw_story):
+        if m.group(1) is not None:
+            at_start = True
+            continue
+        w = m.group(2)
+        lw = w.lower().replace("’", "'")
+        if lw in _NOT_PROPER:
+            at_start = False
+            continue
+        if w[0].isupper():
+            if not at_start:
+                cap_mid.add(lw)
+        else:
+            seen_lower.add(lw)
+        at_start = False
+    for lw in cap_mid:
+        if lw not in seen_lower:
+            proper.add(lw)
+    return proper
+
+
+# 高频功能词，做内容词候选时排除
+_STOPWORDS = {
+    "the", "a", "an", "and", "or", "but", "so", "to", "of", "in", "on", "at", "for",
+    "with", "by", "from", "up", "out", "as", "is", "am", "are", "was", "were", "be",
+    "been", "being", "do", "does", "did", "have", "has", "had", "will", "would",
+    "shall", "should", "can", "could", "may", "might", "must", "i", "you", "he",
+    "she", "it", "we", "they", "me", "him", "her", "us", "them", "my", "your", "his",
+    "its", "our", "their", "this", "that", "these", "those", "there", "here", "who",
+    "what", "when", "where", "why", "how", "not", "no", "yes", "all", "some", "each",
+    "every", "very", "too", "then", "than", "if", "because", "about", "into", "over",
+    "under", "again", "one", "two", "first", "next", "now", "day", "said",
+}
+
+
+def _content_word_candidates(raw_story: str, proper: set[str]) -> list[str]:
+    """从原文按词频取重要内容词（去停用词/专有名词），用于词表兜底。"""
+    counts: dict[str, int] = {}
+    for w in re.findall(r"[A-Za-z][A-Za-z'-]*", raw_story or ""):
+        lw = w.lower().replace("’", "'")
+        if len(lw) < 3 or lw in _STOPWORDS or lw in proper:
+            continue
+        counts[lw] = counts.get(lw, 0) + 1
+    return [w for w, _ in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))]
+
+
+def _clean_words(raw: Any, proper: set[str] | None = None) -> list[str]:
     if not isinstance(raw, list):
         return []
     out: list[str] = []
     for w in raw:
-        s = str(w).strip().lower()
+        s = str(w).strip().lower().replace("’", "'")
         s = re.sub(r"[^\w\s'-]", "", s)
         s = s.strip()
-        if s and s not in out:
-            out.append(s)
+        if not s or s in out:
+            continue
+        if proper and s in proper:  # 跳过人名/地名等专有名词
+            continue
+        out.append(s)
     return out
 
 
@@ -612,7 +768,8 @@ def _mock_extract(
 
     level_key = _level_key(level)
     is_dual = level_key in ("smart", "0", "1", "2")
-    words = _extract_content_words(raw_story)
+    proper = _proper_nouns_from_story(raw_story)
+    words = [w for w in _extract_content_words(raw_story) if w not in proper]
     mastery = words[:4] if is_dual else []
     exposure = words[4:8] if is_dual else []
     vocab = words[:4] if not is_dual else []
@@ -620,12 +777,14 @@ def _mock_extract(
     rr_dist = rr_question_distribution(level)
     rr_questions = _mock_rr(pages, rr_dist, words)
     ws_questions = _mock_worksheet(pages, words, level_key)
+    reading_questions = _mock_reading_questions(pages, level_key)
 
     return ExtractedContent(
         pages=pages,
         mastery=mastery,
         exposure=exposure,
         vocabulary=vocab,
+        reading_questions=reading_questions,
         grammar_focus="一般现在时态" if is_dual else "一般过去时态",
         phonics=(
             f"suffix -ly (= in a way): {', '.join(words[:3])}" if level_key in ("5", "6")
@@ -636,6 +795,28 @@ def _mock_extract(
         rr_questions=rr_questions,
         worksheet_questions=ws_questions,
     )
+
+
+def _mock_reading_questions(pages: list[dict], level_key: str) -> list[dict]:
+    """mock 阅读理解题：从故事页造 tf / short（无 API key 时兜底）。"""
+    story = [p for p in pages if p.get("text")]
+    is_low = level_key in ("smart", "0", "1", "2")
+    n = 8 if level_key in ("5", "6") else 6
+    out: list[dict] = []
+    for i, p in enumerate(story):
+        if len(out) >= n:
+            break
+        text = (p.get("text") or "").strip()
+        first = text.split(".")[0].strip()
+        if not first:
+            continue
+        page_no = p.get("index", i + 1) + 1  # 故事页 idx1→P2
+        if is_low or i % 2 == 0:
+            out.append({"kind": "tf", "q": first + ".", "answer": "T", "page": page_no})
+        else:
+            out.append({"kind": "short", "q": f"What happens here: \"{first}\"?",
+                        "answer": first, "page": page_no})
+    return out
 
 
 def _split_sentences(s: str) -> list[str]:
@@ -789,6 +970,8 @@ def apply_extracted_to_outline(outline, ec: ExtractedContent) -> None:
         outline.reader_type = ec.reader_type
     if ec.word_count and not outline.word_count_override:
         outline.word_count_override = str(ec.word_count)
+    if ec.reading_questions:
+        setattr(outline, "_reading_questions", ec.reading_questions)
 
     for p in ec.pages:
         idx = int(p.get("index") or 0)

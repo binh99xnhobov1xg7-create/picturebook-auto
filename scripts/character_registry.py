@@ -25,7 +25,7 @@ NO_ACCESSORY = (
 
 
 # ============================================================
-#  主角（年龄分档 8 / 10 / 12，对应 L0-3 / L4 / L5-6）
+#  主角（年龄分档 8 / 10 / 12，对应 L0-2 / L3-4 / L5-6）
 # ============================================================
 
 MIA = {
@@ -33,9 +33,9 @@ MIA = {
     "gender": "girl",
     "aliases": [],
     "reference_by_age": {
-        8: "mia_age12.png",  # TODO: age8 暂用 12 兜底（待补 age8 设定图）
-        10: "mia_age10.png",
-        12: "mia_age12.png",
+        8: "mia_age10.png",   # 官方无 8 岁定妆图 → 用最接近的 10 岁正样做风格锚（衣服仍按 8 岁描述）
+        10: "mia_age10.png",  # 官方正样 Mia10
+        12: "mia_age12.png",  # 官方正样 Mia12
     },
     "description_by_age": {
         8: (
@@ -66,9 +66,9 @@ TOMMY = {
     "gender": "boy",
     "aliases": [],
     "reference_by_age": {
-        8: "tommy_age12.png",  # TODO: age8 暂用 12 兜底
-        10: "tommy_age10.png",
-        12: "tommy_age12.png",
+        8: "tommy_age10.png",   # 官方无 8 岁定妆图 → 用最接近的 10 岁正样做风格锚（衣服仍按 8 岁描述）
+        10: "tommy_age10.png",  # 官方正样 Tommy10
+        12: "tommy_age12.png",  # 官方正样 Tommy12
     },
     "description_by_age": {
         8: (
@@ -175,18 +175,12 @@ CATE = {
         12: "cate_age10.png",  # 兜底
     },
     "description_by_age": {
-        8: (
-            "Cate: 8y GIRL (NOT Mia), shoulder-length wavy auburn hair (NOT ponytail), "
-            "rosy cheeks, soft pink cardigan over white tee, blue skirt, white sneakers"
-        ),
-        10: (
-            "Cate: 10y GIRL (NOT Mia), shoulder-length wavy auburn hair (NOT ponytail), "
-            "rosy cheeks, soft pink cardigan over white tee, denim skirt, white sneakers"
-        ),
-        12: (
-            "Cate: 12y GIRL (NOT Mia), shoulder-length wavy auburn hair (NOT ponytail), "
-            "rosy cheeks, soft pink cardigan over white tee, denim skirt, white sneakers"
-        ),
+        age: (
+            f"Cate: {age}y GIRL (NOT Mia), brown CHIN-LENGTH wavy BOB (NOT a ponytail), "
+            "small green clover earrings, blue-green eyes, rosy cheeks, "
+            "WHITE long-sleeve top, PINK trousers, white sneakers"
+        )
+        for age in (8, 10, 12)
     },
 }
 
@@ -241,8 +235,9 @@ MOM = {
     "reference_by_age": {"adult": "mom.png"},
     "description_by_age": {
         "adult": (
-            "Mom: adult woman, long brown wavy hair, gentle warm face, "
-            "cream LONG-SLEEVE top, blue jeans, gentle smile, bare wrists"
+            "Mom: adult woman, long brown WAVY hair, gentle warm face, "
+            "loose WHITE long-sleeve top, light-blue straight jeans, white sneakers, "
+            "gentle smile, bare wrists"
         ),
     },
 }
@@ -254,8 +249,8 @@ DAD = {
     "reference_by_age": {"adult": "dad.png"},
     "description_by_age": {
         "adult": (
-            "Dad: adult man, short tidy brown hair, gray LONG-SLEEVE shirt, "
-            "khaki trousers, warm fatherly smile, bare wrists"
+            "Dad: adult man, short tidy brown hair, gray SHORT-SLEEVE POLO shirt, "
+            "khaki trousers, brown shoes, NO glasses, warm fatherly smile, bare wrists"
         ),
     },
 }
@@ -267,8 +262,8 @@ GRANDMA = {
     "reference_by_age": {"adult": "grandma.png"},
     "description_by_age": {
         "adult": (
-            "Grandma: elderly woman, soft gray bun, gentle wrinkles, kind smile, "
-            "lavender cardigan over cream blouse, comfortable trousers"
+            "Grandma: elderly woman, SILVER-GRAY hair in a BUN, gentle wrinkles, kind smile, "
+            "LAVENDER cardigan over cream top, OLIVE-GREEN long SKIRT, brown shoes"
         ),
     },
 }
@@ -280,8 +275,9 @@ GRANDPA = {
     "reference_by_age": {"adult": "grandpa.png"},
     "description_by_age": {
         "adult": (
-            "Grandpa: elderly man, short white hair, friendly weathered face, "
-            "round glasses, brown cardigan, dark trousers"
+            "Grandpa: elderly man, SILVER-GRAY short hair, friendly weathered face, "
+            "ROUND glasses, gray V-NECK sweater-vest over navy collared shirt, "
+            "khaki trousers, brown shoes"
         ),
     },
 }
@@ -296,33 +292,32 @@ GRANDPA = {
 # ============================================================
 
 # Anna — 出场绘本：L5 "What Makes a Good Friend?"
-# v3.0 修正 (2026-06-02): 官方库无 Anna 干净设定图，旧 anna_age12.png(裁图) 与
-# 旧文字描述(波波头+白发箍+草绿)严重打架 → Anna 一直跳帧的根因。
-# 现以官方裁图(黑双低马尾+黄毛衣)为准，重新生成干净多视图定妆图 anna_age12.png，
-# 并把文字描述对齐定妆图，彻底锁死。
+# v4.0 改版 (2026-06-03，用户拍板)：Anna 形象改为「绿毛衣 + 黑色短发 bob + 白色发箍」，
+# 参考图换成用户提供的新定妆图 anna_age12.png（黑 bob + 白发箍 + 绿毛衣 + 卡其裤）。
+# （旧 v3.0 是黄毛衣+黑双低马尾，已废弃。）
 #
-# Anna 锁定形象（与 anna_age12.png 定妆图完全一致）：
-#   - 黑色头发，扎「两条低马尾」(low pigtails，耳下)，中分 + 轻刘海 —— 永远如此
-#   - 芥末黄色圆领针织毛衣（plain，颜色稳定）
-#   - 卡其/驼色长裤 + 白色低帮运动鞋
+# Anna 锁定形象（与新 anna_age12.png 参考图完全一致）：
+#   - 黑色「齐下巴直发 bob」+ 斜刘海，头顶戴一条「细白色发箍」—— 永远如此（发箍是识别符号）
+#   - 纯绿色长袖圆领毛衣（plain，颜色稳定）
+#   - 卡其/驼色直筒长裤 + 白色低帮运动鞋
 #   - 圆脸 + 腮粉 + 棕色大眼 + 小鼻子 + 温和微笑，亚洲女孩
-#   - 绝不：波波头 / 单马尾 / 麻花辫 / 发箍 / 眼镜
+#   - 绝不：马尾 / 双低马尾 / 麻花辫 / 长发披肩 / 眼镜
 ANNA = {
     "kind": "protagonist",
     "gender": "girl",
     "aliases": [],
     "reference_by_age": {
-        12: "anna_age12.png",      # 多视图定妆图（黑双低马尾+黄毛衣+卡其裤）
+        12: "anna_age12.png",      # 新定妆图（黑 bob + 白发箍 + 绿毛衣 + 卡其裤）
         10: "anna_age12.png",      # 暂用同图（10/12 都按 12 岁定妆）
         8: "anna_age12.png",
     },
     "description_by_age": {
         12: (
             "Anna: 12y Asian GIRL (a NEW character, NOT Mia, NOT Cate, NOT Tommy). "
-            "HAIR LOCK: shiny BLACK hair always tied in TWO LOW PIGTAILS just below the ears, "
-            "with a soft middle-part and light front bangs. "
-            "NEVER a bob, NEVER a single ponytail, NEVER braids, NEVER a headband, NEVER glasses. "
-            "OUTFIT LOCK: plain warm MUSTARD-YELLOW crew-neck knit sweater, "
+            "HAIR LOCK: straight BLACK CHIN-LENGTH BOB with soft side bangs, ALWAYS wearing a thin "
+            "WHITE / light hairband (headband) across the top of the head. "
+            "NEVER pigtails, NEVER a ponytail, NEVER braids, NEVER long flowing hair, NEVER glasses. "
+            "OUTFIT LOCK: plain GREEN crew-neck long-sleeve knit sweater, "
             "KHAKI / camel-tan straight-leg long trousers (NOT a skirt), white low-top sneakers. "
             "FACE: large round warm-brown eyes, tiny dot nose, soft rosy cheeks, light Asian skin tone, "
             "round face with gentle smile. "
@@ -331,15 +326,15 @@ ANNA = {
         ),
         10: (
             "Anna: 10y Asian GIRL. "
-            "BLACK hair in TWO LOW PIGTAILS below the ears, middle-part with light bangs (always). "
-            "Plain mustard-yellow crew-neck knit sweater, khaki straight-leg trousers, white sneakers. "
-            "No glasses, no headband. Large brown eyes, small nose, rosy cheeks, light Asian skin, gentle smile"
+            "Straight BLACK chin-length BOB with side bangs + a thin WHITE headband (always). "
+            "Plain GREEN crew-neck knit sweater, khaki straight-leg trousers, white sneakers. "
+            "No glasses, NO pigtails, NO ponytail. Large brown eyes, small nose, rosy cheeks, gentle smile"
         ),
         8: (
             "Anna: 8y Asian GIRL. "
-            "BLACK hair in TWO LOW PIGTAILS below the ears, middle-part with light bangs (always). "
-            "Plain mustard-yellow crew-neck knit sweater, khaki trousers, white sneakers. "
-            "No glasses, no headband. Round face, large eyes, gentle smile"
+            "Straight BLACK chin-length BOB with side bangs + a thin WHITE headband (always). "
+            "Plain GREEN crew-neck knit sweater, khaki trousers, white sneakers. "
+            "No glasses, NO pigtails, NO ponytail. Round face, large eyes, gentle smile"
         ),
     },
 }

@@ -37,6 +37,11 @@ from config import (
     STYLE_DIR,
     composition_prompt_cn,
     composition_negative_cn,
+    smoothness_prompt_cn,
+    smoothness_negative_cn,
+    consistency_prompt_cn,
+    child_safety_positive_cn,
+    child_safety_negative_cn,
 )
 from parser import BookOutline, PageSpec
 
@@ -45,32 +50,39 @@ from parser import BookOutline, PageSpec
 #  风格 + 构图模板（中文，简洁固定）
 # ============================================================
 
+# v4 对齐官方 SOP 画风（来自《全级别每课Prompt》基准 Style Block）：
+#   经典儿童图画书插图 + 精致墨水轮廓 + 纹理纸背景 + 自然笔触；低饱和「但丰富」的莫兰迪高级色系。
+#   注意：是「丰富/饱满」的低饱和色，不是惨白；「纹理纸」是纸张肌理质感，不是脏噪点。
 STYLE_CN = (
-    "真水彩儿童绘本插画风格（参考 Studio Ghibli 早期儿童书 / 国内 VIPKID Dino 系列绘本），"
-    "淡彩水墨晕染感、笔触柔和有质感、低饱和度暖色调、"
-    "背景墙面/地板大量留白且能看清材质纹理（如瓷砖反光、木地板纹路、墙面阴影渐变）。"
-    "人物面部柔和有立体感，大眼睛+腮粉+小鼻子，亚洲儿童特征。"
-    "拒绝Q版贴纸、扁平动漫、3D渲染、像素风、塑料磨皮感"
+    "经典儿童图画书插图风格，轻透淡彩水彩——透明、清淡、干净的水彩晕染（颜料薄、层次轻盈通透，"
+    "不要厚涂、不要浓重堆色），配精致清晰、干净利落的细墨线勾边，纹理纸张质感背景，自然手绘笔触。"
+    "【整体统一·不碎片化】同一色块连贯完整、大面积平涂、水彩过渡平滑柔和自然，"
+    "色彩衔接顺畅一体；绝不出现斑驳破碎的色块、割裂的色斑/碎块、拼贴补丁感、杂乱色点与噪斑、"
+    "断裂破碎的轮廓；线条连续闭合、形体完整干净。"
+    "颜色与质感：低饱和的高级莫兰迪色系（浅米、雾霾绿、藕灰紫、卡其、淡蓝等），整体偏明亮、清透、柔和耐看，"
+    "颜色清晰可辨（不发灰惨白、也不刺眼高饱和）；画面精致细腻、边缘清晰、主体干净突出，背景温馨整洁有序、清爽不杂乱。"
+    "人物面部柔和有立体感，大眼睛+淡淡腮红+小鼻子，亚洲儿童特征，五官清爽精致。"
+    "拒绝厚重浓郁的颜料堆叠、浑浊脏色、斑驳破碎/拼贴补丁感、Q版贴纸、扁平动漫、3D渲染、像素风、"
+    "塑料磨皮感、照片写实质感、AI脏噪乱纹"
 )
 
 
 # v2.0 环境元素库 — 根据故事文本关键词推断场景应有的具体环境物体
 _ENV_HINTS: list[tuple[str, str]] = [
     (r"classroom|class\b|desk|recess|school|teacher",
-     "教室环境（必须可见）：木质课桌椅一排、淡绿色或白色黑板、白色或浅米色墙、"
-     "右侧大窗户带蓝天云朵、瓷砖地板有反光、墙上有彩色布告栏/作品展示、"
-     "远景可见2-3个其他同学背影或侧影"),
-    (r"hallway|corridor|library",
-     "走廊环境（必须可见）：长走廊延伸感、两侧蓝色或绿色墙裙+白上墙、"
-     "右侧大窗户、地板瓷砖反光、远景几个孩子在玩"),
+     "教室环境：浅米/白墙面、几张浅木色课桌椅、一扇明亮窗户带淡蓝天空与窗外绿树、浅色地板，"
+     "墙上可有白板或一两幅简洁的儿童画作点缀；背景温馨充实而整洁有序、清爽不杂乱，主体人物清晰"),
+    (r"hallway|corridor",
+     "走廊环境：长走廊延伸的空间感、浅色墙裙、右侧一排明亮窗户带窗外绿意、浅色地板，"
+     "可见教室门与简洁的墙面布置；背景温馨整洁有秩序、不杂乱"),
     (r"playground|outside|park|yard",
-     "户外环境（必须可见）：绿色草地、几棵大树、远景建筑、蓝天白云、"
-     "其他孩子在玩耍"),
+     "户外环境：柔和的浅绿草地、一两棵舒展的树、淡蓝天空与几朵白云、暖阳，"
+     "背景自然清新而整洁、不杂乱"),
     (r"home|house|bedroom|kitchen",
-     "家庭环境（必须可见）：温馨木质家具、窗台绿植、柔和阳光、"
-     "家居小物品（书架、玩具、相框）"),
+     "家庭环境：温馨的木质家具、窗台绿植、柔和阳光，"
+     "书架/玩具/相框等温馨家居小物，背景充实而整洁"),
     (r"library|book",
-     "图书馆/书架环境：木质书架、彩色书脊、暖光"),
+     "图书馆/阅读角环境：木质书架配彩色书脊、暖光、可有绿植与地球仪等点缀，背景温馨充实而整洁"),
 ]
 
 
@@ -99,12 +111,20 @@ BLANK_CN: dict[int, str] = {
 
 
 def _blank_text(page_index: int) -> str:
-    """根据页码返回留白位置（左下/右下交替，cover 右上）。"""
+    """根据页码返回文字留白说明（对齐官方 SOP）。
+
+    官方铁律：禁止画纯白色块/白色矩形/空白方框/人工硬边留白；
+    文字位置必须落在「场景原生空旷区域」（天空、草地、远山、墙面、地面、林间空地等），
+    该区域保留场景真实色彩与纹理，只是没有主角/关键道具，方便后期排文字。
+    """
     if page_index == 0:
-        return BLANK_CN[0]
-    if page_index % 2 == 1:
-        return "左下角预留 15% 干净空白用于配文字"
-    return "右下角预留 15% 干净空白用于配文字"
+        return ("利用场景顶部的原生空旷区域（天空 / 明亮的天花板 / 大片墙面等，"
+                "保留真实色彩与纹理、其上无人物与关键道具）作为书名的文字留白，"
+                "禁止画任何纯白色块或空白方框")
+    side = "右侧" if page_index % 2 == 1 else "左侧"
+    return (f"在画面{side}利用场景原生的空旷区域（如墙面 / 地面 / 天空 / 草地等，"
+            f"保留该处真实场景色彩与纹理、其上无人物与关键道具）自然留出排文字的位置，"
+            "禁止画纯白色块、白色矩形或人工硬边空白")
 
 
 FORBID_CN = "画面内不要出现任何文字、字母、数字、水印"
@@ -188,7 +208,13 @@ def _detect_characters_v2(
             continue
         override_key = generic_overrides.get(role, "")
         ip = get_ip(override_key) if override_key else resolve_generic_role(role, ip_age)
-        if not ip or ip.key not in pool_set:
+        if not ip:
+            continue
+        # v3.4 系列默认主角规则（用户拍板）：故事里只要出现 girl/boy，
+        # 就分别默认套 Mia / Tommy 形象 —— 这是系列硬规则，**永远允许**，
+        # 即使老师没把 mia/tommy 勾进 cast_pool，也要带上参考图，避免「只有主角没有 Mia/Tommy」。
+        series_default = role in ("girl", "boy")
+        if not series_default and ip.key not in pool_set:
             continue
         if ip.key in found:
             continue
@@ -297,33 +323,33 @@ def _en_to_cn_desc(en_desc: str, key: str, age) -> str:
             12: "蓝色短袖polo衫+蓝色牛仔裤",
         }.get(age_n, "蓝色短袖polo衫+蓝色牛仔裤")
         return (
-            f"Tommy：{age_n}岁亚洲男孩（必须是男孩，不能有马尾，不能长发，不戴帽子），"
+            f"Tommy：{age_n}岁亚洲男孩（必须是男孩，不能有马尾，不能长发，绝不戴眼镜，不戴帽子），"
             f"棕色蓬松短发清爽，穿{outfit}，白色低帮运动鞋"
         )
     if key == "anna":
-        # v3.0 修正(2026-06-02)：以新定妆图为准——黑色双低马尾+黄毛衣
+        # v4.0 改版(2026-06-03)：以新定妆图为准——黑色短发bob+白发箍+绿毛衣
         return (
             f"Anna：{age_n}岁亚洲女孩（与Mia、Tommy完全不同的新角色），"
-            f"黑色头发扎两条低马尾（耳下，low pigtails）+中分轻刘海（必须双低马尾，是Anna的识别符号，不能丢），"
-            f"穿芥末黄色长袖圆领针织毛衣（plain，无图案）+卡其色直筒长裤+白色低帮运动鞋，"
-            f"不戴眼镜不戴发箍，大眼睛圆脸小鼻子腮粉，温和微笑"
+            f"黑色齐下巴直发bob+斜刘海，头顶戴一条细白色发箍（必须有发箍，是Anna的识别符号，不能丢），"
+            f"穿纯绿色长袖圆领毛衣（plain，无图案）+卡其色直筒长裤+白色低帮运动鞋，"
+            f"绝不扎马尾/双马尾/辫子、不戴眼镜，大眼睛圆脸小鼻子腮粉，温和微笑"
         )
     if key == "teacher_kim":
         return (
-            "Teacher Kim：成年女性老师（不是小孩），约30岁，"
-            "栗色齐肩短发，温和微笑，穿米色衬衫+卡其色及膝半裙，"
-            "佩戴黑色细框眼镜"
+            "Teacher Kim：成年女老师（不是小孩），约30岁，"
+            "金色波浪齐肩发，蓝绿色眼睛，亲切自信微笑，"
+            "穿橙色短袖翻领衬衫+蓝色高腰阔腿牛仔裤+白色运动鞋，不戴眼镜"
         )
     if key == "winnie":
-        return "Winnie：橘白色短毛家猫，圆脸大眼，体型小巧"
+        return "Winnie：灰色虎斑小猫，白色肚皮和爪子，琥珀色大眼，粉色鼻子，体型小巧"
     if key == "mom":
-        return "妈妈：成年女性（不是小孩），约35岁，柔和发型，穿浅色家居装"
+        return "妈妈：成年女性（不是小孩），约35岁，棕色长波浪发，白色宽松长袖上衣+浅蓝色牛仔裤+白色运动鞋，温柔微笑"
     if key == "dad":
-        return "爸爸：成年男性（不是小孩），约35岁，短发，穿休闲长袖衬衫"
+        return "爸爸：成年男性（不是小孩），约38岁，棕色短发，灰色短袖polo衫+卡其色长裤+棕色皮鞋，不戴眼镜，温和微笑"
     if key == "grandma":
-        return "奶奶：年长女性（不是小孩，明显皱纹），白色卷发，穿深色针织衫"
+        return "奶奶：年长女性（不是小孩，明显皱纹），银灰色发髻，淡紫色开衫+米色内搭+橄榄绿长裙+棕色鞋，慈祥微笑"
     if key == "grandpa":
-        return "爷爷：年长男性（不是小孩，明显皱纹），灰白短发，穿浅色衬衫"
+        return "爷爷：年长男性（不是小孩，明显皱纹），银灰色短发+圆框眼镜，灰色V领毛背心+深蓝衬衫+卡其长裤+棕色鞋，慈祥微笑"
     if key == "dino":
         return "黄色小恐龙IP角色，圆脸大眼，棕色背鳍，憨态可掬"
 
@@ -338,12 +364,12 @@ def _key_lock_phrase(key: str, age) -> str:
     """
     age_n = age if isinstance(age, int) else 12
     if key == "mia":
-        return f"（{age_n}岁女孩，单束高马尾必须扎着，不戴任何饰品）"
+        return f"（{age_n}岁女孩，单束高马尾必须扎着，不戴眼镜，不戴任何饰品）"
     if key == "tommy":
-        return f"（{age_n}岁男孩，棕色短发清爽，不能有马尾或长发）"
+        return f"（{age_n}岁男孩，棕色蓬松短发清爽，绝不戴眼镜，不能有马尾或长发，不戴帽子）"
     if key == "anna":
-        # v3.0 修正：黑色双低马尾+黄毛衣
-        return f"（{age_n}岁亚洲女孩，黑色双低马尾(耳下)必须扎着+芥末黄色长袖针织毛衣+卡其裤+不戴眼镜不戴发箍）"
+        # v4.0 改版(2026-06-03)：黑色短发bob+白发箍+绿毛衣（旧版黄毛衣双低马尾已废弃）
+        return f"（{age_n}岁亚洲女孩，黑色齐下巴直发bob+斜刘海+头顶细白色发箍必须有+纯绿色长袖圆领毛衣+卡其裤+绝不扎马尾或辫子、绝不戴眼镜）"
     if key == "teacher_kim":
         return "（成年女老师，约30岁，栗色齐肩短发，黑色细框眼镜）"
     if key == "winnie":
@@ -414,7 +440,7 @@ class BuiltPromptCN:
 _SIGNATURE_COLOR: dict[str, str] = {
     "mia":   "紫色",
     "tommy": "蓝色",
-    "anna":  "芥末黄色/黄色",
+    "anna":  "绿色",
     "cate":  "粉色",
     "ali":   "亮黄色",
 }
@@ -432,8 +458,8 @@ def _signature_color_of(ip_key: str) -> str:
 # 每个角色 base key 对应一段否定锁（明确说不戴眼镜、不变发型等）
 _CHAR_NEGATIVE_LOCK: dict[str, str] = {
     "mia":     "Mia戴眼镜、Mia散发不扎马尾、Mia扎双马尾或三辫子、Mia穿裙子、Mia穿其他颜色上衣",
-    "tommy":   "Tommy戴眼镜、Tommy长发、Tommy扎马尾、Tommy穿其他颜色上衣",
-    "anna":    "Anna留波波头或齐肩短发、Anna散发不扎、Anna只扎一条单马尾、Anna戴发箍、Anna戴眼镜、Anna穿裙子、Anna穿绿色或其他颜色上衣",
+    "tommy":   "Tommy戴任何眼镜或墨镜（Tommy绝不戴眼镜）、Tommy长发、Tommy扎马尾、Tommy被画成女孩、Tommy穿其他颜色上衣",
+    "anna":    "Anna扎马尾或双低马尾或辫子、Anna长发披肩、Anna不戴白发箍、Anna戴眼镜、Anna穿裙子、Anna穿黄色或紫色或其他颜色上衣（必须纯绿色毛衣）",
     "cate":    "Cate散发不扎、Cate穿其他颜色上衣",
     "ali":     "Ali穿其他颜色上衣",
     "teacher": "Teacher Kim 穿太花哨或显得太年轻",
@@ -468,6 +494,16 @@ _ANATOMY_NEGATIVE = (
 _GLOBAL_NEGATIVE = (
     "画面内任何文字、字母、数字、水印、签名、logo；"
     "塑料磨皮感、Q版贴纸风格、3D渲染、扁平动漫、像素风、油画厚涂、廉价 CG 感；"
+    # 印刷级干净控制（用户拍板）：去细碎/斑驳/脏块/不匀色块
+    "细碎噪点、高频纹理、脏污颗粒、斑驳色块、明暗不匀的脏块、过多杂乱阴影、"
+    "色彩不均匀、画面脏乱、密集小装饰；"
+    # 画面整洁控制（向目标淡彩绘本风靠拢）：背景可温馨充实，但要整洁不杂乱、不过饱和
+    "背景杂乱无序、胡乱堆砌的杂物、贴满杂物的墙面、众多有清晰五官的陌生路人同学、"
+    "高饱和浓郁刺眼色彩、厚重油画式明暗、生硬强烈对比；"
+    # 官方 SOP 铁律：禁止人工硬边白色留白块（文字位用场景原生空旷区）
+    "纯白色块、白色矩形、空白方框、人工硬边留白、突兀的白色空白区域；"
+    # 比例控制（QA：人物与车/家具/道具比例不符日常逻辑）
+    "人物与车辆/家具/道具的比例失真、比例不合常理、物体过大或过小；"
     + _ANATOMY_NEGATIVE
     + "；过于写实的照片感、写实皮肤纹理"
 )
@@ -570,10 +606,21 @@ def build_cn_page_prompt(
                         "is_generic": True,
                     })
         else:
-            # cover 已有正式主角（如 Anna）→ 只保留正式主角，去掉通用 girl/boy 默认套
+            # cover 已有正式主角（如 Anna）→ 正式主角优先，再带上故事里出现的
+            # 系列默认主角(Mia/Tommy，来自 girl/boy 映射)，最多 3 人。
+            # 修复：旧逻辑 named[:2] 会把 Mia/Tommy 整个丢掉，导致封面缺人/跳帧。
             named = [c for c in cast if not c.get("is_generic")]
+            generic = [c for c in cast if c.get("is_generic")]
             if named:
-                cast = named[:2]  # cover 最多 2 个主角避免画面太挤
+                cover_cast = list(named)
+                have = {c.get("key") for c in cover_cast}
+                for g in generic:
+                    if len(cover_cast) >= 3:
+                        break
+                    if g.get("key") not in have:
+                        cover_cast.append(g)
+                        have.add(g.get("key"))
+                cast = cover_cast[:3]
 
     # 2) 场景描述
     if is_cover:
@@ -591,7 +638,10 @@ def build_cn_page_prompt(
     composition_cn = COMPOSITION_CN[shot]
 
     # 4) 留白
-    blank_cn = _blank_text(page.index) if not is_cover else "上方预留 30% 干净空白用于放置书名"
+    blank_cn = _blank_text(page.index) if not is_cover else (
+        "利用画面上方场景原生的空旷区域（天空 / 明亮天花板 / 大片墙面等，保留真实色彩与纹理、其上无人物道具）"
+        "作为书名文字留白，禁止画纯白色块或空白方框"
+    )
 
     # 5) 关键道具检测（v3 增强：从故事文本抓 hamster/eraser/books/cookies 等）
     key_props = [] if is_cover else _detect_key_props(cast_text)
@@ -641,59 +691,75 @@ def _build_positive_v3(
     *, is_cover: bool, title: str, scene_cn: str, cast: list[dict], ip_age: int,
     env_hint: str, key_props: list[str], composition_cn: str, blank_cn: str,
 ) -> str:
-    """生成单段流畅自然语言的正向 prompt（火山官方推荐风格）。
+    """生成分层、关键约束前置加权的正向 prompt。
 
-    结构：
-      [风格1句] [环境1段] [主角们各1段 含动作+外观锁] [道具1段] [构图+留白1句]
+    v4 重构（2026-06-03）：把「本页画面动作 + 角色形象锁」置顶（gpt-image-2 对前置内容
+    遵循度更高），风格/安全等"氛围块"压缩并后置，整体从 ~15 段降到 ~8 段，
+    并纠正上一版过度"惨白/大留白/背景极简"——向参考实体绘本（饱满柔和+温馨充实）靠拢。
     """
     parts: list[str] = []
+    names = "、".join(c.get("name", "") for c in cast if c.get("name"))
+    n_kids = len([c for c in cast if c.get("name")])
 
-    # 1) 风格定位（开头 1 句）
-    parts.append(STYLE_CN.split("。")[0] + "。柔和淡彩水墨晕染、低饱和度暖色调、笔触柔和有质感。")
+    # ① 本页画面（核心，最高权重，绝对置顶）
+    if is_cover:
+        who = names or "系列主角 Mia、Tommy"
+        parts.append(
+            f"【画面 · 绘本封面】《{title}》封面：{who} 一起出现在画面中央，"
+            f"神情友好、温馨微笑，面向观众；上方留出大块干净空白用于书名。"
+        )
+    else:
+        parts.append(
+            f"【本页画面 · 必须如实呈现，最高优先级】{scene_cn.rstrip('。')}。"
+            f"请严格按这段描述的动作、姿势、视线与站位作画——这是本页最重要、绝不能画错的内容。"
+        )
 
-    # 2) 环境（如果检测到）
-    if env_hint:
-        parts.append(env_hint.replace("（必须可见）", "").rstrip("。") + "。")
-
-    # 3) 场景动作（核心）
-    if scene_cn and scene_cn.strip() != f"绘本封面，主题为《{title}》。":
-        parts.append(f"画面动作：{scene_cn.rstrip('。')}。")
-
-    # 4) 主角们 — 每人 1 段，含动作 + 外观锁
+    # ② 角色形象锁（IP 外观；发型/服装/配色为识别核心，紧跟画面之后）
     for c in cast:
-        desc = c.get("description_cn") or ""
-        # 描述里不含"不戴眼镜"则补一句
-        name = c.get("name", "")
-        line = f"{name}：{desc.rstrip('。')}。"
+        parts.append(f"【{c.get('name','')} 形象锁定】{(c.get('description_cn') or '').rstrip('。')}。")
+    if cast:
+        parts.append(
+            f"外观铁律：{names} 的发型、发色、服装与颜色、五官、配饰一律以上面各自的形象锁定与参考图为准、"
+            "且全书逐页保持一致；画面动作描述里若出现冲突的外观（多余眼镜、不同发型或衣色），一律忽略、以形象锁定为准。"
+        )
+
+    # ③ 人数 + 比例 + 同尺度（合并成一句精炼硬约束）
+    if cast:
+        line = (
+            f"人物与比例（硬约束）：画面里的儿童只能是 {names}，不要出现有清晰五官/发型的陌生同学或路人"
+            f"（最多远景一两个极淡的人影剪影，可省略）；主角（群体）居中、是画面视觉焦点、占画面高度约 50-60%；"
+            f"{_head_body_ratio_lock(ip_age)}；每只手 5 根手指、关节自然、双眼对称。"
+        )
+        if n_kids >= 2:
+            line += "多个同龄主角必须同尺度、同景深、站在同一水平面，谁都不能比旁边的人明显大一圈。"
         parts.append(line)
 
-    # v3.2 B 层：默认头身比锁（按 IP 年龄正向告知）
-    if cast:
-        parts.append(f"人物比例锁定：{_head_body_ratio_lock(ip_age)}；每只手严格 5 根手指，关节自然，双眼对称。")
+    # ④ 环境（温馨充实而整洁，给具体锚点）
+    if env_hint:
+        parts.append("【环境】" + env_hint.replace("（必须可见）", "").rstrip("。") + "。")
 
-    # v3.3：主角占比 + 同框比例 + 动物真实比例（底层逻辑统一注入）
-    if not is_cover and cast:
-        parts.append(composition_prompt_cn())
-
-    # 5) 关键道具（如有）
+    # ⑤ 关键道具
     if key_props:
-        parts.append("画面里必须出现：" + "；".join(key_props) + "。")
+        parts.append("画面里应出现：" + "；".join(key_props) + "。")
 
-    # 6) 配色锁定（正向写法）— 列出每个有专属色的角色
-    color_locks: list[str] = []
-    for c in cast:
-        sig = _signature_color_of(c["key"])
-        if sig:
-            color_locks.append(f"{c['name']}是画面里唯一穿{sig}的人")
+    # ⑥ 配色锁定（每个有专属色的角色）
+    color_locks = [
+        f"{c['name']}是画面里唯一穿{_signature_color_of(c['key'])}的人"
+        for c in cast if _signature_color_of(c["key"])
+    ]
     if color_locks:
         parts.append("配色锁定：" + "；".join(color_locks) + "。")
 
-    # 7) 构图 + 留白
-    parts.append(f"构图：{composition_cn.replace('（这是硬性要求...必须留出大量环境空间）', '').rstrip('。')}。{blank_cn}。")
+    # ⑦ 画风（一段：轻透淡彩水彩 + 精致清晰墨线 + 低饱和莫兰迪；明亮清透、精细干净 + 安全）
+    parts.append(
+        "【画风】" + STYLE_CN.split("。")[0] + "。"
+        "轻透清淡的透明水彩（颜料薄、通透不厚重）、精致清晰的细墨线，低饱和的莫兰迪高级色系；"
+        "画面明亮清透、精细干净、边缘清晰、主体突出；整体阳光健康温暖、"
+        "人物穿着得体的日常服装、适合儿童，画面像精印实体绘本的内页。"
+    )
 
-    # 8) Cover 特殊
-    if is_cover:
-        parts.append(f"这是绘本《{title}》的封面，主角们温馨可爱地展示在画面中，上方留出大块空白用于书名。")
+    # ⑧ 构图 + 留白 + 禁文字
+    parts.append(f"构图：{composition_cn.rstrip('。')}。{blank_cn}。{FORBID_CN}。")
 
     return "\n".join(parts)
 
@@ -715,6 +781,12 @@ def _build_negative_v3(*, cast: list[dict], page_text: str) -> str:
 
     # 1.5) v3.3 构图/比例禁忌（主角过小、配角/动物过大等）
     parts.append(composition_negative_cn())
+
+    # 1.6) v3.4 平滑控制禁忌（细碎噪点/高频纹理/脏污颗粒/杂线乱纹等）
+    parts.append(smoothness_negative_cn())
+
+    # 1.7) v3.6 儿童内容安全红线 + 画风/色彩禁忌 + IP 唯一性
+    parts.append(child_safety_negative_cn())
 
     # 2) 角色特征锁（按 cast 自动）
     char_locks = []

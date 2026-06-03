@@ -8,3 +8,15 @@ outputs/
 .streamlit/secrets.toml
 # 嵌套的独立 git 仓库（参考资料，不作为子模块纳入）
 references/worksheet-RR-checking/
+
+# 大体积参考 PPT（仅本地，约 190MB，不入库）
+_refppt/
+
+# 一次性生成/调试脚本（本地临时用）
+scripts/_gen_*.py
+scripts/_run_*.py
+
+# 备份产物
+*_backup.png
+*_backup.docx
+*_backup.pptx

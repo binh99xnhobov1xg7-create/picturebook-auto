@@ -197,7 +197,7 @@ def detect_characters_in_story(story_text: str, level: str = "5") -> list[dict]:
 
     Args:
         story_text: 故事正文（所有页拼接）
-        level: 用于 age 推断（Smart/0-3=8, 4=10, 5-6=12）
+        level: 用于 age 推断（Smart/0-2=8, 3-4=10, 5-6=12）
 
     Returns:
         每个元素：
