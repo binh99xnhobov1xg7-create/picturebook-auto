@@ -176,7 +176,7 @@ def _build_lesson_overview(doc, outline: BookOutline, band: str, is_nf: bool) ->
     level_cefr = f"Level {_level_label(outline.level)} \u2022 {cefr}"
     if lexile:
         level_cefr += f" \u2022 Lexile {lexile}"
-    level_cefr += f" \u2022 {outline.total_words or '\u2014'} words"
+    level_cefr += f" \u2022 {outline.total_words or '—'} words"
 
     strategy = _reading_strategy(outline, is_nf)
     skill = _reading_skill(outline, is_nf)
