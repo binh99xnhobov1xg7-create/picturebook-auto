@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Optional
 
 from docx import Document
-from docx.enum.table import WD_ALIGN_VERTICAL
+from docx.enum.table import WD_ALIGN_VERTICAL, WD_TABLE_ALIGNMENT
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
@@ -348,10 +348,13 @@ def _build_title_paragraph(doc, outline: BookOutline) -> None:
     title_str = f"阅读报告 {_level_label(outline.level)} - {capitalize_names(outline.title or '')}"
 
     # 标题尽量一行：按有效字宽（CJK 记 2）反推字号，长标题自动缩小（用户拍板）。
+    # L3-6（高级别）页首标题统一四号 14pt 上限（用户反馈 2026-06-08）；其余沿用 TITLE_PT 上限。
     left_w_in = (TABLE_WIDTH_DXA * 0.72) / 1440.0
     eff_len = sum(2 if ord(ch) > 0x2E80 else 1 for ch in title_str)
-    title_pt = TITLE_PT
-    for cand in (TITLE_PT, 16, 15, 14, 13):
+    high = _is_high_level(outline.level)
+    candidates = (14, 13.5, 13) if high else (TITLE_PT, 16, 15, 14, 13)
+    title_pt = candidates[0]
+    for cand in candidates:
         cap = left_w_in / (cand * 0.0085)
         if eff_len <= cap:
             title_pt = cand
@@ -361,6 +364,7 @@ def _build_title_paragraph(doc, outline: BookOutline) -> None:
 
     table = doc.add_table(rows=1, cols=2)
     table.autofit = False
+    table.alignment = WD_TABLE_ALIGNMENT.CENTER  # 表格整体页面居中（用户反馈 2026-06-08）
     _set_tbl_w(table, TABLE_WIDTH_DXA)
     _set_tbl_grid(table, [int(TABLE_WIDTH_DXA * 0.72), TABLE_WIDTH_DXA - int(TABLE_WIDTH_DXA * 0.72)])
     _set_tbl_no_borders(table)
@@ -429,6 +433,7 @@ def _build_main_table(doc, outline: BookOutline) -> None:
 
     table = doc.add_table(rows=12, cols=cols)
     table.autofit = False
+    table.alignment = WD_TABLE_ALIGNMENT.CENTER  # 主表整体页面居中（用户反馈 2026-06-08）
 
     _set_tbl_w(table, TABLE_WIDTH_DXA)
     _set_tbl_borders(table)
@@ -541,10 +546,15 @@ def _fill_phonics(row, outline: BookOutline) -> None:
     p.paragraph_format.space_after = Pt(0)
     p.paragraph_format.line_spacing = lp.get("ls", LINE_SPACING)
 
+    # 块6：命中大纲时拼读规则以大纲原文 verbatim 为准（防被 AI 推断覆盖）
+    _phonics_src = outline.phonics
+    _syl = getattr(outline, "syllabus", None)
+    if _syl is not None and getattr(_syl, "phonics_rule", ""):
+        _phonics_src = _syl.phonics_rule
     if _is_morphology_level(outline.level):
-        text = _normalize_morphology(outline.phonics, outline)
+        text = _normalize_morphology(_phonics_src, outline)
     else:
-        text = _normalize_phonics(outline.phonics)
+        text = _normalize_phonics(_phonics_src)
     text = _concise_affix(text)   # 固定格式：去引号 + 保留例词 + 多条用 / 隔开
     run = p.add_run(text)
     _bind_run(run, FONT_EN, FONT_CN, size_pt=body_pt, bold=False)
@@ -599,6 +609,10 @@ def _fill_questions(row, outline: BookOutline) -> None:
 
     questions = _resolve_rr_questions(outline)
 
+    # 用户拍板 2026-06-08：L4-6 的阅读表达题不再标 (P#) 页码（⭐ 难度星保留）。L0-3 维持带页码。
+    _lvl = (outline.level_key or "")
+    _hide_page_ref = _lvl.isdigit() and int(_lvl) >= 4
+
     for i, q in enumerate(questions, start=1):
         p = cell.paragraphs[0] if i == 1 else cell.add_paragraph()
         p.alignment = WD_ALIGN_PARAGRAPH.LEFT
@@ -622,7 +636,7 @@ def _fill_questions(row, outline: BookOutline) -> None:
         r_q = p.add_run(f"{i}. {text}")
         _bind_run(r_q, FONT_EN, FONT_CN, size_pt=body_pt, bold=False)
 
-        if page is not None:
+        if page is not None and not _hide_page_ref:
             r_p = p.add_run(f" (P{page})")
             _bind_run(r_p, FONT_EN, FONT_CN, size_pt=body_pt, bold=False)
 
@@ -695,7 +709,24 @@ def _rr_vocab_max(level: str) -> int:
 
 
 def _vocab_words_for_rr(outline: BookOutline) -> list[str]:
-    """RR 词汇掌握取词：按级别返回 4-6 个真实词（不补空字符串，便于格子自适应）。"""
+    """RR 词汇掌握取词：按级别返回 4-6 个真实词（不补空字符串，便于格子自适应）。
+
+    块6（用户拍板 2026-06-08）：命中大纲时，词形以大纲 verbatim 为准（防被 AI 抽取覆盖）。
+    """
+    syl = getattr(outline, "syllabus", None)
+    if syl is not None:
+        try:
+            if outline.is_dual_vocab_level and getattr(syl, "vocab_mastery", None):
+                syl_words = list(syl.vocab_mastery)
+            else:
+                syl_words = syl.vocab_words()
+        except Exception:
+            syl_words = []
+        if syl_words:
+            cleaned = [_to_us_spelling((w or "").strip().rstrip(",.;:").strip().lower())
+                       for w in syl_words if (w or "").strip()]
+            if cleaned:
+                return cleaned[:_rr_vocab_max(outline.level)]
     if outline.is_dual_vocab_level and outline.vocabulary_mastery:
         words = list(outline.vocabulary_mastery)
     elif outline.vocabulary_simple:
@@ -915,6 +946,23 @@ def _normalize_grammar_cn(raw: str) -> str:
         # 没匹配任何时态 → 原文保留
         return s.rstrip("。.；; ").strip()
     return "；".join(parts)
+
+
+def _level_number(level: str) -> int:
+    """从 level 字符串解析数字级别；解析不出返回 -1（如 smart）。"""
+    key = str(level or "").strip().lower()
+    if "smart" in key:
+        return -1
+    digits = "".join(ch for ch in key if ch.isdigit())
+    try:
+        return int(digits)
+    except ValueError:
+        return -1
+
+
+def _is_high_level(level: str) -> bool:
+    """L3-6 视为高级别（页首标题用四号 14pt）。"""
+    return _level_number(level) >= 3
 
 
 def _is_morphology_level(level: str) -> bool:

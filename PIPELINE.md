@@ -12,7 +12,7 @@ flowchart TD
     B --> D{每页 PageSpec}
     C --> D
     D -->|prompt_builder.py| E[BuiltPrompt<br/>prompt 字符串<br/>references 1-4 张]
-    E -->|seedream_client.py| F[即梦 4.6 / Ark API<br/>2304x1728 水彩]
+    E -->|seedream_client.py| F["生图(按 level 分流):<br/>L3-6 = gpt-image-2(imarouter)<br/>L0-2 = 即梦4.6(Ark)出图 + GPT修图双段"]
     F --> G[outputs/slug/images/page_NN.png]
     E --> H[outputs/slug/prompts/page_NN_prompt.txt]
     G -->|ppt_builder.py| I[9 页 PPT<br/>封面 + 7 故事 + 元信息]
@@ -59,7 +59,7 @@ flowchart TD
     PA -- 是 --> PR[+ parents_reference.png]
     PA -- 否 --> SKIP[skip]
     PR & SKIP --> M[最多 4 张 references]
-    M --> API[即梦 4.6 image2image]
+    M --> API["image2image: L3-6=gpt-image-2 / L0-2=即梦4.6+GPT修图"]
 ```
 
 ## 四、9 页 PPT 几何
@@ -87,7 +87,7 @@ P9 元信息   | Level / Book / CEFR / Lexile / Word count / Vocabulary
 | `config.py` | 路径、API、IP 年龄映射、PPT 几何与字体 | `LEVEL_TO_AGE_DEFAULT`、`IMAGE_SIZE` |
 | `parser.py` | Markdown → `BookOutline` (含 8 个 `PageSpec`) | 支持 `Text / Scene / Text_Position / Expression` 字段 |
 | `prompt_builder.py` | 拼装单页 prompt + 收集参考图 | `BuiltPrompt(prompt, references)` |
-| `seedream_client.py` | POST 即梦 4.6 + 重试 + 占位图降级 | PNG 落盘 |
+| `seedream_client.py` | 按 level 分流：gpt-image-2(imarouter 异步) / 即梦4.6(Ark 同步)出图+GPT修图双段 + 重试 + 占位图降级 | PNG 落盘 |
 | `ppt_builder.py` | 组装 9 页 PPT，Poppins Bold + 橙徽章 + 页码 | `*.pptx` |
 | `run.py` | CLI 入口，串起所有步骤 | 控制台日志 + 输出目录 |
 

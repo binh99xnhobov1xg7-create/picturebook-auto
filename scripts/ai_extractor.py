@@ -237,9 +237,12 @@ def _doubao_extract(
     raw = deepseek_chat(
         system=system_prompt,
         user=user_prompt,
-        model=EXTRACT_MODEL,  # 抽取用更快的 Sonnet，速度比 Opus 快数倍
+        model=EXTRACT_MODEL,
         max_tokens=16000,  # 抽取 JSON 较大（pages+scene_cn+题目），防截断
         json_mode=True,  # 不支持时 deepseek_chat 会自动剔除 response_format 重试
+        # 用户拍板 2026-06-08：抽取调低 temperature=0.2，降随机/降角色漂移（批量串名整改）。
+        # 模型不支持 temperature 时 deepseek_chat 会自动剔除重试。
+        temperature=0.2,
         timeout=240,
     )
     data = _loads_robust(raw)
@@ -470,38 +473,52 @@ def _build_system_prompt(level_key: str, is_dual: bool, rr_dist: list[int], pool
   ]
 }}
 
+## CRITICAL #0: 理解文本是第一步 · 忠实故事 · 严禁自我发挥（老师硬要求 2026-06-08）
+在写 scene_cn 之前，先**逐字读懂本页文字**：搞清"谁是谁、代词指谁、发生了什么、在哪里"。然后：
+  - **只画本页文字里真实出现的人/物/地点/动作**。文本没写的人物、道具、地点、剧情、情绪一律**不得自行新增/脑补/加戏**。
+  - 画面里的**每一个元素都必须能在本页（或前文已建立的）文字里找到出处**；找不到出处的元素必须删掉。
+  - 不要把别页/别的故事/常见套路的画面搬过来；不要为了"好看"或"凑系列 IP"而添加文本之外的角色或情节。
+  - 取舍顺序：官方故事文本 > 系列铁律 > 模型补全。只有文本确实没交代、又必须补全画面时才可极少量补全（且只补环境氛围，不补角色/剧情）。
+
 ## CRITICAL: pages[].scene_cn (used by the image model to draw — MUST be high quality)
-Write ONE continuous Chinese paragraph (120-220 字) describing ONLY action + environment + atmosphere. It MUST contain:
-  1. WHO — refer to each character BY NAME ONLY (Anna / Mia / Tommy / 一个男孩 ...).
+Write ONE continuous Chinese paragraph (**简洁干净，控制在约 90-150 字**；用词朴素精确、不堆砌形容词、不写空话套话，一句话能说清就不绕)，描述 ONLY action + environment + atmosphere。It MUST contain:
+  1. WHO — refer to each character BY THEIR EXACT NAME as written in the story (e.g. the lead's own name / Mia / Tommy / 一个男孩 ...).
      **NEVER describe any appearance** — no hair, hairstyle, clothes, colors, glasses, age-look, face/features.
      Appearance is 100% locked by the IP reference images downstream; if you write it here you create a WRONG/conflicting character. This is the #1 rule.
+     **#1b NEVER RENAME / NEVER SUBSTITUTE (critical — caused real bugs)**:
+       - Copy every proper name EXACTLY as the story spells it. If the story says "Anny", write "Anny" — do NOT "correct" it to "Anna" or any series character name. Do NOT swap a story character for a series IP (Mia/Tommy/Anna).
+       - **If the protagonist is an ANIMAL or non-human (an ant named Anny, a llama named Lina, a fox, a robot ...), it IS that animal — describe it as that animal/creature, NEVER as a human child, NEVER mapped to Mia/Tommy.** "She/he" for an animal lead stays that animal.
+       - Identify the TRUE protagonist(s) of THIS story from the title + text (could be an animal, or Mia + a named friend like Lucia) and keep them consistent across pages — do not invent or drop characters to fit the series.
      **Pronoun resolution (CRITICAL — read the context, do NOT blindly map to Tommy/Mia)**:
      Resolve every "she/her/he/him/it/they/I" to its ACTUAL antecedent in THIS page + previous pages by READING the story.
-       - A pronoun may refer to a NON-CHILD subject: a talking object (e.g. the gingerbread man / a toy), an ANIMAL (the fox, the cow, the bear), or an ADULT (dad / mom / grandma / a mechanic). In "He runs past the cow ... says the gingerbread man", "He" = the GINGERBREAD MAN (a cookie), NOT a boy. In a family story "He fixed the car" may = Dad; "She cooked" may = Mom. Resolve to the TRUE subject — never auto-substitute Tommy/Mia.
-       - Map a pronoun to Mia/Tommy ONLY when its antecedent is genuinely an UNNAMED human CHILD (a girl→Mia, a boy→Tommy); keep that identity for later pronouns about them.
+      - A pronoun may refer to a NON-CHILD subject: a talking object (e.g. the gingerbread man / a toy), an ANIMAL (the fox, the cow, the bear), or an ADULT (dad / mom / grandma / a mechanic). In "He runs past the cow ... says the gingerbread man", "He" = the GINGERBREAD MAN (a cookie), NOT a boy. In a family story "He fixed the car" may = Dad; "She cooked" may = Mom. Resolve to the TRUE subject — never auto-substitute Tommy/Mia.
+      - **ANIMAL pronouns carry the ANIMAL's gender, NOT a child mapping (老师强调)**: when "she/he" refers to a small animal (an ant, a llama, a rabbit, a hen ...), it is THAT animal and its gender is the animal's gender — "she" = a female animal (render as a girl/mother animal of that species), "he" = a male animal. NEVER turn "she→Mia" or "he→Tommy" just from the pronoun. Express the gender through that animal (e.g. 一只母羊驼 / 一只小公兔), never by drawing a human child.
+      - **FAMILY-ROLE words are SUPPORTING adults, NEVER the protagonist IP (老师强调)**: grandma/grandpa/外婆/奶奶/爷爷/姥姥/mom/妈妈/dad/爸爸/aunt/uncle 等永远画成对应年龄的大人（老人就是老人、妈妈就是成年女性），**绝不映射成 Mia/Tommy 的脸或当主角**。即使系列铁律要求"出现家人→搭配的孩子是 Mia&Tommy"，那也只是说同框的小孩是 Mia/Tommy，**家人本身仍是家人本人**，不能把 grandma 画成 Mia/Tommy。
+      - Map a pronoun to Mia/Tommy ONLY when its antecedent is genuinely an UNNAMED human CHILD (a girl→Mia, a boy→Tommy); keep that identity for later pronouns about them.
        - If the sentence is about Anna, then "she/her" = Anna — do NOT pull in Mia or Tommy.
        - "I"/"We" with no name: only treat as Tommy/Mia if the speaker is clearly a child in the story; if the speaker is the gingerbread man/an animal/an adult, use that subject instead.
      **Classic fairy tales** (The Gingerbread Man, Goldilocks, The Three Little Pigs, Little Red Riding Hood ...): the tale's own lead (the gingerbread man, Goldilocks, the pigs, the fox/wolf) is ITS OWN character — render it as itself, NOT as Tommy/Mia. Tommy & Mia appear only if the source frames them as readers/observers (e.g. on the cover). Such fable scenes may legitimately contain NO Tommy/Mia.
      **Child-safe**: any animal or "villain" (fox, wolf, bear ...) must be friendly, cute, gentle-faced — never fangs, never fierce/menacing/scary/ugly.
      Series principle: Tommy (boy) and Mia (girl) are the FIXED protagonists of this whole picture-book SERIES (a SET of books), but ONLY when the story actually features children — do not force them into a pure fable scene.
      Do NOT add any character who is not actually present in this page's sentence; supporting characters max 2, background only.
+     **CHARACTER WHITELIST (老师强调 · 防批量串名)**: The ONLY humans you may name are (a) names spelled in THIS story's text, and (b) Mia/Tommy — and Mia/Tommy ONLY as stand-ins for UNNAMED human children per the rules above. You must NOT introduce any other series/registered character (Anna, Ali, Cate, Lucia, Ravi, ...) unless that exact name appears in the story text. If a name is not in the story, it does not exist in these scenes.
   2. WHAT (concrete action verb + body posture + interaction) — e.g. "蹲下伸手指" not just "看着"
   3. WHERE (environment objects you can SEE: desk shape/color, blackboard, books, light source) — cozy and tidy, NOT empty/blank
   4. ATMOSPHERE (warm soft light direction, soft watercolor mood)
 Do NOT just translate the English sentence — REWRITE it as a visual scene a painter could draw, but with ZERO appearance words.
-Example for "Anna felt nervous on her first day in the new class. Her hands shook as she sat down at a small wooden desk.":
-  scene_cn: "教室靠窗的一角，Anna 独自在一张浅色小课桌后坐下，双手紧握放在桌面、微微颤抖，肩膀微微缩起，眉头轻蹙，眼神紧张地望向前方；桌上摊开一本练习本和一支削好的铅笔；背景是干净的暖米白空墙面（无黑板）、亮光浅米瓷砖地面，柔和的早晨阳光从右侧单侧窗户斜射进来，背景极简留白，温暖治愈的薄透水彩氛围。"
-  （注意：示例里只有动作、表情、环境、光线——没有任何发型/眼镜/衣服/颜色/长相词。这是必须遵守的写法。）
+Example for "Lily felt nervous on her first day in the new class. Her hands shook as she sat down at a small wooden desk.":
+  scene_cn: "教室靠窗的一角，Lily 独自在一张浅色小课桌后坐下，双手紧握放在桌面、微微颤抖，肩膀微微缩起，眉头轻蹙，眼神紧张地望向前方；桌上摊开一本练习本和一支削好的铅笔；背景是干净的暖米白空墙面（无黑板）、亮光浅米瓷砖地面，柔和的早晨阳光从右侧单侧窗户斜射进来，背景极简留白，温暖治愈的薄透水彩氛围。"
+  （注意：① 示例名"Lily"仅作演示——真实出图请【逐字照搬故事里的名字】，绝不改名/换成 Mia/Tommy/Anna；② 示例里只有动作、表情、环境、光线——没有任何发型/眼镜/衣服/颜色/长相词。这是必须遵守的写法。）
 
 ## CRITICAL: camera_angle（机位角度 — 绝不能全本平视）
 - 这是绘本，画面要随剧情变化、有镜头语言。**禁止 7 页全部 eye（平视）**——至少 3-4 页换用非平视机位。
 - 按本页内容选最有表现力的机位：
-  - eye（平视）：人物对话、情感交流、面部表情为主的页。
-  - high（俯视）：展示桌面/地面物件、整体场景布局、人物渺小/孤独感。
-  - birdseye（鸟瞰/正俯视）：地图、地理、大场景全貌（科普绘本展示海洋/河流/地形尤其常用）。
+  - eye（平视）：人物对话、情感交流、面部表情为主的页；**也是"孩子在场景里走动/寻找/探访"类剧情页的默认机位**。
+  - high（轻俯视）：展示桌面/地面物件、整体场景布局；轻微俯角即可，不要拉成航拍。
+  - birdseye（鸟瞰/正俯视）：**仅用于地图、地理、地形、大场景全貌的科普展示**（如海洋/河流/地形俯瞰）。**严禁**把它用在"孩子在社区/公园/街道里走访、找东西、和人对话"这类贴地剧情页——那样不符合孩子视角的代入逻辑。
   - low（仰视）：高大物体（城堡、大树、高楼）、表现宏伟/敬畏/角色被仰望。
-  - over_shoulder（越肩/主角视角）：跟随主角看向某物，代入主角视角去观察发现。
-- 把机位与 scene_cn 的描述对应起来（如选 high 就写"从上方俯瞰…"）。
+  - over_shoulder（越肩/主角视角）：跟随主角看向某物，代入主角视角去观察发现——"孩子在社区里寻找/指认/发现"优先用它或 eye。
+- 机位判据：**fiction 里"人物贴地行动/探索/寻找/对话"→ eye 或 over_shoulder（必要时 low）；birdseye/大俯视只给地图/大场景科普。** 把机位与 scene_cn 描述对应起来。
 
 ## CRITICAL: focus（每页的"高潮/焦点动作" — 画面的主体，让孩子一翻就被抓住）
 - 每页先想清楚："如果只能画一个瞬间，最该画哪一下？" —— 找出本页**最具视觉张力、最关键或最有趣**的那个动作。

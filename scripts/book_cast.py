@@ -65,6 +65,31 @@ _ANIMATE = re.compile(
     r"gingerbread man|snowman)\b",
     re.I,
 )
+# 地名/国家/大洲/族裔/星期月份（是设定/场景/时间，绝不是角色）—— 整词匹配
+_PLACE_OR_NONPERSON = re.compile(
+    r"^(spain|canada|china|france|england|britain|scotland|ireland|wales|america|"
+    r"usa|uk|mexico|japan|korea|india|italy|germany|spain|brazil|egypt|russia|greece|"
+    r"peru|argentina|chile|colombia|bolivia|ecuador|venezuela|cuba|portugal|spain|"
+    r"netherlands|belgium|sweden|norway|denmark|finland|poland|turkey|thailand|vietnam|"
+    r"indonesia|philippines|malaysia|singapore|kenya|nigeria|morocco|ghana|"
+    r"africa|asia|europe|antarctica|australia|oceania|"
+    r"new zealand|new york|london|paris|tokyo|beijing|rome|cairo|earth|mars|moon|"
+    r"spanish|english|french|chinese|canadian|american|mexican|italian|german|japanese|"
+    r"peruvian|brazilian|argentine|portuguese|dutch|swedish|norwegian|polish|turkish|"
+    r"monday|tuesday|wednesday|thursday|friday|saturday|sunday|"
+    r"january|february|march|april|may|june|july|august|september|october|november|december)$",
+    re.I,
+)
+# 句首常被大写的形容词/副词/泛指名词（不是专名角色）—— 整词匹配
+_COMMON_NONNAME = re.compile(
+    r"^(warm|cold|hot|cool|happy|sad|good|great|kind|clever|brave|gentle|quiet|loud|"
+    r"always|never|often|usually|suddenly|together|finally|today|tomorrow|yesterday|"
+    r"neighbor|neighbors|neighbour|neighbours|friend|friends|children|kids|people|"
+    r"everyone|everybody|someone|somebody|nobody|family|families|class|team|group|"
+    r"morning|afternoon|evening|night|summer|winter|spring|autumn|fall|"
+    r"hello|goodbye|thanks|please|yes|no|okay|sure|maybe|because|while|during)$",
+    re.I,
+)
 
 
 @dataclass
@@ -107,6 +132,9 @@ def _is_character_token(token: str) -> bool:
         return False
     if _PROP_WORDS.search(low):
         return False
+    # 地名/国家/族裔/时间词 与 句首形容词/泛指名词 → 不是角色（修 Spain/Canada/Warm/Neighbors 误判）
+    if _PLACE_OR_NONPERSON.match(low) or _COMMON_NONNAME.match(low):
+        return False
     if low in _IP_NAMES:
         return False
     # 任一单词是 IP（含 "Tommy and Mia" / "Tommy's" / 所有格）→ 属 IP，不进一次性册
@@ -142,13 +170,54 @@ _PLAIN_STOP = {
 }
 
 
-def _plain_text_tokens(text: str) -> list[str]:
-    """无官方 prompt 时，从故事正文里抓候选角色词（首字母大写专名 + 'Farmer Tom' 式双词 + 角色名词）。"""
+_TITLE_PREFIX = re.compile(
+    r"\b(mr|mrs|ms|miss|dr|sir|lady|aunt|uncle|captain|officer|farmer|king|queen|"
+    r"prince|princess|grandpa|grandma|teacher)\.?\s+([A-Z][a-z]+)", re.I)
+
+
+def _confirmed_proper_nouns(text: str) -> set[str]:
+    """收集"确凿专名"：在句中（非句首）出现的大写词，或紧跟称谓(Mr./Farmer…)的大写词。
+
+    句首单词天然大写，单凭句首大写无法判定是人名（如 'Warm hugs…' / 'Always be kind'）；
+    只有当同一个词也在句中大写出现、或带称谓时，才认定为真正的专有名词/人名。
+    """
+    confirmed: set[str] = set()
+    for sent in re.split(r"(?<=[.!?])\s+", text or ""):
+        words = sent.split()
+        for i, w in enumerate(words):
+            clean = re.sub(r"[^A-Za-z]", "", w)
+            if i == 0 or len(clean) < 3:
+                continue  # 跳过句首词（天然大写，不作数）
+            if clean[:1].isupper() and clean[1:].islower():
+                confirmed.add(clean.lower())
+    for m in _TITLE_PREFIX.finditer(text or ""):
+        confirmed.add(m.group(2).lower())
+    return confirmed
+
+
+def _plain_text_tokens(text: str, confirmed: set[str] | None = None) -> list[str]:
+    """无官方 prompt 时，从故事正文里抓候选角色词。
+
+    收紧（2026-06-08）：单个大写词必须是"确凿专名"（句中大写出现过或带称谓），
+    杜绝把句首形容词/副词（Warm/Always…）误当人名。双词 'Farmer Tom' 仍保留。
+
+    confirmed: 全书级别的"确凿专名"集合（建议由 build_book_cast 预先按整本算好后传入）。
+      —— 主角名（如 Lina）常出现在句首，单看一页会漏判；用全书集合可避免该漏判。
+    """
     toks: list[str] = []
-    # "Farmer Tom" / "Clever Crow" 等 形容词/职业+大写名
-    for m in re.finditer(r"\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\b", text or ""):
+    if confirmed is None:
+        confirmed = _confirmed_proper_nouns(text)
+    # "Farmer Tom" / "Clever Crow" 等 形容词/职业+大写名（双词强信号，保留）
+    for m in re.finditer(r"\b([A-Z][a-z]+\s+[A-Z][a-z]+)\b", text or ""):
         cand = m.group(1)
-        if cand.lower() in _PLAIN_STOP:
+        if cand.lower() in _PLAIN_STOP or _PLACE_OR_NONPERSON.match(cand.lower()):
+            continue
+        toks.append(cand)
+    # 单个大写专名：必须是"确凿专名"才收（句首孤立大写词不收）
+    for m in re.finditer(r"\b([A-Z][a-z]{2,})\b", text or ""):
+        cand = m.group(1)
+        low = cand.lower()
+        if low in _PLAIN_STOP or low not in confirmed:
             continue
         toks.append(cand)
     # 角色名词（the fox / a rabbit）即便小写也算
@@ -169,6 +238,14 @@ def build_book_cast(outline) -> dict[str, OneOffRole]:
     roles: dict[str, OneOffRole] = {}
     use_official = oip is not None
 
+    # 纯文本模式：先按【整本书】算一次"确凿专名"集合，避免句首出现的主角名（如 Lina）被逐页漏判。
+    book_confirmed: set[str] = set()
+    if not use_official:
+        whole = " ".join(
+            (p.text or "") + " " + (getattr(p, "scene", "") or "") for p in outline.pages
+        )
+        book_confirmed = _confirmed_proper_nouns(whole)
+
     for page in outline.pages:
         if use_official:
             try:
@@ -179,7 +256,7 @@ def build_book_cast(outline) -> dict[str, OneOffRole]:
             tokens = _bold_tokens(pos)
         else:
             pos = (page.text or "") + " " + (getattr(page, "scene", "") or "")
-            tokens = _plain_text_tokens(pos)
+            tokens = _plain_text_tokens(pos, confirmed=book_confirmed)
         if not pos:
             continue
         seen_on_page: set[str] = set()

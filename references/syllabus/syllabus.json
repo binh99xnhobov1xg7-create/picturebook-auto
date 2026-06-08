@@ -2,12 +2,13 @@
  "_meta": {
   "source_l36": "Level 3-6  S&S.xlsx",
   "source_l02": "S&S绘本大纲内容Level 0-Level 2.xlsx",
-  "book_count": 614
+  "book_count": 615
  },
  "books": {
   "3::miaandthesevendayplan": {
    "level": "3",
    "title": "Mia and the Seven-Day Plan",
+   "book_number": "1",
    "genre": "fiction",
    "sentence_pattern": "[Subject] will [action]",
    "example_sentence": "She will practice piano every day.",
@@ -54,6 +55,7 @@
   "3::fromsunrisetobedtime": {
    "level": "3",
    "title": "From Sunrise to Bedtime",
+   "book_number": "2",
    "genre": "nonfiction",
    "sentence_pattern": "At/In [time], [subject] [verb phrase].",
    "example_sentence": "In the morning, people wake and eat breakfast.",
@@ -100,6 +102,7 @@
   "3::thebigfamilyreunion": {
    "level": "3",
    "title": "The Big Family Reunion",
+   "book_number": "3",
    "genre": "fiction",
    "sentence_pattern": "[Person] has a [feature], and [Person] wears a [item].",
    "example_sentence": "Uncle Bob has a beard, and Cousin Jack wears a hat.",
@@ -146,6 +149,7 @@
   "3::tommyandtheraceagainstbedtime": {
    "level": "3",
    "title": "Tommy and the Race Against Bedtime",
+   "book_number": "4",
    "genre": "fiction",
    "sentence_pattern": "The clock says [time/words]",
    "example_sentence": "The clock says 9:30.",
@@ -192,6 +196,7 @@
   "3::seasonalchanges": {
    "level": "3",
    "title": "Seasonal Changes",
+   "book_number": "5",
    "genre": "nonfiction",
    "sentence_pattern": "In [season], there are [things].",
    "example_sentence": "In spring, there are flowers and new leaves.",
@@ -238,6 +243,7 @@
   "3::beingagoodfriend": {
    "level": "3",
    "title": "Being a Good Friend",
+   "book_number": "6",
    "genre": "nonfiction",
    "sentence_pattern": "A good friend [action].",
    "example_sentence": "A good friend shares.",
@@ -284,6 +290,7 @@
   "3::miagetsdressed": {
    "level": "3",
    "title": "Mia Gets Dressed",
+   "book_number": "7",
    "genre": "fiction",
    "sentence_pattern": "[Subject] puts on [clothing/item]",
    "example_sentence": "She puts on a red sweater.",
@@ -330,6 +337,7 @@
   "3::whywewearclothes": {
    "level": "3",
    "title": "Why We Wear Clothes",
+   "book_number": "8",
    "genre": "nonfiction",
    "sentence_pattern": "We wear clothes to [do something / show a reason]",
    "example_sentence": "We wear clothes to keep our bodies warm.",
@@ -376,6 +384,7 @@
   "3::mybrotherssecretfort": {
    "level": "3",
    "title": "My Brother's Secret Fort",
+   "book_number": "9",
    "genre": "fiction",
    "sentence_pattern": "[Person] builds [thing] in [place]",
    "example_sentence": "Tommy builds a fort in the corner of his room.",
@@ -422,6 +431,7 @@
   "3::clothesforeverykindofweather": {
    "level": "3",
    "title": "Clothes for Every Kind of Weather",
+   "book_number": "10",
    "genre": "fiction",
    "sentence_pattern": "[Someone] wears [clothing] [when/for/on + weather or condition]",
    "example_sentence": "Tommy wears a raincoat when it rains.",
@@ -468,6 +478,7 @@
   "3::differentclothesforwork": {
    "level": "3",
    "title": "Different Clothes for Work",
+   "book_number": "11",
    "genre": "nonfiction",
    "sentence_pattern": "For [purpose] I wear [clothes].",
    "example_sentence": "For work I wear a uniform.",
@@ -514,6 +525,7 @@
   "3::howfamiliesaredifferent": {
    "level": "3",
    "title": "How Families Are Different",
+   "book_number": "12",
    "genre": "nonfiction",
    "sentence_pattern": "Some families [verb phrase]",
    "example_sentence": "Some families cook together every evening.",
@@ -555,6 +567,7 @@
   "3::thetinyteamatwork": {
    "level": "3",
    "title": "The Tiny Team at Work",
+   "book_number": "13",
    "genre": "fiction",
    "sentence_pattern": "There are [adjective] cells that [verb phrase].",
    "example_sentence": "There are white cells that find germs.",
@@ -601,6 +614,7 @@
   "3::youramazingbody": {
    "level": "3",
    "title": "Your Amazing Body",
+   "book_number": "14",
    "genre": "nonfiction",
    "sentence_pattern": "Your body [verb] [body part/thing]",
    "example_sentence": "Your body makes blood and new cells.",
@@ -647,6 +661,7 @@
   "3::thetreehouseclub": {
    "level": "3",
    "title": "The Treehouse Club",
+   "book_number": "15",
    "genre": "fiction",
    "sentence_pattern": "This ... is just for ...",
    "example_sentence": "This club is just for us.",
@@ -693,6 +708,7 @@
   "3::mybusybody": {
    "level": "3",
    "title": "My Busy Body",
+   "book_number": "16",
    "genre": "fiction",
    "sentence_pattern": "I can [action] and [action]",
    "example_sentence": "I can hop and jump.",
@@ -739,6 +755,7 @@
   "3::bonesmusclesandmorehowyourbodyhelpsyoumove": {
    "level": "3",
    "title": "Bones, Muscles, and More: How Your Body Helps You Move",
+   "book_number": "17",
    "genre": "nonfiction",
    "sentence_pattern": "Your [body part] helps you [action or verb phrase]",
    "example_sentence": "Your body helps you move every day.",
@@ -785,52 +802,49 @@
   "3::homesaroundtheworld": {
    "level": "3",
    "title": "Homes Around the World",
+   "book_number": "18",
    "genre": "nonfiction",
-   "sentence_pattern": "There are ... homes that ...",
-   "example_sentence": "There are underground homes that stay cool in hot weather.",
-   "teaching_focus": "练习 There are + 名词 + that + 动词短语；学习基础从句。",
+   "sentence_pattern": "[Someone] build(s) [a home] from [material]",
+   "example_sentence": "People build igloos from ice and snow.",
+   "teaching_focus": "Practice present simple (build/builds), subject and verb agreement, vocabulary for homes and materials, and substitution drills (change the home and the material). Also use it to make simple questions: What do people build from X?",
    "core_vocab": [
     {
-     "word": "stilt homes",
+     "word": "igloo",
      "level": "",
      "example": ""
     },
     {
-     "word": "underground homes",
+     "word": "bamboo",
      "level": "",
      "example": ""
     },
     {
-     "word": "be made of",
-     "level": "",
-     "example": ""
-    },
-    {
-     "word": "float",
+     "word": "skyscraper",
      "level": "",
      "example": ""
     }
    ],
-   "core_vocab_raw": "stilt homes, underground homes, be made of, float",
-   "text_7page": "Page 1: There are many kinds of homes around the world.Page 2: There are houses of brick, wood, and stone.Page 3: There are tents that people pack and move.Page 4: There are stilt homes above rivers and seas. Some homes float on water like boats.Page 5: There are underground homes that stay cool in hot weather.Page 6: A tiny home can be one room with wheels. A big home can have many floors.Page 7: Homes are different, but all keep people safe and warm. Where you live is special.",
-   "pure_text": "There are many kinds of homes around the world. There are houses of brick, wood, and stone. There are tents that people pack and move. There are stilt homes above rivers and seas. Some homes float on water like boats. There are underground homes that stay cool in hot weather. A tiny home can be one room with wheels. A big home can have many floors. Homes are different, but all keep people safe and warm. Where you live is special.",
-   "word_count": "87",
+   "core_vocab_raw": "igloo, bamboo, skyscraper",
+   "text_7page": "Page 1\nYou may wonder: Do people really live in igloos?\n\nPage 2\nYes! People build igloos from ice and snow.\n\nPage 3\nIce keeps the cold wind out. It is warm inside!\n\nPage 4\nIn warm places, people build bamboo houses.\n\nPage 5\nSome people move often. They live in tents.\n\nPage 6\nIn rainy or coastal places, people build stilt houses above water to stay dry.\n\nPage 7\nIn big cities, skyscrapers reach high into the sky. Different homes, different places. Every home fits its people.",
+   "pure_text": "You may wonder: Do people really live in igloos? Yes! People build igloos from ice and snow. Ice keeps the cold wind out. It is warm inside! In warm places, people build bamboo houses. Some people move often. They live in tents. In rainy or coastal places, people build stilt houses above water to stay dry. In big cities, skyscrapers reach high into the sky. Different homes, different places. Every home fits its people.",
+   "word_count": "68",
    "lexile": "210L - 400L",
-   "cefr": "A1",
+   "cefr": "A1+",
    "decoding_label": "Phonics Rule",
-   "phonics_rule": "Long vowel \"o_e\" as in \"stone\"",
-   "phonics_examples": "stone, home",
-   "reading_strategy": "浏览大意 (Skimming)",
-   "reading_skill": "比较与对比 (Compare and Contrast)",
-   "questions_type": "1. Reading for Details:• Name three things houses can be made of. (Brick, wood, and stone) • Which homes can people pack and move? (Tents) • Where are stilt homes located? (Above rivers and seas) • Why do people live in underground homes? (To stay cool in hot weather) • Can a tiny home have wheels? (Yes) 2. Reading Skill & Strategy:• (Skill) Contrast a tent and a brick house. (One moves, one stays) • (Skill) Compare floating homes and stilt homes. (Both are near water) • (Skill) Which home is good for hot weather? (Underground) • (Strategy-Skimming) Look at the pictures. Are all homes the same? (No) • (Strategy-Skimming) Is this book about building a house or types of homes? (Types of homes) • (Strategy-Skimming) Find the word \"safe\". Do all homes keep people safe? (Yes) 3. Other Comprehension:• (Main Idea) What is the text about? (Different kinds of homes that keep people safe) • (Inference) Why would someone want a home with wheels? (To travel/move easily) • (Vocabulary) What are \"stilts\"? (Tall poles that hold a house up) • (Fact) Some homes move with the river. (Yes, floating homes) • (Connection) Is your home made of brick or wood?",
-   "rr_questions": "• (Under) What are tents made for? (To pack and move) • (On) Stilt homes are above ______ and ______. (Rivers and seas) • (On) Underground homes stay ______. (Cool) • (On) A floating home is like a ______. (Boat) • (Above) Why is \"where you live special\"? (Because it keeps you safe and warm)",
-   "graphic_organizer": "Venn Diagram (韦恩图)",
-   "go_description": "通过交叠的圆圈展示不同事物之间共同点与独特点的对比型图形组织器。",
-   "go_usage": "比较 Tents (Moveable) 和 Brick houses (Permanent)，交叠处写下它们的共同目标：Keep people safe and warm。"
+   "phonics_rule": "Consonant blend \"sk\" as in \"skyscraper\"",
+   "phonics_examples": "sky, skip",
+   "reading_strategy": "提问 (Asking and Answering Questions)",
+   "reading_skill": "信息分类 (Categorizing)",
+   "questions_type": "Reading for Details:\n1. Who are the main characters?\n2. Where does the story happen?\n3. What is the problem?\n4. How is the problem solved?\n\nComprehension:\n1. (Inference) How did the character feel at the end? Why?\n2. (Vocabulary) What does 'igloo' mean in the story?\n3. (Connection) Has something like this happened to you?\n4. (Opinion) What would you do in the character's place?",
+   "rr_questions": "1. (Under) Where does the story take place?\n2. (On) What problem does the main character have?\n3. (On) How is the problem solved?\n4. (On) How does the character feel at the end?\n5. (Above) Why do you think the character made that choice?",
+   "graphic_organizer": "Classification Map (分类图)",
+   "go_description": "按类别分支呈现不同房屋类型的层级图形组织器",
+   "go_usage": "主干写 Homes Around the World,分支:Igloo (ice/snow) / Bamboo house (warm places) / Tent (moving people) / Stilt house (coastal) / Skyscraper (big cities)"
   },
   "3::thegreatanimalhideandseek": {
    "level": "3",
    "title": "The Great Animal Hide-and-Seek",
+   "book_number": "19",
    "genre": "fiction",
    "sentence_pattern": "[Subject] is [verb+ing] [preposition] the [place]",
    "example_sentence": "A goat is standing on the red roof.",
@@ -877,6 +891,7 @@
   "3::animalsallaroundus": {
    "level": "3",
    "title": "Animals All Around Us",
+   "book_number": "20",
    "genre": "nonfiction",
    "sentence_pattern": "There is a [adjective] [noun] [verb-ing] [location].",
    "example_sentence": "There is a little bird singing on the roof.",
@@ -923,6 +938,7 @@
   "3::thehauntedattic": {
    "level": "3",
    "title": "The Haunted Attic",
+   "book_number": "21",
    "genre": "fiction",
    "sentence_pattern": "[Subject] was scared to [verb]",
    "example_sentence": "He was scared to go up.",
@@ -964,6 +980,7 @@
   "3::theforestolympics": {
    "level": "3",
    "title": "The Forest Olympics",
+   "book_number": "22",
    "genre": "fiction",
    "sentence_pattern": "[group] search in the [place]",
    "example_sentence": "They search in the trees.",
@@ -1010,6 +1027,7 @@
   "3::animalhomesandhabits": {
    "level": "3",
    "title": "Animal Homes and Habits",
+   "book_number": "23",
    "genre": "nonfiction",
    "sentence_pattern": "[Animal] lives in a [place].",
    "example_sentence": "A fox lives in a den.",
@@ -1056,6 +1074,7 @@
   "3::howhousesarebuilt": {
    "level": "3",
    "title": "How Houses Are Built",
+   "book_number": "24",
    "genre": "nonfiction",
    "sentence_pattern": "First/Next/Then we [verb] the [noun].",
    "example_sentence": "First we make the foundation, the strong bottom part.",
@@ -1102,6 +1121,7 @@
   "3::thefeatherinthewind": {
    "level": "3",
    "title": "The Feather in the Wind",
+   "book_number": "25",
    "genre": "fiction",
    "sentence_pattern": "[Subject] runs to [place/object]",
    "example_sentence": "The squirrel runs to the feather.",
@@ -1148,6 +1168,7 @@
   "3::mammalshowtheylive": {
    "level": "3",
    "title": "Mammals: How They Live",
+   "book_number": "26",
    "genre": "nonfiction",
    "sentence_pattern": "There are [noun phrase] that [verb phrase].",
    "example_sentence": "There are mammals that fly and swim.",
@@ -1194,6 +1215,7 @@
   "3::morningchaos": {
    "level": "3",
    "title": "Morning Chaos",
+   "book_number": "27",
    "genre": "fiction",
    "sentence_pattern": "[someone] can't find [something]",
    "example_sentence": "Tommy could not find his homework.",
@@ -1235,6 +1257,7 @@
   "3::savethesilverfish": {
    "level": "3",
    "title": "Save the Silver Fish",
+   "book_number": "28",
    "genre": "fiction",
    "sentence_pattern": "[Subject] [movement verb] [preposition] [place/object]",
    "example_sentence": "Carlos swims through the tunnel.",
@@ -1281,6 +1304,7 @@
   "3::reptilescoldbloodedlives": {
    "level": "3",
    "title": "Reptiles: Cold-Blooded Lives",
+   "book_number": "29",
    "genre": "nonfiction",
    "sentence_pattern": "Reptiles are [description]",
    "example_sentence": "Reptiles are animals with cold blood.",
@@ -1327,6 +1351,7 @@
   "3::staystrongandhealthy": {
    "level": "3",
    "title": "Stay Strong and Healthy",
+   "book_number": "30",
    "genre": "nonfiction",
    "sentence_pattern": "[Verb] [object] for [benefit]",
    "example_sentence": "Eat protein and grains for growth and energy.",
@@ -1368,6 +1393,7 @@
   "3::echofun": {
    "level": "3",
    "title": "Echo Fun",
+   "book_number": "31",
    "genre": "fiction",
    "sentence_pattern": "[Subject] hear [sound/words]",
    "example_sentence": "They hear their names called back.",
@@ -1414,6 +1440,7 @@
   "3::howwelearnabouttheworld": {
    "level": "3",
    "title": "How We Learn About the World",
+   "book_number": "32",
    "genre": "nonfiction",
    "sentence_pattern": "We use our [body part] to [verb] [object]",
    "example_sentence": "We use our eyes to see color and light.",
@@ -1460,6 +1487,7 @@
   "3::theboywhoneverbrushedhisteeth": {
    "level": "3",
    "title": "The Boy Who Never Brushed His Teeth",
+   "book_number": "33",
    "genre": "fiction",
    "sentence_pattern": "That night ... dreamed of ...",
    "example_sentence": "That night Tommy dreamed of cake, lollipops, and chocolate too.",
@@ -1501,6 +1529,7 @@
   "3::ourfivesensesatwork": {
    "level": "3",
    "title": "Our five senses at work",
+   "book_number": "34",
    "genre": "fiction",
    "sentence_pattern": "I can [sense verb] [noun phrase] [place phrase]",
    "example_sentence": "\"I can see a red kite in the sky,\" says Tommy.",
@@ -1547,6 +1576,7 @@
   "3::sensesyoucanfeel": {
    "level": "3",
    "title": "Senses You Can Feel",
+   "book_number": "35",
    "genre": "nonfiction",
    "sentence_pattern": "You can feel [something] with your [body part]",
    "example_sentence": "You can feel a warm hug with your skin.",
@@ -1593,6 +1623,7 @@
   "3::whysleepmatters": {
    "level": "3",
    "title": "Why Sleep Matters",
+   "book_number": "36",
    "genre": "nonfiction",
    "sentence_pattern": "Sleep helps your [body part/process] [verb]",
    "example_sentence": "Sleep helps your body grow.",
@@ -1639,6 +1670,7 @@
   "3::themagickitesfourseasons": {
    "level": "3",
    "title": "The Magic Kite's Four Seasons",
+   "book_number": "37",
    "genre": "fiction",
    "sentence_pattern": "The kite flies [preposition] the [weather/place]",
    "example_sentence": "The kite flies through the white snow.",
@@ -1685,6 +1717,7 @@
   "3::whywehaveseasons": {
    "level": "3",
    "title": "Why We Have Seasons",
+   "book_number": "38",
    "genre": "nonfiction",
    "sentence_pattern": "It is [weather] because [reason]",
    "example_sentence": "It is cold because that part is far from the sun.",
@@ -1731,6 +1764,7 @@
   "3::fromgardentotable": {
    "level": "3",
    "title": "From Garden to Table",
+   "book_number": "39",
    "genre": "fiction",
    "sentence_pattern": "[Subject] helped [verb phrase].",
    "example_sentence": "Mia and Tommy helped cut them.",
@@ -1772,6 +1806,7 @@
   "3::journeytotheblueocean": {
    "level": "3",
    "title": "Journey to the Blue Ocean",
+   "book_number": "40",
    "genre": "fiction",
    "sentence_pattern": "They see [animal] that [action]",
    "example_sentence": "They see big whales that sing songs.",
@@ -1818,6 +1853,7 @@
   "3::animalsinthedark": {
    "level": "3",
    "title": "Animals in the Dark",
+   "book_number": "41",
    "genre": "nonfiction",
    "sentence_pattern": "[Animal] have [body part] to [action]",
    "example_sentence": "Owls have big eyes to see in the dark.",
@@ -1864,6 +1900,7 @@
   "3::fromfarmtofork": {
    "level": "3",
    "title": "From Farm to Fork",
+   "book_number": "42",
    "genre": "nonfiction",
    "sentence_pattern": "... travel from ... to ...",
    "example_sentence": "It travels from the farm to your fork.",
@@ -1905,6 +1942,7 @@
   "3::thelittleseedsbigdream": {
    "level": "3",
    "title": "The Little Seed’s Big Dream",
+   "book_number": "43",
    "genre": "fiction",
    "sentence_pattern": "First, [event 1]. Then, [event 2].",
    "example_sentence": "First, a small seed sleeps in the dirt.",
@@ -1951,6 +1989,7 @@
   "3::howwegrowandchange": {
    "level": "3",
    "title": "How We Grow and Change",
+   "book_number": "44",
    "genre": "nonfiction",
    "sentence_pattern": "You [verb] when you were [age]",
    "example_sentence": "You were small when you were a baby.",
@@ -1997,6 +2036,7 @@
   "3::thebestsandwichever": {
    "level": "3",
    "title": "The Best Sandwich Ever",
+   "book_number": "45",
    "genre": "fiction",
    "sentence_pattern": "[Person] puts [thing] on the [place]",
    "example_sentence": "Tommy put bread on the plate.",
@@ -2038,6 +2078,7 @@
   "3::tommysbusycityday": {
    "level": "3",
    "title": "Tommy's Busy City Day",
+   "book_number": "46",
    "genre": "fiction",
    "sentence_pattern": "They went to [place] and [action]",
    "example_sentence": "They went to many museums and saw old paintings.",
@@ -2084,6 +2125,7 @@
   "3::howacityworks": {
    "level": "3",
    "title": "How a City Works",
+   "book_number": "47",
    "genre": "nonfiction",
    "sentence_pattern": "There are [plural noun] that [verb phrase]",
    "example_sentence": "There are pipes that bring clean water.",
@@ -2130,6 +2172,7 @@
   "3::wheredoesitcomefrom": {
    "level": "3",
    "title": "Where Does It Come From?",
+   "book_number": "48",
    "genre": "nonfiction",
    "sentence_pattern": "[food] comes from [source]",
    "example_sentence": "Milk comes from cows.",
@@ -2171,6 +2214,7 @@
   "3::thetoyswakeup": {
    "level": "3",
    "title": "The Toys Wake Up!",
+   "book_number": "49",
    "genre": "fiction",
    "sentence_pattern": "[toy] [action] [place]",
    "example_sentence": "A doll spins in a circle on the rug.",
@@ -2217,6 +2261,7 @@
   "3::pushpullrollthescienceofmovingthings": {
    "level": "3",
    "title": "Push, Pull, Roll: The Science of Moving Things",
+   "book_number": "50",
    "genre": "nonfiction",
    "sentence_pattern": "A [force/tool] moves a [object] [place/direction].",
    "example_sentence": "A push moves a toy car across the floor.",
@@ -2263,6 +2308,7 @@
   "3::thetalentshow": {
    "level": "3",
    "title": "The Talent Show",
+   "book_number": "51",
    "genre": "fiction",
    "sentence_pattern": "[Person] wants to [action]",
    "example_sentence": "Mia wanted to sing a song.",
@@ -2309,6 +2355,7 @@
   "3::tommyatthewhirlytwirlyfair": {
    "level": "3",
    "title": "Tommy at the Whirly-Twirly Fair",
+   "book_number": "52",
    "genre": "fiction",
    "sentence_pattern": "first, then, finally",
    "example_sentence": "Tommy then jumps into a small car.",
@@ -2355,6 +2402,7 @@
   "3::howridesmove": {
    "level": "3",
    "title": "How Rides Move",
+   "book_number": "53",
    "genre": "nonfiction",
    "sentence_pattern": "There (is/are) [thing] that [verb phrase]",
    "example_sentence": "There are wheels that help rides roll on the ground.",
@@ -2401,6 +2449,7 @@
   "3::trysomethingnew": {
    "level": "3",
    "title": "Try Something New!",
+   "book_number": "54",
    "genre": "nonfiction",
    "sentence_pattern": "You can [verb] [noun phrase]",
    "example_sentence": "You can play sports with friends.",
@@ -2442,6 +2491,7 @@
   "3::apostcardfromfaraway": {
    "level": "3",
    "title": "A Postcard from far away",
+   "book_number": "55",
    "genre": "fiction",
    "sentence_pattern": "There is / There are + [thing] + (optional [place])",
    "example_sentence": "There is a funny camel with a red hat.",
@@ -2485,9 +2535,57 @@
    "go_description": "模拟明信片布局，整合视觉图像（图片）与关键细节（文字）的组织器。",
    "go_usage": "在明信片“图片区”画出 Egypt 的代表物（Pyramid, Camel, Nile），在“文字区”写下 Grandma 的经历。"
   },
+  "3::homesaroundtheworld#56": {
+   "level": "3",
+   "title": "Homes Around the World",
+   "book_number": "56",
+   "genre": "nonfiction",
+   "sentence_pattern": "There are ... homes that ...",
+   "example_sentence": "There are underground homes that stay cool in hot weather.",
+   "teaching_focus": "练习 There are + 名词 + that + 动词短语；学习基础从句。",
+   "core_vocab": [
+    {
+     "word": "stilt homes",
+     "level": "",
+     "example": ""
+    },
+    {
+     "word": "underground homes",
+     "level": "",
+     "example": ""
+    },
+    {
+     "word": "be made of",
+     "level": "",
+     "example": ""
+    },
+    {
+     "word": "float",
+     "level": "",
+     "example": ""
+    }
+   ],
+   "core_vocab_raw": "stilt homes, underground homes, be made of, float",
+   "text_7page": "Page 1: There are many kinds of homes around the world.Page 2: There are houses of brick, wood, and stone.Page 3: There are tents that people pack and move.Page 4: There are stilt homes above rivers and seas. Some homes float on water like boats.Page 5: There are underground homes that stay cool in hot weather.Page 6: A tiny home can be one room with wheels. A big home can have many floors.Page 7: Homes are different, but all keep people safe and warm. Where you live is special.",
+   "pure_text": "There are many kinds of homes around the world. There are houses of brick, wood, and stone. There are tents that people pack and move. There are stilt homes above rivers and seas. Some homes float on water like boats. There are underground homes that stay cool in hot weather. A tiny home can be one room with wheels. A big home can have many floors. Homes are different, but all keep people safe and warm. Where you live is special.",
+   "word_count": "87",
+   "lexile": "210L - 400L",
+   "cefr": "A1",
+   "decoding_label": "Phonics Rule",
+   "phonics_rule": "Long vowel \"o_e\" as in \"stone\"",
+   "phonics_examples": "stone, home",
+   "reading_strategy": "浏览大意 (Skimming)",
+   "reading_skill": "比较与对比 (Compare and Contrast)",
+   "questions_type": "1. Reading for Details:• Name three things houses can be made of. (Brick, wood, and stone) • Which homes can people pack and move? (Tents) • Where are stilt homes located? (Above rivers and seas) • Why do people live in underground homes? (To stay cool in hot weather) • Can a tiny home have wheels? (Yes) 2. Reading Skill & Strategy:• (Skill) Contrast a tent and a brick house. (One moves, one stays) • (Skill) Compare floating homes and stilt homes. (Both are near water) • (Skill) Which home is good for hot weather? (Underground) • (Strategy-Skimming) Look at the pictures. Are all homes the same? (No) • (Strategy-Skimming) Is this book about building a house or types of homes? (Types of homes) • (Strategy-Skimming) Find the word \"safe\". Do all homes keep people safe? (Yes) 3. Other Comprehension:• (Main Idea) What is the text about? (Different kinds of homes that keep people safe) • (Inference) Why would someone want a home with wheels? (To travel/move easily) • (Vocabulary) What are \"stilts\"? (Tall poles that hold a house up) • (Fact) Some homes move with the river. (Yes, floating homes) • (Connection) Is your home made of brick or wood?",
+   "rr_questions": "• (Under) What are tents made for? (To pack and move) • (On) Stilt homes are above ______ and ______. (Rivers and seas) • (On) Underground homes stay ______. (Cool) • (On) A floating home is like a ______. (Boat) • (Above) Why is \"where you live special\"? (Because it keeps you safe and warm)",
+   "graphic_organizer": "Venn Diagram (韦恩图)",
+   "go_description": "通过交叠的圆圈展示不同事物之间共同点与独特点的对比型图形组织器。",
+   "go_usage": "比较 Tents (Moveable) 和 Brick houses (Permanent)，交叠处写下它们的共同目标：Keep people safe and warm。"
+  },
   "3::thesoccerstarsbiggame": {
    "level": "3",
    "title": "The Soccer Star's Big Game",
+   "book_number": "57",
    "genre": "fiction",
    "sentence_pattern": "[person] + [action] + to + [person]",
    "example_sentence": "Tommy passed to his friend Ben.",
@@ -2534,6 +2632,7 @@
   "3::greetingsaroundtheworld": {
    "level": "3",
    "title": "Greetings Around the World",
+   "book_number": "58",
    "genre": "fiction",
    "sentence_pattern": "... said \"...\" in ... [language] and ... [did]",
    "example_sentence": "Tangtang said, 'Ni hao,' in Chinese and smiled kindly.",
@@ -2580,6 +2679,7 @@
   "3::foodaroundtheworld": {
    "level": "3",
    "title": "Food Around the World",
+   "book_number": "59",
    "genre": "nonfiction",
    "sentence_pattern": "There is / There are [thing] [preposition] [place]",
    "example_sentence": "There is rice on many tables in Asia and Africa.",
@@ -2626,6 +2726,7 @@
   "3::sportsaregoodforyou": {
    "level": "3",
    "title": "Sports Are Good for You!",
+   "book_number": "60",
    "genre": "nonfiction",
    "sentence_pattern": "[Activity] help(s) your [thing] [verb/adjective (optional)]",
    "example_sentence": "Playing sports helps your body and mind.",
@@ -2672,6 +2773,7 @@
   "3::thegingerbreadman": {
    "level": "3",
    "title": "The Gingerbread Man",
+   "book_number": "61",
    "genre": "fiction",
    "sentence_pattern": "[Person/animal] runs past [place/thing]",
    "example_sentence": "He runs past the cow.",
@@ -2713,6 +2815,7 @@
   "3::folktalesstoriespassedfromvoicetovoice": {
    "level": "3",
    "title": "Folk Tales: Stories Passed from Voice to Voice",
+   "book_number": "62",
    "genre": "nonfiction",
    "sentence_pattern": "Many folktales [verb] [detail]",
    "example_sentence": "Many folk tales come from old villages.",
@@ -2759,6 +2862,7 @@
   "3::officerbucklesbusyday": {
    "level": "3",
    "title": "Officer Buckle's Busy Day",
+   "book_number": "63",
    "genre": "fiction",
    "sentence_pattern": "[Person] found the [object] [place].",
    "example_sentence": "Mia found the dog behind a tree.",
@@ -2800,6 +2904,7 @@
   "3::goldilocksandthethreebears": {
    "level": "3",
    "title": "Goldilocks and the three bears",
+   "book_number": "64",
    "genre": "fiction",
    "sentence_pattern": "someone's been ...",
    "example_sentence": "Someone's been eating my porridge.",
@@ -2846,6 +2951,7 @@
   "3::theantandthegrasshopper": {
    "level": "3",
    "title": "The Ant and the Grasshopper",
+   "book_number": "65",
    "genre": "fiction",
    "sentence_pattern": "... , so ...",
    "example_sentence": "The grasshopper has no food, so he comes to the ant's door.",
@@ -2892,6 +2998,7 @@
   "3::helpinghandsinourneighborhood": {
    "level": "3",
    "title": "Helping Hands in Our Neighborhood",
+   "book_number": "66",
    "genre": "nonfiction",
    "sentence_pattern": "... keep(s) ... [someone] ...",
    "example_sentence": "Police keep us safe.",
@@ -2938,6 +3045,7 @@
   "3::miaandherspanishfriend": {
    "level": "3",
    "title": "Mia and Her Spanish Friend",
+   "book_number": "67",
    "genre": "fiction",
    "sentence_pattern": "Somebody suggests they do something",
    "example_sentence": "When they feel ready to eat, Mia suggests they eat at a Spanish restaurant.",
@@ -2984,6 +3092,7 @@
   "3::discoveringcanada": {
    "level": "3",
    "title": "Discovering Canada",
+   "book_number": "68",
    "genre": "nonfiction",
    "sentence_pattern": "There are more than ... [num] [obj] in ...",
    "example_sentence": "There are more than two million lakes in Canada.",
@@ -3030,6 +3139,7 @@
   "3::thecleanupday": {
    "level": "3",
    "title": "The Clean-Up Day",
+   "book_number": "69",
    "genre": "fiction",
    "sentence_pattern": "[Subject] pick up [object] (from/near/by) [place]",
    "example_sentence": "They picked up paper and plastic bottles from the grass.",
@@ -3071,6 +3181,7 @@
   "3::thellamawhoclimbedtotheclouds": {
    "level": "3",
    "title": "The Llama Who Climbed to the Clouds",
+   "book_number": "70",
    "genre": "fiction",
    "sentence_pattern": "... become(s) smaller and smaller.",
    "example_sentence": "The bright clothes and the houses become smaller and smaller.",
@@ -3117,6 +3228,7 @@
   "3::discoveringnewzealand": {
    "level": "3",
    "title": "Discovering New Zealand",
+   "book_number": "71",
    "genre": "nonfiction",
    "sentence_pattern": "There are ..., ... and ... for people to visit",
    "example_sentence": "There are beaches, forests, and hot springs for people to visit.",
@@ -3163,6 +3275,7 @@
   "3::whydowehavelibrariesandmuseums": {
    "level": "3",
    "title": "Why Do We Have Libraries and Museums?",
+   "book_number": "72",
    "genre": "nonfiction",
    "sentence_pattern": "You can [action] [object]",
    "example_sentence": "At a library, you can borrow books.",

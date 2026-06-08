@@ -16,6 +16,9 @@ _refppt/
 scripts/_gen_*.py
 scripts/_run_*.py
 
+# 抽取缓存（本地临时产物）
+scripts/_ec_cache_*.pkl
+
 # 备份产物
 *_backup.png
 *_backup.docx

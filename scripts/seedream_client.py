@@ -14,7 +14,9 @@
 """
 from __future__ import annotations
 
+import base64
 import json
+import re
 import threading
 import time
 from pathlib import Path
@@ -24,10 +26,13 @@ import requests
 from PIL import Image, ImageDraw, ImageFilter
 
 from config import (
+    ARK_API_KEY,
+    ARK_BASE_URL,
     IMAGE_DELIVER_PRINT,
     IMAGE_HOST_PROVIDER,
     IMAGE_POLL_INTERVAL,
     IMAGE_POLL_MAX_TRIES,
+    IMAGE_SELF_REVIEW,
     IMAGE_SIZE,
     IMAGE_TARGET_PRINT,
     IMAGE_TARGET_RATIO,
@@ -39,11 +44,16 @@ from config import (
     IMAGE_DELIVER_PDF,
     IMAGE_CMYK_PROFILE,
     IMAGE_PRINT_UNSHARP,
+    IMAGE_WATERMARK,
     JIMENG_API_KEY,
     JIMENG_BASE_URL,
     JIMENG_MODEL,
+    JIMENG_SEEDREAM_MODEL,
+    JIMENG_SEEDREAM_SIZE,
     REQUEST_RETRIES,
     REQUEST_TIMEOUT,
+    VISION_REVIEW_MODEL,
+    resolve_image_backend,
 )
 
 _UA = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) picturebook-auto/1.0"}
@@ -92,8 +102,10 @@ def _upscale_to(im: "Image.Image", target: tuple[int, int]) -> "Image.Image":
     if out is None:
         out = im.resize(target, Image.LANCZOS)
         if IMAGE_PRINT_UNSHARP:
-            # 放大后轻锐化：恢复边缘清晰、不发虚（印刷无模糊）
-            out = out.filter(ImageFilter.UnsharpMask(radius=1.6, percent=80, threshold=2))
+            # 放大后轻锐化：恢复边缘清晰、不发虚（印刷无模糊）。
+            # 2026-06-08（L4 反馈"过锐/碎纹理"）：下调强度，radius 1.6→1.2 / percent 80→45 / threshold 2→3，
+            # 只补回插值发虚，避免过锐化光晕与高频伪影。
+            out = out.filter(ImageFilter.UnsharpMask(radius=1.2, percent=45, threshold=3))
     return out
 
 
@@ -615,6 +627,317 @@ def _poll_task(task_id: str, headers: dict) -> str:
             raise RuntimeError(f"任务失败 status={status} err={data.get('error')}")
         time.sleep(IMAGE_POLL_INTERVAL)
     raise RuntimeError(f"任务轮询超时（{IMAGE_POLL_MAX_TRIES}×{IMAGE_POLL_INTERVAL}s）")
+
+
+# ============================================================
+#  火山方舟 Ark 直连：即梦/Seedream 同步生图（L0-2 双段第一段）
+#  2026-06-08：与 gpt-image-2(imarouter, 异步) 并存。即梦支持多张 base64 参考图 + 4:3 直出。
+# ============================================================
+def _encode_image_b64(path: Path) -> str:
+    """本地图 → data URI（火山即梦接受 base64 参考图，可多张锁 IP）。"""
+    data = Path(path).read_bytes()
+    b64 = base64.b64encode(data).decode("ascii")
+    ext = Path(path).suffix.lower().lstrip(".")
+    mime = "jpeg" if ext in ("jpg", "jpeg") else "png"
+    return f"data:image/{mime};base64,{b64}"
+
+
+def _ark_extract_url(data: dict) -> str | None:
+    if isinstance(data.get("data"), list) and data["data"]:
+        item = data["data"][0]
+        if isinstance(item, dict) and item.get("url"):
+            return item["url"]
+    return data.get("url")
+
+
+def _ark_extract_b64(data: dict) -> str | None:
+    if isinstance(data.get("data"), list) and data["data"]:
+        item = data["data"][0]
+        if isinstance(item, dict) and item.get("b64_json"):
+            return item["b64_json"]
+    return None
+
+
+def generate_image_jimeng(
+    *,
+    prompt: str,
+    dest: Path,
+    references: Iterable[Path | str] = (),
+    size: str | None = None,
+    mock: bool = False,
+    label: str = "",
+    deliver_print: bool = False,
+) -> Path:
+    """火山方舟 Ark 即梦/Seedream 同步生图（写入 dest）。失败抛异常。
+
+    - 同步响应：data[0].url 或 data[0].b64_json
+    - 参考图：多张 base64（锁 IP 形象，图生图）
+    - 默认 4:3 直出（JIMENG_SEEDREAM_SIZE），通常不需后裁；deliver_print=True 时才走 4K 后处理。
+    """
+    dest = Path(dest)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    if mock or not ARK_API_KEY:
+        _save_mock_image(dest, prompt, label or "jimeng")
+        return dest
+
+    url = f"{ARK_BASE_URL.rstrip('/')}/images/generations"
+    headers = {
+        "Authorization": f"Bearer {ARK_API_KEY}",
+        "Content-Type": "application/json",
+    }
+    safe_prompt = _sanitize_prompt_for_moderation(prompt)
+    payload: dict = {
+        "model": JIMENG_SEEDREAM_MODEL,
+        "prompt": safe_prompt[:1800],
+        "size": size or JIMENG_SEEDREAM_SIZE,
+        "response_format": "url",
+        "watermark": IMAGE_WATERMARK,
+        "sequential_image_generation": "disabled",
+    }
+    refs = [Path(p) for p in references if p and Path(str(p)).exists()]
+    if refs:
+        encoded = [_encode_image_b64(p) for p in refs[:4]]
+        payload["image"] = encoded[0] if len(encoded) == 1 else encoded
+
+    import random as _rnd
+    max_attempts = REQUEST_RETRIES + 2
+    last_err: Exception | None = None
+    for attempt in range(max_attempts):
+        try:
+            resp = requests.post(url, headers=headers, json=payload, timeout=REQUEST_TIMEOUT)
+            if resp.status_code >= 400:
+                raise RuntimeError(f"Ark HTTP {resp.status_code}: {resp.text[:500]}")
+            data = resp.json()
+            img_url = _ark_extract_url(data)
+            if img_url:
+                dest.write_bytes(requests.get(img_url, timeout=REQUEST_TIMEOUT).content)
+            else:
+                b64 = _ark_extract_b64(data)
+                if not b64:
+                    raise RuntimeError(f"Ark 响应无 url/b64_json: {json.dumps(data)[:400]}")
+                dest.write_bytes(base64.b64decode(b64))
+            if deliver_print:
+                postprocess_4k(dest)
+            return dest
+        except Exception as e:  # noqa: BLE001
+            last_err = e
+            if attempt >= max_attempts - 1:
+                break
+            msg = str(e).lower()
+            is_rate = ("429" in msg or "rate" in msg or "limit" in msg or "quota" in msg)
+            time.sleep((12 if is_rate else 3) * (attempt + 1) + _rnd.uniform(0, 3))
+    raise RuntimeError(f"即梦(Ark)生图失败（已重试）: {last_err}")
+
+
+def _loads_review_json(raw: str) -> dict | None:
+    """稳健解析自审 JSON：去掉 ```json 围栏 / 提取第一个 {...} 对象。"""
+    if not raw:
+        return None
+    s = raw.strip()
+    if s.startswith("```"):
+        s = re.sub(r"^```(?:json)?\s*", "", s)
+        s = re.sub(r"\s*```$", "", s).strip()
+    try:
+        return json.loads(s)
+    except Exception:
+        pass
+    m = re.search(r"\{.*\}", s, re.DOTALL)
+    if m:
+        try:
+            return json.loads(m.group(0))
+        except Exception:
+            return None
+    return None
+
+
+def _review_image(image_path: Path, *, page_text: str = "", scene_cn: str = "",
+                  cast_names: Iterable[str] = (), ip_age: int | None = None) -> dict:
+    """GPT 视觉自审（用户拍板 2026-06-08）：看即梦出的图，只判定"有没有硬伤"。
+
+    返回 {"ok": bool, "issues": [str], "fix": str}。审核失败/不可用时返回 ok=True（不强行修图）。
+    检查项：① IP 是否统一(同一角色形象一致)；② 明显错误(多指/缺指/畸形肢体/五官错乱)；
+            ③ 图文是否匹配(画面是否忠实本页文字，不该出现文中没有的东西)；④ 是否分身(同一角色出现多次)。
+    """
+    if not IMAGE_SELF_REVIEW:
+        return {"ok": True, "issues": [], "fix": ""}
+    try:
+        from deepseek_client import deepseek_chat
+        names = "、".join(n for n in cast_names if n) or "（按画面）"
+        sys_p = (
+            "你是儿童绘本质检员。只看图判断有没有【必须修】的硬伤，宽松对待风格偏好。"
+            "只输出 JSON：{\"ok\": true/false, \"issues\": [\"...\"], \"fix\": \"一句话中文定向修图指令\"}。"
+        )
+        usr_text = (
+            f"本页应出现的角色：{names}" + (f"（年龄约 {ip_age} 岁）" if ip_age else "") + "。\n"
+            f"本页英文文字：{(page_text or '').strip()[:400]}\n"
+            f"本页画面意图(中文)：{(scene_cn or '').strip()[:400]}\n"
+            "判定下面四类硬伤，任一存在则 ok=false 并在 issues 写明、在 fix 给一句定向修图指令"
+            "（只修该处，不要重画风格）：\n"
+            "① 同一角色形象前后不一致 / IP 不统一；\n"
+            "② 明显解剖错误：多指/少指、畸形手脚、五官错乱、肢体扭曲；\n"
+            "③ 图文不匹配：画面出现文字里没有的关键物/人，或漏掉文字的关键动作（如文字说狗丢了却画出狗）；\n"
+            "④ 分身：同一个角色在画面里出现两次以上（两个 Mia/两个 Tommy/复制人）；\n"
+            "⑤ 家具/物件比例明显失真：桌椅床门相对孩子身高过大或过小（孩子像小人国或像巨人）。\n"
+            "若以上都没有，输出 {\"ok\": true, \"issues\": [], \"fix\": \"\"}。"
+        )
+        data_uri = _encode_image_b64(image_path)
+        messages = [
+            {"role": "system", "content": sys_p},
+            {"role": "user", "content": [
+                {"type": "text", "text": usr_text},
+                {"type": "image_url", "image_url": {"url": data_uri}},
+            ]},
+        ]
+        raw = deepseek_chat(messages=messages, model=VISION_REVIEW_MODEL,
+                            max_tokens=500, json_mode=True, timeout=120)
+        verdict = _loads_review_json(raw)
+        if not isinstance(verdict, dict):
+            return {"ok": True, "issues": [], "fix": ""}
+        verdict.setdefault("ok", True)
+        verdict.setdefault("issues", [])
+        verdict.setdefault("fix", "")
+        return verdict
+    except Exception as e:  # noqa: BLE001
+        print(f"[review] 视觉自审跳过（不强行修图）：{e}")
+        return {"ok": True, "issues": [], "fix": ""}
+
+
+def _fix_prompt(issues: list[str], fix: str) -> str:
+    """定向修图（图生图）prompt：只修审出的硬伤，完全保留即梦的构图/画风/身份/内容。"""
+    issue_txt = "；".join(str(i) for i in issues if i) or fix
+    return (
+        "【图生图·定向修瑕】所附参考图是本页最终画面，整体画风/构图/人物身份/场景内容【全部保留、不要重画】。"
+        "仅修正以下被指出的硬伤，改动范围尽量小：\n"
+        f"- 需修正：{issue_txt}\n"
+        + (f"- 修图指令：{fix}\n" if fix else "")
+        + "硬约束：① 不改变画风（保持即梦原画的治愈水彩观感与色调）；② 不改人物长相/身份、不新增或删减角色；"
+        "③ 同一角色只能出现一次（若有分身请删掉多余的那个）；④ 每只手 5 指、肢体五官自然；"
+        "⑤ 保持原构图与镜头不变。"
+    )
+
+
+def _self_review_and_fix(dest: Path, *, prompt: str, review_meta: dict | None,
+                         label: str, deliver_print: bool | None, do_print: bool) -> Path:
+    """对已生成的 dest 跑 GPT 视觉自审；仅当审出硬伤才【定向修图】(图生图，保留原画风/构图)。
+
+    L0-2(即梦) 与 L3-6(gpt-image-2) 共用（用户拍板 2026-06-08：自动审图扩到全级别）。
+    任一异常都回退到已出的原图，绝不阻断出图。
+    """
+    if not IMAGE_SELF_REVIEW:
+        if do_print:
+            postprocess_4k(dest)
+        return dest
+    meta = review_meta or {}
+    try:
+        verdict = _review_image(
+            dest,
+            page_text=meta.get("page_text", ""),
+            scene_cn=meta.get("scene_cn", "") or prompt,
+            cast_names=meta.get("cast_names", ()),
+            ip_age=meta.get("ip_age"),
+        )
+    except Exception as e:  # noqa: BLE001
+        print(f"[review] {label} 自审异常，原样交付：{e}")
+        if do_print:
+            postprocess_4k(dest)
+        return dest
+    if verdict.get("ok", True):
+        if do_print:
+            postprocess_4k(dest)
+        return dest
+    issues = verdict.get("issues") or []
+    fix = verdict.get("fix") or ""
+    print(f"[review] {label} 审出问题 → 定向修图：{issues}")
+    draft = dest.with_name(dest.stem + "_draft.png")
+    try:
+        dest.replace(draft)  # 原图留作图生图参考与回退
+    except Exception:
+        draft = dest
+    draft_url = host_image_to_url(draft)
+    if not draft_url:
+        if draft != dest:
+            draft.replace(dest)
+        if do_print:
+            postprocess_4k(dest)
+        return dest
+    try:
+        generate_image(prompt=_fix_prompt(issues, fix), dest=dest,
+                       reference_url=draft_url, mock=False,
+                       label=f"{label} 定向修图", deliver_print=deliver_print)
+        return dest
+    except Exception as e:  # noqa: BLE001
+        print(f"[review] 定向修图失败，回退原图：{e}")
+        if draft != dest and draft.exists():
+            draft.replace(dest)
+        if do_print:
+            postprocess_4k(dest)
+        return dest
+
+
+def generate_image_two_stage(
+    *,
+    prompt: str,
+    dest: Path,
+    references: Iterable[Path | str] = (),
+    mock: bool = False,
+    label: str = "",
+    deliver_print: bool | None = None,
+    review_meta: dict | None = None,
+) -> Path:
+    """L0-2 出图（用户拍板 2026-06-08 语义）：
+       ① 即梦(Ark) 全程出图(带 IP 定妆 base64 参考锁脸) = 最终画风；
+       ② GPT 视觉自审（IP/多指/图文匹配/分身）→ 仅当审出硬伤才【定向修图】，无问题原样交付即梦图。
+
+    任一段异常都回退到"已出的即梦图"或纯 gpt-image-2，保证不阻断出图。
+    review_meta: 可选 {"page_text","scene_cn","cast_names","ip_age"}，供自审判图文匹配。
+    """
+    dest = Path(dest)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    if mock or not ARK_API_KEY:
+        # 无 Ark key 时直接走 gpt 单段（mock 也由它处理占位图）
+        return generate_image(prompt=prompt, dest=dest, references=references,
+                              mock=mock, label=label, deliver_print=deliver_print)
+    do_print = IMAGE_DELIVER_PRINT if deliver_print is None else deliver_print
+    try:
+        # ① 即梦全程出图（最终画风）。直接出到 dest。
+        generate_image_jimeng(prompt=prompt, dest=dest, references=references,
+                              mock=False, label=f"{label} 即梦出图", deliver_print=False)
+        # ② GPT 视觉自审 → 仅当有硬伤才定向修图（共用 helper）
+        return _self_review_and_fix(dest, prompt=prompt, review_meta=review_meta,
+                                    label=label, deliver_print=deliver_print, do_print=do_print)
+    except Exception as e:  # noqa: BLE001
+        print(f"[two_stage] 即梦出图失败，回退纯 gpt-image-2: {e}")
+        return generate_image(prompt=prompt, dest=dest, references=references,
+                              mock=False, label=label, deliver_print=deliver_print)
+
+
+def generate_image_for_level(
+    level: str,
+    *,
+    prompt: str,
+    dest: Path,
+    references: Iterable[Path | str] = (),
+    mock: bool = False,
+    label: str = "",
+    deliver_print: bool | None = None,
+    review_meta: dict | None = None,
+) -> Path:
+    """按 level 选出图后端：L0-2 即梦全程出图+GPT自审定向修图，L3-6 单段(gpt-image-2)。"""
+    backend = resolve_image_backend(level)
+    if backend == "jimeng_refine":
+        return generate_image_two_stage(prompt=prompt, dest=dest, references=references,
+                                        mock=mock, label=label, deliver_print=deliver_print,
+                                        review_meta=review_meta)
+    # L3-6：纯 gpt-image-2 出图 → GPT 视觉自审 → 仅有硬伤才定向修图（块3·扩到全级别）
+    do_print = IMAGE_DELIVER_PRINT if deliver_print is None else deliver_print
+    generate_image(prompt=prompt, dest=dest, references=references,
+                   mock=mock, label=label, deliver_print=False)
+    if mock or not IMAGE_SELF_REVIEW:
+        if do_print and not mock:
+            postprocess_4k(dest)
+        return Path(dest)
+    return _self_review_and_fix(dest, prompt=prompt, review_meta=review_meta,
+                                label=label, deliver_print=deliver_print, do_print=do_print)
 
 
 def generate_image_candidates(

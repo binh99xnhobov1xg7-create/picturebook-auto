@@ -5,3 +5,5 @@ Pillow>=10.0.0
 python-dotenv>=1.0.0
 streamlit>=1.31.0
 openai>=1.30.0
+json_repair>=0.30.0
+openpyxl>=3.1.0

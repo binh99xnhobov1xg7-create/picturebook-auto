@@ -128,6 +128,7 @@ def parse_l36(ws, level: str) -> dict[str, dict]:
     if not rows:
         return {}
     h = _hmap(rows[0])
+    c_bookno = _find(h, "book no")
     c_genre = _find(h, "虚构")
     c_title = _find(h, "课文标题")
     c_pattern = _find(h, "句型")
@@ -178,9 +179,17 @@ def parse_l36(ws, level: str) -> dict[str, dict]:
                 w = w.strip()
                 if _is_real_word(w):
                     vocab.append({"word": w, "level": "", "example": ""})
+        booknum = _get(row, c_bookno) if c_bookno >= 0 else ""
+        # Excel 数字常被读成 "1.0" → 规整成整型字符串
+        if booknum:
+            try:
+                booknum = str(int(float(booknum)))
+            except Exception:
+                booknum = str(booknum).strip()
         entry = {
             "level": level,
             "title": title,
+            "book_number": booknum,
             "genre": _genre(_get(row, c_genre)),
             "sentence_pattern": _get(row, c_pattern),
             "example_sentence": _get(row, c_example),
@@ -203,10 +212,15 @@ def parse_l36(ws, level: str) -> dict[str, dict]:
             "go_description": _get(row, c_go_desc),
             "go_usage": _get(row, c_go_use),
         }
-        key = f"{level}::{_norm_title(title)}"
+        # 重名书（如 L3 「Homes Around the World」#18 与 #56）按书号去重，不再互相覆盖：
+        #   首次用纯标题键（保证 syllabus.match 按标题仍命中第一本）；重复则挂 标题#书号 键。
+        base_key = f"{level}::{_norm_title(title)}"
+        key = base_key if base_key not in out else f"{base_key}#{booknum or len(out)}"
         out[key] = {k: v for k, v in entry.items() if v not in ("", [], None)}
         out[key]["level"] = level
         out[key]["title"] = title
+        if booknum:
+            out[key]["book_number"] = booknum
     return out
 
 

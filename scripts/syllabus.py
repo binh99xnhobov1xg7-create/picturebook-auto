@@ -26,6 +26,7 @@ def _norm_title(s: str) -> str:
 class SyllabusEntry:
     level: str = ""
     title: str = ""
+    book_number: str = ""   # 官方 Book No.（L3-6 大纲列；用于"按级别+编号取本"）
     genre: str = ""
     # --- L3-6 主字段 ---
     sentence_pattern: str = ""
@@ -150,6 +151,42 @@ def match(level: str, title: str) -> SyllabusEntry | None:
             return SyllabusEntry.from_dict(v, sor)
 
     return None
+
+
+def get_by_number(level: str, number: int | str) -> SyllabusEntry | None:
+    """按【官方 Book No.】取本（唯一权威编号；解决重名书/位置错位）。命中返回 SyllabusEntry。"""
+    data = load_syllabus()
+    books: dict = data.get("books", {})
+    sor: dict = data.get("sor_strategies", {})
+    lvl = _level_digit(level)
+    want = str(number).strip()
+    try:
+        want = str(int(float(want)))
+    except Exception:
+        pass
+    for k, v in books.items():
+        if not k.startswith(f"{lvl}::"):
+            continue
+        if str(v.get("book_number", "")).strip() == want:
+            return SyllabusEntry.from_dict(v, sor)
+    return None
+
+
+def list_level(level: str) -> list[SyllabusEntry]:
+    """按书号升序列出某级别全部条目（无书号的排末尾）。"""
+    data = load_syllabus()
+    books: dict = data.get("books", {})
+    sor: dict = data.get("sor_strategies", {})
+    lvl = _level_digit(level)
+    entries = [SyllabusEntry.from_dict(v, sor) for k, v in books.items()
+               if k.startswith(f"{lvl}::")]
+
+    def _key(e: SyllabusEntry) -> int:
+        try:
+            return int(e.book_number)
+        except Exception:
+            return 10_000
+    return sorted(entries, key=_key)
 
 
 if __name__ == "__main__":

@@ -27,7 +27,7 @@ from config import OUTPUTS_DIR, resolve_ip_age
 from parser import BookOutline, PageSpec, enrich_from_syllabus
 from ppt_builder import build_picturebook_pptx, safe_filename
 from reading_report_builder import attach_rr_questions, build_reading_report
-from seedream_client import generate_image
+from seedream_client import generate_image, generate_image_for_level
 from teacher_guide_builder import build_teacher_guide
 from worksheet_builder import attach_worksheet_questions, build_worksheet
 
@@ -48,6 +48,14 @@ IMAGES_PER_BOOK = 8
 #     与本级并发解耦（本并发 × 每本页并发 都受这一个信号量统一节流，贴 API RPM 上限）。
 # ============================================================
 _IMG_SEM: Optional[threading.BoundedSemaphore] = None
+
+# ============================================================
+#  ①.5 LLM 抽取串行化锁（用户拍板 2026-06-08）：
+#     文本抽取是无状态 HTTP，本不该串味，但为彻底排除任何客户端竞态/限流交叠，
+#     并按"分层执行"原则（LLM 串行、出图并发），用全局锁保证同一时刻只有一本在抽取。
+#     抽取很快（相对出图），串行化对总墙钟影响小；出图仍由 _IMG_SEM 并发节流。
+# ============================================================
+_EXTRACT_LOCK = threading.Lock()
 
 
 def set_image_concurrency(n: int) -> None:
@@ -76,7 +84,7 @@ class BatchItem:
     cefr: str = ""
     theme: str = ""
     fiction_type: str = ""   # 可选强制体裁："fiction" / "non-fiction"（留空则交给 AI 抽取判定）
-    frame_mode: str = "B"    # 框架寓言呈现模式（已锁定默认 B）：仅对框架式寓言生效
+    frame_mode: str = "A+"   # 框架寓言呈现模式（老师拍板 2026-06-08 默认 A+：封面拿书+中间纯故事+末页结尾&合书）；仅对框架式寓言生效
 
     @property
     def name_prefix(self) -> str:
@@ -162,7 +170,9 @@ def run_one(item: BatchItem, out_root: Path, *, mock: bool = False,
         except Exception:
             pass
 
-    ec = extract_all(item.story, item.title, item.level, cefr=cefr, theme=theme, mock=mock)
+    # LLM 抽取串行化（分层执行：抽取串行、出图并发）→ 杜绝并发抽取的任何交叠污染。
+    with _EXTRACT_LOCK:
+        ec = extract_all(item.story, item.title, item.level, cefr=cefr, theme=theme, mock=mock)
 
     pages = [PageSpec(index=0, page_type="cover", text="")]
     for i, line in enumerate(_story_lines(item.story), start=1):
@@ -181,8 +191,8 @@ def run_one(item: BatchItem, out_root: Path, *, mock: bool = False,
     if item.fiction_type:
         outline.fiction_type = item.fiction_type
 
-    # 框架寓言呈现模式（A / B / A+）：仅对框架式寓言生效
-    outline.frame_mode = item.frame_mode or "A"
+    # 框架寓言呈现模式（A / B / A+）：仅对框架式寓言生效（默认 A+）
+    outline.frame_mode = item.frame_mode or "A+"
 
     # 官方 S&S 大纲注入：命中则用权威 Strategy/Skill/GO 等真值（未命中维持启发式）
     if enrich_from_syllabus(outline):
@@ -309,18 +319,27 @@ def run_one(item: BatchItem, out_root: Path, *, mock: bool = False,
             anchor = style_anchor
         page_refs = [anchor] if anchor else []
         page_prompt = built.prompt + ("\n\n" + note if note else "")
-        jobs.append((page.index, dest, page_prompt, page_refs, built.prompt))
+        review_meta = {
+            "page_text": page.text or "",
+            "scene_cn": getattr(built, "scene_cn", "") or "",
+            "cast_names": [c.get("name", "") for c in (built.used_characters or [])],
+            "ip_age": ip_age,
+        }
+        jobs.append((page.index, dest, page_prompt, page_refs, built.prompt, review_meta))
 
     # ---- 阶段 2：并行出图（页间无先后依赖，各写各的 dest）----
     #   断点续跑：已存在且非空的页直接复用；全局 _IMG_SEM 统一节流在途总数。
     def _gen_page(job: tuple) -> tuple[int, str, bool]:
-        idx, dest, page_prompt, page_refs, fallback_prompt = job
+        idx, dest, page_prompt, page_refs, fallback_prompt, review_meta = job
         if resume and (not mock) and dest.exists() and dest.stat().st_size > 0:
             return idx, "", True
         try:
             with _img_guard():
-                generate_image(prompt=page_prompt, dest=dest, references=page_refs,
-                               label=f"{item.name_prefix} P{idx}", mock=mock)
+                # 按 level 分流：L0-2 即梦全程出图+GPT视觉自审定向修图；L3-6 走纯 gpt-image-2 单段
+                generate_image_for_level(item.level, prompt=page_prompt, dest=dest,
+                                         references=page_refs,
+                                         label=f"{item.name_prefix} P{idx}", mock=mock,
+                                         review_meta=review_meta)
             return idx, "", False
         except Exception as e:  # noqa: BLE001
             # 单页失败不致命：用占位让组装继续，标记待人工抽查

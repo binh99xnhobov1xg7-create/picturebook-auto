@@ -102,6 +102,20 @@ LOGO_TEXT_PT = 20
 NAME_PT = 16
 FOOTER_PT = 14.5
 
+def _luminance(rgb: tuple) -> float:
+    """相对亮度 0(黑)~1(白)。用于按底色亮度自动选黑/白前景字（Bug5：浅底白字看不清）。"""
+    try:
+        r, g, b = (int(rgb[0]) / 255.0, int(rgb[1]) / 255.0, int(rgb[2]) / 255.0)
+    except Exception:
+        return 0.0
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+
+def _readable_text_rgb(bg_rgb: tuple) -> "RGBColor":
+    """根据底色亮度返回可读前景色：浅底→深炭灰，深底→白。阈值 0.6。"""
+    return RGBColor(0x33, 0x33, 0x33) if _luminance(bg_rgb) >= 0.6 else RGBColor(0xFF, 0xFF, 0xFF)
+
+
 TITLE_RGB = RGBColor(0x33, 0x33, 0x33)  # 深炭灰
 SUB_RGB = RGBColor(0x66, 0x66, 0x66)
 BLACK = RGBColor(0x00, 0x00, 0x00)
@@ -235,6 +249,74 @@ def _story_sentences_for_grammar(outline: BookOutline) -> list[str]:
                 if s and len(s.split()) >= 4:
                     out.append(capitalize_names(s))
     return out
+
+
+def _sentence_pattern_fallback_items(
+    outline: BookOutline, word_bank: Optional[list] = None, max_n: int = 4
+) -> list[dict]:
+    """句型页兜底题（Bug1：句型信息缺失导致整页空白）。
+
+    优先用官方 S&S 的 sentence_pattern / example_sentence；缺失则用 grammar_focus + 词表，
+    最后兜底"就故事写一句"。保证句型页永不空白。返回 {"prompt": ...} 列表（配整宽作答横线）。
+    """
+    entry = getattr(outline, "syllabus", None)
+    pattern = (getattr(entry, "sentence_pattern", "") or "").strip() if entry else ""
+    example = (getattr(entry, "example_sentence", "") or "").strip() if entry else ""
+    items: list[dict] = []
+    if example:
+        items.append({"prompt": f"Read and copy the sentence:  {example}"})
+    if pattern and pattern.lower() != example.lower():
+        items.append({"prompt": f"Use this pattern to write a sentence:  {pattern}"})
+    # 用核心词各造一句
+    words: list[str] = []
+    for w in (word_bank or []):
+        word = (w.get("word") if isinstance(w, dict) else str(w or "")).strip()
+        if word and word.isascii():
+            words.append(word)
+    for word in words:
+        if len(items) >= max_n:
+            break
+        items.append({"prompt": f"Write a sentence using the word:  {word}"})
+    if not items:
+        focus = (outline.grammar_focus or "").strip()
+        base = f" ({focus})" if focus else ""
+        items.append({"prompt": f"Write one sentence about the story{base}."})
+        items.append({"prompt": "Then write one more sentence of your own."})
+    return items[:max_n]
+
+
+def _render_sentence_fallback(slide, brand_rgb: tuple, items: list[dict]) -> None:
+    """在已建好（含标题）的句型页 slide 上渲染兜底书写题：每题 = 提示句 + 整宽作答横线。
+
+    与 _build_prompt_line_page 同款排版，但独立绘制，供各 builder 在 n==0 时调用，杜绝空页。
+    """
+    n = min(len(items or []), 5)
+    if n == 0:
+        return
+    area_top = CONTENT_Y + 1.34
+    area_bottom = CONTENT_Y + CONTENT_H - 0.40
+    avail = area_bottom - area_top
+    x = CONTENT_X + 0.62
+    box_w = CONTENT_W - 1.24
+    slot_h = avail / n
+    pt = 16.0
+    lh = pt / 72.0 * 1.16
+    for i, it in enumerate(items[:n]):
+        y = area_top + i * slot_h
+        tb = slide.shapes.add_textbox(Inches(x), Inches(y), Inches(box_w), Inches(slot_h - 0.10))
+        tf = tb.text_frame
+        tf.word_wrap = True
+        tf.margin_left = tf.margin_right = 0
+        p = tf.paragraphs[0]
+        p.alignment = PP_ALIGN.LEFT
+        r = p.add_run()
+        r.text = f"{i + 1}.  {capitalize_names(str(it.get('prompt', '')))}"
+        r.font.name = FONT
+        r.font.size = Pt(pt)
+        r.font.color.rgb = BLACK
+        # 作答横线（落在题槽下部，留出书写空间）
+        line_y = y + slot_h - 0.30
+        _draw_writing_line(slide, x, line_y, box_w, LIGHT_GRAY, 1.2)
 
 
 def _tense_fill_items(outline: BookOutline, max_n: int = 4) -> tuple[list[dict], list[str]]:
@@ -816,6 +898,8 @@ def build_worksheet(
     #   （主谓一致 / 现在时填空）；过去式为主 → 维持过去式考点。避免"现在时文出过去式题"
     #   既考点错、又因可转动词太少导致一页一题。每页保底 3-4 题填满版面。
     tense = _dominant_tense(outline)
+    # Bug1 兜底：句型引擎可能因故事太短/无可转动词而 0 产出 → 用官方 S&S 句型/例句兜底，杜绝空页。
+    sent_fb = _sentence_pattern_fallback_items(outline, data.get("word_bank"))
 
     # —— 句型页① 二选一（保底 ≥3 题，目标 4 题）——
     if tense == "present":
@@ -830,7 +914,8 @@ def build_worksheet(
         sent_mcs = (sent_mcs + data["sentence_mcs"])[:4]
         mc_sub = "Tick (\u2713) the correct sentence."
     _build_p3_sentence(new_page(), brand_rgb, sent_mcs, images,
-                       show_images=(sentence_image_mode != "none"), subtitle=mc_sub)
+                       show_images=(sentence_image_mode != "none"), subtitle=mc_sub,
+                       fallback=sent_fb)
 
     # —— 句型页② 分级 + 时态自适应（保底 ≥3 题）——
     def _present_fill_page():
@@ -839,20 +924,22 @@ def build_worksheet(
             xf, _ = _tense_fill_items(outline, max_n=4)
             sf = (sf + xf)[:4]
         _build_p2_fill(new_page(), brand_rgb, sf, [], images, title="Sentences",
-                       subtitle="Write the correct form of the verb to complete each sentence.")
+                       subtitle="Write the correct form of the verb to complete each sentence.",
+                       fallback=sent_fb)
 
     if band == "l02":
         unsc = _unscramble_items(_story_sentences_for_grammar(outline), max_n=6)
         if len(unsc) >= 3:
             _build_prompt_line_page(new_page(), brand_rgb, unsc, "Sentences",
                                     "Put the words in order to make a sentence.",
-                                    prompt_key="scrambled")
+                                    prompt_key="scrambled", fallback=sent_fb)
         elif tense == "present":
             _present_fill_page()
         else:
             sf, _ = _tense_fill_items(outline, max_n=4)
             _build_p2_fill(new_page(), brand_rgb, sf, [], images, title="Sentences",
-                           subtitle="Write the correct verb to complete each sentence.")
+                           subtitle="Write the correct verb to complete each sentence.",
+                           fallback=sent_fb)
     elif tense == "present":
         # 现在时为主：l34/l56 第 2 句型页统一用现在时填空（学什么考什么）
         _present_fill_page()
@@ -864,11 +951,13 @@ def build_worksheet(
                 "Rewrite each sentence in the past tense.",
                 prompt_key="prompt",
                 example="I walk to school.  →  I walked to school.",
+                fallback=sent_fb,
             )
         else:
             sf, _ = _tense_fill_items(outline, max_n=4)
             _build_p2_fill(new_page(), brand_rgb, sf, [], images, title="Sentences",
-                           subtitle="Write the correct past tense of each verb in brackets.")
+                           subtitle="Write the correct past tense of each verb in brackets.",
+                           fallback=sent_fb)
     else:  # l34（过去式为主）→ 写动词过去式
         sent_fills, sent_bank = _tense_fill_items(outline, max_n=4)
         if not sent_fills:
@@ -877,6 +966,7 @@ def build_worksheet(
             new_page(), brand_rgb, sent_fills, [], images,
             title="Sentences",
             subtitle="Write the correct past tense of each verb in brackets.",
+            fallback=sent_fb,
         )
 
     # ===== 阅读 / 思维导图 / 写作 =====
@@ -1016,6 +1106,23 @@ def attach_worksheet_questions(
         data = dict(data)
         data["_reading_q_count"] = reading_q_count
     setattr(outline, "_worksheet_data", data)
+
+
+def _verbatim_vocab(outline: BookOutline, n: int = 5) -> list[str]:
+    """块6（用户拍板 2026-06-08）：worksheet 取词优先用大纲 verbatim（防被 AI 抽取覆盖）。"""
+    syl = getattr(outline, "syllabus", None)
+    if syl is not None:
+        try:
+            if outline.is_dual_vocab_level and getattr(syl, "vocab_mastery", None):
+                w = list(syl.vocab_mastery)
+            else:
+                w = syl.vocab_words()
+        except Exception:
+            w = []
+        w = [x.strip() for x in w if (x or "").strip()]
+        if w:
+            return w[:n]
+    return (outline.vocabulary_mastery or outline.vocabulary_simple or [])[:n]
 
 
 def _questions_list_to_template_data(qlist: list[dict], outline: BookOutline) -> dict:
@@ -1200,9 +1307,9 @@ def _questions_list_to_template_data(qlist: list[dict], outline: BookOutline) ->
     if not out["reading_text"]:
         out["reading_text"] = story_text or "Story text goes here."
 
-    # Match 兜底：用 vocab
+    # Match 兜底：用 vocab（块6：大纲 verbatim 优先）
     if not out["match_pairs"]:
-        words = (outline.vocabulary_mastery or outline.vocabulary_simple or [])[:5]
+        words = _verbatim_vocab(outline, 5)
         out["match_pairs"] = [
             {"word": w, "def": f"meaning of {w}"} for w in words
         ]
@@ -1211,7 +1318,7 @@ def _questions_list_to_template_data(qlist: list[dict], outline: BookOutline) ->
 
     # word_bank 兜底
     if not out["word_bank"]:
-        out["word_bank"] = (outline.vocabulary_mastery or outline.vocabulary_simple or [])[:5]
+        out["word_bank"] = _verbatim_vocab(outline, 5)
 
     # Fill 兜底
     if not out["fill_blanks"] and out["word_bank"]:
@@ -1309,7 +1416,7 @@ def _draw_brand_frame(slide, brand_rgb: tuple, footer_text: str, logo_icon: Path
     r.font.name = FONT
     r.font.size = Pt(LOGO_TEXT_PT)
     r.font.bold = True
-    r.font.color.rgb = WHITE
+    r.font.color.rgb = WHITE  # 块7：品牌色标题条统一白字（跨级别一致）
 
     # 4. 右上 Name 角标（v2.0 改回盾形：上方矩形 + 下方三角尖角，对齐官方模板）
     # Name 颜色用 brand_rgb 加深 30%（更接近模板的酒红/暗粉效果）
@@ -1340,7 +1447,7 @@ def _draw_brand_frame(slide, brand_rgb: tuple, footer_text: str, logo_icon: Path
     r.text = "Name"
     r.font.name = FONT
     r.font.size = Pt(NAME_PT)
-    r.font.color.rgb = WHITE
+    r.font.color.rgb = _readable_text_rgb(name_dark)  # Bug5：底色亮度自适应
     r.font.bold = True
 
     # 三角形尖角部分（朝下，宽度比矩形窄，居中下方）
@@ -1391,8 +1498,8 @@ def _add_title(slide, title: str, subtitle: str) -> None:
     """大标题 + 副标题（居中，位于内容白底顶部）。"""
     # Title
     tb = slide.shapes.add_textbox(
-        Inches(CONTENT_X), Inches(CONTENT_Y + 0.20),
-        Inches(CONTENT_W), Inches(0.55),
+        Inches(CONTENT_X), Inches(CONTENT_Y + 0.16),
+        Inches(CONTENT_W), Inches(0.52),
     )
     tb.text_frame.margin_left = tb.text_frame.margin_right = 0
     p = tb.text_frame.paragraphs[0]
@@ -1401,7 +1508,17 @@ def _add_title(slide, title: str, subtitle: str) -> None:
     r.text = title
     r.font.name = FONT
     r.font.bold = True
-    r.font.size = Pt(TITLE_PT)
+    # 块7：长标题自动缩字号保证【一行】，避免换行压到副标题/内容，或撑宽到右上 Name 角标
+    title_pt = float(TITLE_PT)
+    title_w = CONTENT_W - 0.30
+    for cand in (40.0, 36.0, 32.0, 28.0, 24.0, 22.0):
+        cpl = max(8, int(title_w / (cand / 72.0 * 0.60)))  # 粗体约 0.6em/字
+        if len(title or "") <= cpl:
+            title_pt = cand
+            break
+    else:
+        title_pt = 22.0
+    r.font.size = Pt(title_pt)
     r.font.color.rgb = TITLE_RGB
 
     # Subtitle —— 自动缩字号保证【一行】，避免长指令换行压到下方内容框
@@ -1414,9 +1531,11 @@ def _add_title(slide, title: str, subtitle: str) -> None:
             break
     else:
         sub_pt = 14.0
+    # 副标题（=command 指令）上移贴近大标题，把下方空间让给首题，
+    #   拉开 command↔首题 间距（Bug4：题目和 command 距离太近）。
     sb = slide.shapes.add_textbox(
-        Inches(CONTENT_X), Inches(CONTENT_Y + 0.80),
-        Inches(CONTENT_W), Inches(0.34),
+        Inches(CONTENT_X), Inches(CONTENT_Y + 0.70),
+        Inches(CONTENT_W), Inches(0.32),
     )
     sb.text_frame.margin_left = sb.text_frame.margin_right = 0
     sb.text_frame.word_wrap = False
@@ -1584,11 +1703,17 @@ def _build_p1_match(slide, brand_rgb: tuple, pairs: list[dict], images: list[Pat
 
 def _build_p2_fill(slide, brand_rgb: tuple, fills: list[dict], word_bank: list[str],
                    images: Optional[list[Path]] = None,
-                   title: str = "Vocabulary", subtitle: str | None = None) -> None:  # noqa: ARG001
+                   title: str = "Vocabulary", subtitle: str | None = None,
+                   fallback: Optional[list[dict]] = None) -> None:  # noqa: ARG001
     """顶部粉色词库条 + 5 道填空题（用 ____ 表示空）。images 参数留作未来扩展。
 
     title/subtitle 可覆盖（第 2 句型页复用本渲染器时传 title='Sentence'）。
+    fallback → fills 为空时渲染的兜底书写题（Bug1：句型页杜绝空页）。
     """
+    if not fills and fallback:
+        _add_title(slide, title, "Read, copy and write the sentences.")
+        _render_sentence_fallback(slide, brand_rgb, fallback)
+        return
     _add_title(slide, title,
                subtitle or _get_subtitle("vocab_fill_blank", "Use the words to fill each blank."))
 
@@ -1620,7 +1745,7 @@ def _build_p2_fill(slide, brand_rgb: tuple, fills: list[dict], word_bank: list[s
         r.text = joined
         r.font.name = FONT
         r.font.size = Pt(BODY_PT)
-        r.font.color.rgb = WHITE
+        r.font.color.rgb = WHITE  # 块7：品牌色标题条统一白字（跨级别一致）
         r.font.bold = False
 
     # 填空题（垂直排列）—— 最多 6 题（用户：4-6 题，保持整洁）
@@ -1750,18 +1875,22 @@ def _draw_writing_line(slide, x_in: float, y_in: float, w_in: float,
 
 def _build_p3_sentence(slide, brand_rgb: tuple, mcs: list[dict], images: list[Path],
                        show_images: bool = True, *,
-                       subtitle: str = "Tick (\u2713) the sentence that uses the correct past tense.") -> None:
+                       subtitle: str = "Tick (\u2713) the sentence that uses the correct past tense.",
+                       fallback: Optional[list[dict]] = None) -> None:
     """4 题二选一，每题左侧绘本图 + 右侧 A/B 选项 + 行首圆圈题号。
 
     show_images=False → 不配图（选项满宽展开），供老师在「配图来源」选『不配图』时使用。
     subtitle → 按考点（过去式/主谓一致…）覆盖副标题。
+    fallback → mcs 为空时渲染的兜底书写题（Bug1：杜绝空页）。
     """
-    _add_title(slide, "Sentences", subtitle)
-
     # 带图每行占位多 → 最多 4 题；不配图 → 选项满宽，可放 5 题（用户：句型要多一点但保持整洁）
     n = min(len(mcs), 4 if show_images else 5)
     if n == 0:
+        # 句型题引擎无产出 → 用官方句型/例句兜底，保证不空页
+        _add_title(slide, "Sentences", "Read, copy and write the sentences.")
+        _render_sentence_fallback(slide, brand_rgb, fallback or [])
         return
+    _add_title(slide, "Sentences", subtitle)
 
     area_top = CONTENT_Y + 1.40
     area_bottom = CONTENT_Y + CONTENT_H - 0.30
@@ -1812,7 +1941,7 @@ def _build_p3_sentence(slide, brand_rgb: tuple, mcs: list[dict], images: list[Pa
         r.font.name = FONT
         r.font.bold = True
         r.font.size = Pt(QNUM_PT)
-        r.font.color.rgb = WHITE
+        r.font.color.rgb = WHITE  # 块7：品牌色标题条统一白字（跨级别一致）
 
         # 图（复用绘本 page_02..page_05），保持长宽比，居中放入 img_w x (row_h-0.10) 框
         img_idx = i + 2  # P3 题 1 用绘本 page_02
@@ -2066,17 +2195,21 @@ def _build_word_fill_page(slide, brand_rgb: tuple, items: list[dict],
 
 def _build_prompt_line_page(slide, brand_rgb: tuple, items: list[dict],
                             title: str, subtitle: str, *,
-                            prompt_key: str, example: Optional[str] = None) -> None:
+                            prompt_key: str, example: Optional[str] = None,
+                            fallback: Optional[list[dict]] = None) -> None:
     """连词成句 / 句子改写 版式：每题 = 提示句 + 一条【整宽】作答横线。
 
     用户拍板（2026-06-04）：
       • 作答横线必须和题目一样长（整条内容宽）、尽量多留书写空间；
       • 所有题（含第 6 题）必须落在白底内、绝不被页脚遮挡 → 字号/题距自适应。
+    fallback → items 为空时渲染的兜底书写题（Bug1：杜绝空页）。
     """
-    _add_title(slide, title, subtitle)
     n = min(len(items), 6)
     if n == 0:
+        _add_title(slide, title, "Read, copy and write the sentences.")
+        _render_sentence_fallback(slide, brand_rgb, fallback or [])
         return
+    _add_title(slide, title, subtitle)
     area_top = CONTENT_Y + 1.28
     x = CONTENT_X + 0.62
     box_w = CONTENT_W - 1.24            # 题目 + 横线统一宽度（更宽 → 书写空间更大）
@@ -2280,15 +2413,14 @@ def _build_reading_page(
             return [_wrap(len(f"{chr(65 + j)}. {o}"), cpl)
                     for j, o in enumerate((q.get("options") or [])[:3])]
         return [1]                      # tf / short：一行作答
-    SPACE_AFTER = 0.05                  # 题干↔选项、选项↔选项之间的细微段距（统一）
+    SPACE_AFTER = 0.08                  # 题干↔选项、选项↔选项之间的段距（Bug4：略加大，缓解拥挤）
 
     def _q_height(q: dict, sp: float) -> float:
         op = _opt_pt_of(sp)
         h = _stem_lines(q, sp) * _line_h(sp) + SPACE_AFTER
         for n in _opt_line_counts(q, op):
             h += n * _line_h(op) + SPACE_AFTER
-        if q.get("page") and not show_passage:
-            h += _line_h(op)            # Hint 行
+        # Bug3：已移除 Hint 行，不再为其预留行高。
         return h
 
     def _row_heights(sp: float) -> list:
@@ -2315,6 +2447,14 @@ def _build_reading_page(
             stem_pt = cand
             break
         cand -= 0.5
+    # Bug2：即便降到最小字号仍放不下（题太多/太长）→ 从末尾裁题直到放下，杜绝核心内容跑出页面。
+    while not _fits(stem_pt) and sum(len(c) for c in col_qs) > 2:
+        flat = [q for c in col_qs for q in c][:-1]
+        if len(flat) >= 2 and two_col:
+            mid = (len(flat) + 1) // 2
+            col_qs = [flat[:mid], flat[mid:]]
+        else:
+            col_qs = [flat]
     opt_pt = _opt_pt_of(stem_pt)
 
     def _render_q(x: float, y: float, w: float, q: dict, qno: int) -> None:
@@ -2362,9 +2502,7 @@ def _build_reading_page(
         else:  # short
             n_us = max(10, int((w - OPT_INDENT) / 0.12))
             _opt_para("_" * n_us, font=FONT_BLANK)
-        if page_no:
-            _opt_para(f"Hint: read page {page_no} again.",
-                      pt=max(8.5, opt_pt - 1), color=SUB_RGB, italic=True)
+        # Bug3：去掉多余的「Hint: read page N again.」——题干已带 (P#) 定位，重复且占行。
 
     # —— 等距平铺（用户硬要求）：三段间距统一为同一模数 GAP —— 
     # GAP = (可用高 - 各行内容高之和) / (行数 + 1)；首行上边距 = 行间距 = 末行下边距 = GAP，
@@ -2668,7 +2806,7 @@ def _build_p6_mindmap(slide, rows: list[dict]) -> None:
         r.font.name = FONT
         r.font.bold = True
         r.font.size = Pt(18)
-        r.font.color.rgb = WHITE
+        r.font.color.rgb = _readable_text_rgb(color)  # Bug5：pastel 浅底用深字
 
         # 右：白底浅边书写区（引导问题 + 作答横线）
         ans = slide.shapes.add_shape(
@@ -3014,8 +3152,7 @@ def _normalize_worksheet_data(data: dict) -> dict:
 
 def _build_default_data(outline: BookOutline) -> dict:
     words = (
-        outline.vocabulary_mastery
-        or outline.vocabulary_simple
+        _verbatim_vocab(outline, 5)
         or ["nervous", "shake", "recess", "wooden", "a pile of"]
     )[:5]
     words = list(words) + ["word"] * max(0, 5 - len(words))

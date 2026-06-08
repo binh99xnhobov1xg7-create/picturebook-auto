@@ -69,6 +69,46 @@ REQUEST_RETRIES = int(os.getenv("REQUEST_RETRIES", "2"))
 JIMENG_API_KEY = IMAROUTER_API_KEY                # 兼容旧名
 JIMENG_BASE_URL = IMAROUTER_BASE
 JIMENG_MODEL = IMAGE_MODEL
+
+# ---------- 火山方舟 Ark 直连：即梦/Seedream（仅 L0-2 出图，2026-06-08 双模型）----------
+# L0-2 走「即梦4.6(Ark)出草稿 → GPT(gpt-image-2) 图生图修图」双段；L3-6 维持纯 gpt-image-2。
+# 注意：ARK_API_KEY 同时是 IMAROUTER 的兜底 key（见上），此处复用同一把 Ark key 直连火山。
+ARK_BASE_URL = os.getenv("ARK_BASE_URL", "https://ark.cn-beijing.volces.com/api/v3").rstrip("/")
+ARK_API_KEY = os.getenv("ARK_API_KEY", "").strip()
+# 即梦4.6 的 model id（火山方舟 endpoint/model 名，由 .env 配置；默认填 4.5 占位，待补 4.6 id）
+JIMENG_SEEDREAM_MODEL = os.getenv("JIMENG_SEEDREAM_MODEL", "doubao-seedream-4-5-251128")
+# 即梦 4:3 直出尺寸（火山支持 4:3 直出，无需后裁）
+JIMENG_SEEDREAM_SIZE = os.getenv("JIMENG_SEEDREAM_SIZE", "2304x1728")
+
+# ---------- L0-2 出图语义（用户拍板 2026-06-08）----------
+# 即梦【全程出图】= 最终画风由即梦决定；GPT 只做【视觉自审】（IP是否统一/有无多指/图文是否匹配/有无分身），
+# 仅当审出问题时才【定向修图】（图生图保留即梦构图与画风，只补/改有问题处），无问题则原样交付即梦图。
+IMAGE_SELF_REVIEW = os.getenv("IMAGE_SELF_REVIEW", "true").lower() in ("1", "true", "yes")
+# 视觉自审用的多模态模型（imarouter，需支持图片输入）。
+# 注意：本账号 imarouter「vipkid」分组下 gpt-4o/gpt-5/gemini 等无渠道，可用的是 Claude 系（已支持图片输入）。
+VISION_REVIEW_MODEL = os.getenv("VISION_REVIEW_MODEL", "claude-sonnet-4-6")
+
+# 按 level 选出图后端：jimeng_refine = 即梦出图+GPT修图（L0-2）；gpt = 纯 gpt-image-2（L3-6）
+LEVEL_IMAGE_BACKEND: dict[str, str] = {
+    "smart": "jimeng_refine", "0": "jimeng_refine", "1": "jimeng_refine", "2": "jimeng_refine",
+    "3": "gpt", "4": "gpt", "5": "gpt", "6": "gpt",
+}
+
+
+def resolve_image_backend(level: str) -> str:
+    """返回该 level 的出图后端：'jimeng_refine'（双段）或 'gpt'（单段）。
+
+    即梦双段需要 Ark key；缺失时自动回退纯 gpt-image-2，保证不阻断出图。
+    可用 IMAGE_BACKEND_OVERRIDE 全局强制（gpt / jimeng_refine）。
+    """
+    override = os.getenv("IMAGE_BACKEND_OVERRIDE", "").strip().lower()
+    if override in ("gpt", "jimeng_refine"):
+        backend = override
+    else:
+        backend = LEVEL_IMAGE_BACKEND.get(_level_key(level), "gpt")
+    if backend == "jimeng_refine" and not ARK_API_KEY:
+        return "gpt"
+    return backend
 # 绘本正文页：gpt-image-2 仅支持 1024x1024 / 1024x1536 / 1536x1024（不支持 4:3 直出）
 # 方案A：先出 3:2(1536x1024) → 居中裁 4:3 → 升 4K，详见 IMAGE_TARGET_* 常量
 IMAGE_SIZE = os.getenv("IMAGE_SIZE", "1536x1024")
@@ -200,12 +240,15 @@ def rr_question_distribution(level: str) -> list[int]:
 #  ⚠️ 这些不是“仅展示”，会真正注入每页正向/反向提示词。
 # ============================================================
 COMPOSITION_POLICY: dict[str, str] = {
-    "protagonist_pct": "50–60%",
+    "protagonist_pct": "45–55%",
     "background_pct": "40–50%",
-    "text_safe_pct": "约 20%",
+    "text_safe_pct": "约 20–25%",
     "perspective": "默认平视（与儿童视线齐平）",
     "style": "温暖治愈水彩童书风（低饱和、柔和晕染、圆润线条）",
-    "protagonist_rule": "主角（单人或主角群体）是画面视觉中心，清晰饱满，整体占画面高度约 50–60%",
+    "protagonist_rule": (
+        "主角（单人或主角群体）是画面视觉焦点、清晰饱满，整体占画面高度约 45–55%；"
+        "主体明显偏置画面一侧（不要居中铺满），在另一侧（约 20–25%）留出干净的排文字空间"
+    ),
     "scale_rule": (
         "同框其他人物按真实身高比例（同龄人身高相近，成人比儿童高），"
         "任何人都不能比同框同龄人明显大一圈；"
@@ -245,9 +288,12 @@ SMOOTHNESS_PROMPT_CN = (
     "平滑控制要求：整体画面必须干净平滑统一，强调大色块叙事与整体轮廓，"
     "不要细碎槽点，不要高频脏纹理，不要脏污颗粒立体感，不要密集小装饰，"
     "边缘清晰利落，表面干净，画面呼吸感强、主次分明、一目了然；"
-    "同时要求细节丰富、质感细腻、干净高级、画面干净通透，材质完整自然、纹理平滑统一，"
+    "细节克制简洁(controlled details)、纹理极简(minimal texture)、质感简洁干净高级、画面干净通透，材质完整自然、纹理平滑统一，"
     "主体清晰、背景层次分明（前后景拉开）；"
-    "清晰的整体轮廓 + 柔和的水彩层次过渡（细腻而不细碎），可高分辨率印刷。"
+    "以平滑柔和的色块与渐变(smooth shading/gradients)为主、清晰的整体轮廓，水彩层次过渡柔和克制（绝不细碎），可高分辨率印刷。"
+    # 用户拍板 2026-06-08（L4 实测反馈）：把目标风格英文串原样并入，追求更干净平滑、少碎纹理
+    " clean illustration, smooth shading, soft lighting, controlled details, "
+    "minimal texture, high clarity, refined edges, smooth gradients."
 )
 SMOOTHNESS_NEGATIVE_CN = (
     "细碎噪点；高频纹理；脏污颗粒；密集小装饰；杂乱碎点；颗粒感；"
@@ -256,7 +302,10 @@ SMOOTHNESS_NEGATIVE_CN = (
     "断裂破碎的轮廓；形体破碎；马赛克/碎片化质感；"
     # 用户拍板 2026-06-06：过锐化 / 色斑 / 崩坏 / 畸变
     "过度锐化；色斑；噪点细碎；崩坏；畸变；结构崩坏；肢体畸变；"
-    "AI 杂线、乱纹、无逻辑多余背景"
+    "AI 杂线、乱纹、无逻辑多余背景；"
+    # 用户拍板 2026-06-08（L4 实测反馈）：目标风格负向英文串原样并入
+    "noise, grain, artifacts, high frequency detail, dirty texture, oversharpen, "
+    "blotchy, chaotic details"
 )
 
 

@@ -29,6 +29,9 @@ class PageSpec:
     hook: str = ""
     # v6 新增：本页"高潮/焦点动作"——本页最具视觉张力的那一下，作为画面主体居中动作（如"Tommy 俯身扑向逃窜的小仓鼠"）
     focus: str = ""
+    # 块4（用户拍板 2026-06-08）：生图前给老师确认的"简体中文场景安全线"（谁+在哪+做什么）。
+    # 非空时作为本页画面的权威核心注入 prompt 最前；老师可在生图前逐页编辑确认。
+    safety_line: str = ""
 
     @property
     def label(self) -> str:
@@ -47,6 +50,7 @@ class BookOutline:
     book_number: str = ""
     cefr: str = ""
     lexile: str = ""
+    lexile_source: str = ""   # 块11：来源审计 syllabus / analyzer / manual / na（禁止编造）
     word_count_override: str = ""
     ip_age: int | None = None
 
@@ -76,7 +80,7 @@ class BookOutline:
     syllabus: object | None = None   # 命中的 SyllabusEntry（teacher_guide 直接取用），未命中 None
     official_image_prompt: object | None = None  # 命中的官方每课出图 Prompt（OfficialImagePrompt），出图时权威参考注入
     book_cast: dict | None = None    # 书内角色册：反复出场的一次性/非 IP 角色 → 全书形象锁 + 书内定妆锚图
-    frame_mode: str = "B"            # 框架寓言呈现模式（已锁定默认 B）：B=每页"读者一角看书+故事幻象铺满"；A/A+ 备选
+    frame_mode: str = "A+"           # 框架寓言呈现模式（老师拍板 2026-06-08 默认 A+）：封面=拿书引子+中间纯故事+末页故事结尾&合书；B/A 备选
 
     @property
     def slug(self) -> str:
@@ -279,6 +283,7 @@ def parse_outline_text(text: str) -> BookOutline:
         book_number=book_number,
         cefr=cefr,
         lexile=lexile,
+        lexile_source=("manual" if lexile else ""),  # 块11：大纲头里手填即视为人工有依据
         word_count_override=word_count_override,
         ip_age=ip_age,
         vocabulary_mastery=voc_mastery,
@@ -442,6 +447,7 @@ def enrich_from_syllabus(outline: BookOutline) -> bool:
         outline.cefr = entry.cefr
     if not outline.lexile and entry.lexile:
         outline.lexile = entry.lexile
+        outline.lexile_source = "syllabus"   # 块11：大纲官方值（有依据）
     if not outline.word_count_override and entry.word_count:
         outline.word_count_override = entry.word_count
     if not outline.phonics and entry.phonics_rule:
@@ -449,9 +455,24 @@ def enrich_from_syllabus(outline: BookOutline) -> bool:
     if not outline.fiction_type and entry.genre in ("fiction", "nonfiction"):
         outline.fiction_type = "non-fiction" if entry.genre == "nonfiction" else "fiction"
 
-    # 词汇回填：outline 没有词时用大纲权威词（单行模式）
-    if not outline.vocabulary_simple and not outline.vocabulary_mastery and not outline.vocabulary_exposure:
+    # 词汇/拼读【权威逐字覆盖】（用户拍板 2026-06-08）：命中大纲时，词形以大纲为准 verbatim，
+    #   覆盖 AI 抽取的词表与拼读规则（释义无官方源时保留下游 _KID_DICT/AI def，仅词形 verbatim）。
+    if outline.is_dual_vocab_level:
+        # L0-2：分别覆盖 Mastery / Exposure（大纲有才覆盖，避免清空）
+        if entry.vocab_mastery:
+            outline.vocabulary_mastery = list(entry.vocab_mastery)
+        if entry.vocab_exposure:
+            outline.vocabulary_exposure = list(entry.vocab_exposure)
+        if not (entry.vocab_mastery or entry.vocab_exposure):
+            words = entry.vocab_words()
+            if words and not outline.vocabulary_simple:
+                outline.vocabulary_simple = words
+    else:
+        # L3-6：单行 Vocabulary —— 用大纲 core_vocab 词形 verbatim 覆盖
         words = entry.vocab_words()
         if words:
             outline.vocabulary_simple = words
+    # 拼读规则：大纲有就以大纲原文为准（覆盖 AI 推断）
+    if entry.phonics_rule:
+        outline.phonics = entry.phonics_rule
     return True

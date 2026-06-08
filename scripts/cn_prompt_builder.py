@@ -56,8 +56,9 @@ from parser import BookOutline, PageSpec
 STYLE_CN = (
     "高级精致的经典儿童图画书插图风格，干净清新的【治愈水彩】——通透柔和的水彩晕染，大面积色块干净通透："
     "色块干净不脏、以细腻柔和的水彩过渡做克制而精致的明暗与体积（轻盈不厚重），"
-    "讲究前中后景的空间层次与景深（近景清晰精致、远景柔和虚化），画面有丰富耐看的层次感与高级感；"
-    "配精致清晰、干净利落的细墨线勾边，线条连续闭合、形体简洁完整；画面干净细腻、精致考究而不杂乱。"
+    "讲究前中后景的空间层次与景深（近景清晰精致、远景柔和虚化），画面层次干净耐看、高级；"
+    "以平滑柔和的色块与渐变(smooth shading/gradients)塑形为主，线条以柔和简洁的描边为辅（克制、纤细、可有可无，绝不喧宾、不要粗重墨线），"
+    "形体简洁完整、细节克制(controlled details)、纹理极简(minimal texture)；画面干净洁净、精致考究而不杂乱、不细碎。"
     "【细腻而不细碎·无噪点无颗粒·无脏块无碎块】上色细腻柔和、过渡干净自然、颜色分布匀净；"
     "绝不出现斑驳破碎的色块、割裂的色斑/碎块、拼贴补丁感、杂乱色点、噪点颗粒、可见笔触痕迹、"
     "水彩纸/纸张颗粒纹理、脏污纹理与断裂破碎轮廓；"
@@ -66,15 +67,17 @@ STYLE_CN = (
     "颜色均匀简洁干净、整体明亮清透温暖耐看，颜色清晰可辨（不发灰惨白、也不刺眼高饱和）。"
     "【光线】明亮柔和的自然光，方向统一，做克制而细腻的明暗塑形带出体积与层次（轻盈不厚重）；阴影浅淡干净、绝不压暗。"
     "【背景】极简整洁、适度留白、清爽不杂乱：空墙面只留少量精简点缀，主体人物干净突出、边缘清晰、平涂干净。"
-    "人物面部干净简洁（柔和线条平涂），大眼睛+淡淡腮红+小鼻子，亚洲儿童特征，五官清爽精致。"
+    "人物面部干净简洁（柔和线条平涂），大眼睛+淡淡腮红+小鼻子，五官清爽精致"
+    "（主角相貌一律以角色定妆参考图为准；配角/路人可为多元族裔、体现国际化）。"
     "拒绝：浑浊脏色、过暗压抑、斑驳破碎/拼贴补丁感、噪点颗粒色斑、可见笔触/纸张纹理颗粒、Q版贴纸、"
     "厚重立体的3D塑料渲染、油画厚涂、强烈明暗体积塑形、写实光影、塑料磨皮感、照片写实质感、AI脏噪乱纹、打印模糊发糊。"
-    "【画风锁定·低随机】严格复刻官方参考画风：干净细腻的治愈水彩、柔和层次与景深、暖米+柔蓝低饱和、明亮柔光、"
-    "干净细墨线；不要自由发挥、不要改变既定画风与配色、不要增添多余杂乱装饰、不要添加噪点颗粒。"
+    "【画风锁定·低随机】严格复刻官方参考画风：干净平滑的治愈水彩、柔和层次与景深、暖米+柔蓝低饱和、明亮柔光、"
+    "平滑柔和的色块与渐变塑形(clean illustration, smooth shading, minimal texture, controlled details, refined edges)、"
+    "纤细克制的描边为辅；不要自由发挥、不要改变既定画风与配色、不要增添多余杂乱装饰、不要添加噪点颗粒与碎纹理。"
     "【高明度·明亮通透·绝不暗沉】整体高调明亮(high-key)、画面通透干净、像沐浴在柔和日光里；"
     "阴影极浅淡干净、绝无硬阴影/重阴影/暗角；严禁发暗、压暗、阴沉、灰暗、夜景、暖光过浓发黄、整体偏暗调。"
-    "【构图·预留文字留白】主体人物适度偏置(不要铺满整幅)，画面预留约 20% 干净的浅色留白区域"
-    "(如天空、空墙面或地面)，背景极简整洁、便于后期叠放文字，留白处不放杂物。"
+    "【构图·预留文字留白】主体人物明显偏置一侧(绝不铺满整幅、不要居中堵满)，画面另一侧预留约 20-25% 干净的浅色留白区域"
+    "(如天空、空墙面或地面)，背景极简整洁、便于后期叠放文字而不遮挡主体与关键信息，留白处不放人物与关键道具。"
     "【人物一致·只改表情动作】画面中出现的既有角色（Mia/Tommy/Anna 等）其发型、脸型、五官、肤色、"
     "服装款式与配色必须与其定妆参考图完全一致；本页仅改变其表情与肢体动作以贴合剧情，"
     "严禁改动长相、发型、服装与配色，严禁凭空新增或减少角色。"
@@ -84,20 +87,20 @@ STYLE_CN = (
 # v2.0 环境元素库 — 根据故事文本关键词推断场景应有的具体环境物体
 _ENV_HINTS: list[tuple[str, str]] = [
     (r"classroom|class\b|desk|recess|school|teacher",
-     "教室环境：暖米白空墙面（不要黑板、不要密集装饰）、一两张浅色课桌椅、单侧一扇明亮窗户射入柔和自然光、"
-     "带淡蓝天空与窗外绿意、亮光浅米瓷砖地面（不要木地板）；背景极简整洁、适度留白、清爽不杂乱，主体人物干净突出"),
+     "教室环境（国际化现代校舍）：暖米白空墙面（不要写满字的黑板、不要密集装饰）、一两张浅色课桌椅、单侧一扇明亮窗户射入柔和自然光、"
+     "带淡蓝天空与窗外绿意、干净的浅色地面（瓷砖或浅木地板皆可）；背景极简整洁、适度留白、清爽不杂乱，主体人物干净突出"),
     (r"hallway|corridor",
-     "走廊环境：延伸的空间感、暖米白墙面、单侧一排明亮窗户射入柔和自然光带窗外绿意、亮光浅米瓷砖地面，"
+     "走廊环境（国际化现代校舍）：延伸的空间感、暖米白墙面、单侧一排明亮窗户射入柔和自然光带窗外绿意、干净的浅色地面，"
      "墙面极简少量点缀；背景整洁有序、适度留白、不杂乱"),
     (r"playground|outside|park|yard",
      "户外环境：柔和的浅绿草地、一两棵舒展的树、淡蓝天空与几朵白云、暖阳柔光，"
      "背景自然清新、极简整洁、不杂乱"),
     (r"home|house|bedroom|kitchen",
-     "家庭环境：暖米白墙面、少量弱木纹浅色家具、窗台绿植、单侧窗柔光，"
-     "亮光浅米瓷砖地面、少量温馨家居小物，背景极简整洁、适度留白"),
+     "家庭环境（温馨现代居家）：暖米白墙面、少量浅色家具、窗台绿植、单侧窗柔光，"
+     "干净的浅色地面、少量温馨家居小物，背景极简整洁、适度留白"),
     (r"library|book",
-     "图书馆/阅读角环境：弱木纹浅色书架配柔色书脊、暖米墙面、单侧窗柔光、可有绿植点缀，"
-     "亮光浅米瓷砖地面，背景整洁、适度留白、不杂乱"),
+     "图书馆/阅读角环境：浅色书架配柔色书脊、暖米墙面、单侧窗柔光、可有绿植点缀，"
+     "干净的浅色地面，背景整洁、适度留白、不杂乱"),
 ]
 
 
@@ -111,9 +114,9 @@ def _detect_environment(text: str) -> str:
 
 # v3.3 镜头景别（用户拍板：主角是画面视觉中心，占画面 50-60%，背景 40-50%）
 COMPOSITION_CN: dict[str, str] = {
-    "close":  "中近景半身，主角胸部以上占画面 60-70%，清晰饱满，背景有清晰可辨的环境元素",
-    "medium": "中景，主角七分身或全身占画面 50-60% 高度、居中为视觉焦点，背景环境占 40-50%、细节清晰",
-    "full":   "全身中景，主角从头到脚完整可见、占画面 45-55% 高度，周围留出环境空间",
+    "close":  "中近景半身，主角胸部以上占画面 55-65%、明显偏置一侧，清晰饱满，另一侧留出排文字空间，背景有清晰可辨的环境元素",
+    "medium": "中景，主角七分身或全身占画面 45-55% 高度、偏置画面一侧为视觉焦点，另一侧留约 20-25% 排文字空间，背景环境占 40-50%、细节清晰",
+    "full":   "全身中景，主角从头到脚完整可见、占画面 45-55% 高度、偏置一侧，另一侧留出环境与排文字空间",
     "wide":   "远景，主角占画面 35-45%（仍是视觉焦点），环境（教室全景、走廊、建筑、地标）占其余画面",
 }
 DEFAULT_SHOT = "medium"  # 中景为默认（主角 50-60%）
@@ -121,9 +124,9 @@ DEFAULT_SHOT = "medium"  # 中景为默认（主角 50-60%）
 # v5 机位角度（镜头语言）— 让画面随剧情变化，不再全本平视。
 # 由 AI/老师按本页内容选；eye 为默认平视。
 CAMERA_ANGLE_CN: dict[str, str] = {
-    "eye": "平视机位（镜头与人物视线齐平），自然亲切，适合对话与情感交流",
-    "high": "俯视机位（镜头从斜上方往下看），看清桌面/地面物件与场景布局，层次分明",
-    "birdseye": "鸟瞰/正俯视机位（镜头从正上方垂直俯瞰），展现大场景全貌、地图、地形与空间格局",
+    "eye": "平视机位（镜头与人物视线齐平），自然亲切，适合对话、情感交流，以及孩子在场景里走动/寻找/探访的贴地剧情",
+    "high": "轻俯视机位（镜头从斜上方略往下看），看清桌面/地面物件与场景布局，层次分明（轻微俯角，非航拍）",
+    "birdseye": "鸟瞰/正俯视机位（镜头从正上方垂直俯瞰），仅用于地图/地理/地形/大场景全貌的科普展示",
     "low": "仰视机位（镜头从下往上看），强调高大宏伟（城堡/大树/高楼），画面更有气势",
     "over_shoulder": "越肩/主角视角（镜头越过主角肩膀或贴近主角视线），带观众代入主角去观察发现眼前事物",
 }
@@ -133,6 +136,23 @@ DEFAULT_ANGLE = "eye"
 def _angle_phrase(angle: str) -> str:
     a = (angle or "").strip().lower()
     return CAMERA_ANGLE_CN.get(a, "")
+
+
+def _resolve_camera_angle(page: PageSpec, outline: BookOutline) -> str:
+    """机位收口（用户拍板 2026-06-08）：航拍/大俯视只给【地图/大场景科普】；
+    fiction 里"孩子贴地走动/寻找/探访/对话"即使 AI 误选 birdseye/high 也降级为越肩/平视。
+    """
+    a = (getattr(page, "camera_angle", "") or "").strip().lower()
+    if a not in CAMERA_ANGLE_CN:
+        return ""
+    if _is_nonfiction(outline):
+        return a  # 科普：尊重 AI 机位（地图/地形用鸟瞰合理）
+    # fiction：禁止航拍/大俯视压在贴地剧情上
+    if a == "birdseye":
+        return "over_shoulder"
+    if a == "high":
+        return "eye"
+    return a
 
 # 留白位置（中文）
 BLANK_CN: dict[int, str] = {
@@ -149,12 +169,13 @@ def _blank_text(page_index: int) -> str:
     该区域保留场景真实色彩与纹理，只是没有主角/关键道具，方便后期排文字。
     """
     if page_index == 0:
-        return ("利用场景顶部的原生空旷区域（天空 / 明亮的天花板 / 大片墙面等，"
+        return ("利用场景顶部约 30% 的原生空旷区域（天空 / 明亮的天花板 / 大片墙面等，"
                 "保留真实色彩与纹理、其上无人物与关键道具）作为书名的文字留白，"
                 "禁止画任何纯白色块或空白方框")
     side = "右侧" if page_index % 2 == 1 else "左侧"
-    return (f"在画面{side}利用场景原生的空旷区域（如墙面 / 地面 / 天空 / 草地等，"
-            f"保留该处真实场景色彩与纹理、其上无人物与关键道具）自然留出排文字的位置，"
+    return (f"把主体明显偏置到画面另一侧，在画面{side}留出约 20-25% 的连续干净区域用于排文字："
+            f"利用场景原生的空旷区域（如墙面 / 地面 / 天空 / 草地等，"
+            f"保留该处真实场景色彩与纹理、其上无人物与关键道具），确保后期文字不会遮挡主角与关键信息；"
             "禁止画纯白色块、白色矩形或人工硬边空白")
 
 
@@ -453,6 +474,27 @@ def _key_lock_phrase(key: str, age) -> str:
 #  场景描述：从故事文本生成中文一句话
 # ============================================================
 
+def safety_line_default(page: PageSpec) -> str:
+    """块4：从 scene_cn 提炼一句给老师确认的【简体中文场景安全线】（谁+在哪+做什么）。
+
+    取 scene_cn 第一句主干、去掉画风/留白/框架等技术性措辞，控制在约 50 字内。
+    仅作默认草稿，老师可自由编辑。
+    """
+    raw = (getattr(page, "safety_line", "") or "").strip()
+    if raw:
+        return raw
+    s = (page.scene_cn or "").strip()
+    if not s:
+        return (page.text or "").strip()[:50]
+    # 去掉框架/画风类前缀片段
+    s = _re.sub(r"【[^】]*】", "", s)
+    # 取第一句（到第一个句号/分号）
+    first = _re.split(r"[。；;\n]", s, maxsplit=1)[0].strip()
+    if len(first) > 56:
+        first = first[:56].rstrip("，,、 ") + "…"
+    return first
+
+
 def _scene_to_cn(page: PageSpec, outline: BookOutline) -> str:
     """v1.9：优先级 page.scene_cn > page.scene(中文) > 英文故事文本。
 
@@ -599,6 +641,26 @@ def _head_body_ratio_lock(ip_age: int) -> str:
         return "儿童头身比约 5.5-6 头身（学龄期），身体比例已接近少年"
     # 11-14：少年
     return "少年头身比约 6.5-7 头身（青春期前期），身体修长、四肢比例匀称，但保留少年面部特征"
+
+
+def _furniture_scale_lock(ip_age: int) -> str:
+    """场景家具/物件按主角年龄的真实身高比例（用户拍板 2026-06-08）。
+
+    关键：家具（桌/椅/床/门/把手/书架/橱柜/楼梯扶手等）的尺寸要相对【该年龄孩子的真实身高】
+    合理——孩子站立时到桌沿/床沿/门把手的相对高度要符合现实，避免"巨人家具+小人国孩子"或反之。
+    """
+    if ip_age <= 8:
+        ref = "8 岁孩子（约 125-130cm）：站立时课桌面大约到其腰部、普通椅面到其膝盖、门把手在其肩—头之间"
+    elif ip_age <= 10:
+        ref = "10 岁孩子（约 138-142cm）：站立时课桌面大约到其腰—髋部、椅面到其膝盖、门把手约在其肩部高度"
+    else:
+        ref = "12 岁少年（约 150-155cm）：站立时课桌面约到其髋部、椅面到其膝下、门把手约在其胸—肩部高度"
+    return (
+        f"【家具按龄比例·硬约束】场景里的家具与物件尺寸要符合{ref}；"
+        "桌、椅、床、门、把手、书架、橱柜、楼梯扶手等都按这个孩子的真实身高来确定相对大小，"
+        "孩子坐到椅上时脚能自然接近地面、趴在桌上比例合理；"
+        "严禁把家具画得相对孩子过大（孩子像小人国）或过小（孩子像巨人），人与物比例要真实可信。"
+    )
 
 
 # ============================================================
@@ -749,10 +811,11 @@ def validate_page_ip_lock(
         )
     # 框架寓言纯故事页：他俩是读者、刻意不入场 → 不要求主角在场（避免误报）
     if _is_frame_fable(outline) and _frame_page_kind(
-            outline, page, getattr(outline, "frame_mode", "A")) == "pure":
+            outline, page, getattr(outline, "frame_mode", "A+")) == "pure":
         must_have_leads = False
     if must_have_leads:
-        for who in ("mia", "tommy"):
+        # 按四规则判定本书应出现的主角（可能只 Mia，如 Mia+具名朋友的故事）
+        for who in _lead_keys_for_book(outline):
             if who not in base_keys:
                 issues.append(f"应出现的主角缺失：{who}")
 
@@ -810,13 +873,83 @@ def _book_centers_on_leads(outline: BookOutline) -> bool:
     return bool(_LEADS_RE.search(low) or _FAMILY_RE.search(low))
 
 
+def _book_all_text(outline: BookOutline) -> str:
+    parts = [outline.title or ""]
+    oip = getattr(outline, "official_image_prompt", None)
+    for p in outline.pages:
+        parts.append(p.text or "")
+        parts.append(getattr(p, "scene", "") or "")
+        if oip is not None:
+            try:
+                parts.append(oip.page_scene(p.index) or "")
+            except Exception:
+                pass
+    return " ".join(parts)
+
+
+def _named_sibling_leads(outline: BookOutline) -> list[str]:
+    """全书文本里【显式点名】的系列兄妹主角（mia/tommy 的子集，按出现顺序）。"""
+    low = _book_all_text(outline).lower()
+    return [k for k in ("mia", "tommy") if _re.search(rf"\b{k}\b", low)]
+
+
+# 动物/非人物种词库（用于区分"人类具名朋友"与"动物寓言主角"）。
+# 注意：绝不含 man/woman/boy/girl 等人类词——那些是人，不是动物。
+_ANIMAL_SPECIES_RE = _re.compile(
+    r"\b(llama|alpaca|ant|ants|grasshopper|bee|bees|butterfly|spider|snail|"
+    r"fox|wolf|bear|bears|pig|pigs|piglet|goat|goats|cow|cows|horse|pony|sheep|lamb|"
+    r"duck|duckling|hen|chick|rooster|chicken|mouse|mice|rat|rabbit|bunny|hare|"
+    r"tortoise|turtle|lion|tiger|leopard|monkey|ape|gorilla|elephant|giraffe|zebra|"
+    r"hippo|rhino|frog|toad|snake|lizard|owl|crow|bird|sparrow|robin|eagle|hawk|"
+    r"deer|fawn|cat|kitten|dog|puppy|goose|swan|fish|whale|dolphin|shark|octopus|"
+    r"crab|penguin|seal|otter|fox|squirrel|hedgehog|mole|bat|panda|koala|kangaroo|"
+    r"camel|donkey|mule|ox|buffalo|bison|moose|raccoon|skunk|beaver|"
+    r"dragon|dinosaur|dino|animal|creature)\b",
+    _re.I,
+)
+
+
+def _recurring_human_friend_keys(outline: BookOutline) -> list[str]:
+    """book_cast 里【反复出场、且是人类】的具名非 IP 朋友（如 Lucia）。
+
+    动物/非人角色（蚂蚁/羊驼/狐狸…）不计入——它们走框架寓言逻辑，不影响"是否硬塞 Tommy"。
+    """
+    bc = getattr(outline, "book_cast", None) or {}
+    out: list[str] = []
+    for rid, role in bc.items():
+        if not getattr(role, "needs_anchor", False):
+            continue
+        blob = f"{rid} {getattr(role, 'display', '')} {getattr(role, 'desc_en', '')}".lower()
+        if _ANIMAL_SPECIES_RE.search(blob):
+            continue  # 动物/非人 → 跳过（走框架寓言）
+        out.append(rid)
+    return out
+
+
+def _lead_keys_for_book(outline: BookOutline) -> list[str]:
+    """这本书在【有人物的页/封面】上应出现的系列主角键（四规则自动判定，用户拍板 2026-06-08）。
+
+      规则1 纯动物寓言 → 由框架逻辑在纯故事页移除主角（此函数仅决定读者页/封面带谁）。
+      规则2/3 有具名人类朋友(Lucia)做主角之一 → 只带【被点名的那位兄妹】，绝不硬塞第二位
+              （如《Mia and Her Spanish Friend》→ 只 Mia，配 Lucia；不加 Tommy）。
+      规则4 科普 / 无具名朋友的兄妹·家庭故事 → 维持 Mia & Tommy 双主角。
+    """
+    if _is_nonfiction(outline):
+        return ["mia", "tommy"]
+    friends = _recurring_human_friend_keys(outline)
+    if friends:
+        named = _named_sibling_leads(outline)
+        return named or ["mia"]  # 至少保留 Mia 作系列主角之一
+    return ["mia", "tommy"]
+
+
 # ============================================================
 #  框架式寓言（frame fable）：Mia/Tommy 是【读者】，寓言角色才是故事主角。
 #  用户拍板 2026-06-07：读者不能同时是故事角色 —— 内页不得把他俩塞进寓言场景。
 #  三种呈现模式（由 outline.frame_mode 选择）：
-#    A     ：封面=他俩读书引子；内页全部纯故事（他俩不入场）。【默认·推荐】
+#    A+    ：封面=他俩拿书引子；中间页纯故事（他俩不入场）；末页=故事结尾内容+他俩合上书收尾。【默认·老师拍板 2026-06-08】
+#    A     ：封面=他俩读书引子；内页全部纯故事（他俩不入场）。
 #    B     ：每页都画“翻开的书+故事幻象”，他俩始终在画面一侧当读者。
-#    Aplus ：封面 + 首页开场读书 + 末页合书收尾；中间页纯故事。
 # ============================================================
 _FRAME_MARKER = _re.compile(
     r"fable book|magic storybook|story ?book|glowing book|the book|opening the|"
@@ -874,15 +1007,22 @@ def _last_story_index(outline: BookOutline) -> int:
 
 
 def _frame_page_kind(outline: BookOutline, page: PageSpec, mode: str) -> str:
-    """框架寓言里本页的呈现类型：'frame'（他俩读书/幻象框架）或 'pure'（纯故事，他俩不入场）。"""
+    """框架寓言里本页的呈现类型：
+      'frame'       —— 他俩捧书阅读（封面：拿着书的引子）。
+      'frame_close' —— 末页：既画故事结尾内容，也画他俩合上书的样子（老师拍板 2026-06-08）。
+      'pure'        —— 纯故事页，他俩不入场。
+    """
     is_cover = page.page_type == "cover" or page.index == 0
-    mode = (mode or "A").upper().replace("APLUS", "A+")
+    mode = (mode or "A+").upper().replace("APLUS", "A+")
     if mode == "B":
         return "frame"
     if is_cover:
         return "frame"
+    # A+（默认·老师拍板）：封面=拿书引子；中间纯故事；最后一个故事页=故事内容+合上书。
     if mode == "A+":
-        return "frame" if page.index in (1, _last_story_index(outline)) else "pure"
+        if page.index == _last_story_index(outline):
+            return "frame_close"
+        return "pure"
     # mode A：封面之外全部纯故事
     return "pure"
 
@@ -915,6 +1055,22 @@ def _vision_frame_wrapper(tale_scene: str) -> str:
         "③ 他们始终是【读者】，绝不进入故事、绝不与故事角色互动或处在同一场景里；"
         "幻象与现实读书区之间只用一道很细的柔和光晕过渡，"
         "【除左下角读者那一小块外，其余画面全部被故事幻象填满，不留大片空白纸面/米色底/留白边】。"
+    )
+
+
+def _vision_frame_close_wrapper(tale_scene: str) -> str:
+    """末页【合书收尾】框架（老师拍板 2026-06-08）：
+    画面既呈现故事结尾的内容（发光幻象，仍是主体），也画出 Mia 和 Tommy 把那本魔法故事书
+    【正在合上 / 刚刚合上】、相视微笑的满足样子——读者读完了这个故事。
+    """
+    return (
+        "画面采用【合书收尾·读者框架】构图：\n"
+        "① 故事结尾幻象（主体）——从那本魔法书里升起的柔和发光故事结尾画面，仍占画面约 65–75%、铺满主要区域并延伸到上/右边缘，"
+        "呈现故事的结局：" + tale_scene.rstrip("。") + "。\n"
+        "② 读者收尾（次要、约 25%）——Mia 和 Tommy 在画面【左下角】一起【正把那本会发光的魔法故事书轻轻合上】（或刚合上、双手按在书面上），"
+        "相视而笑、神情满足温暖，像刚读完一个好故事；他们清晰可辨但明显小于故事幻象。\n"
+        "③ 他们始终是【读者】，没有进入故事场景、不与故事角色互动；合书的现实读书区与故事幻象之间只用一道很细的柔和光晕过渡，"
+        "除左下角读者一角外，其余画面被故事结尾幻象填满，不留大片空白。"
     )
 
 
@@ -985,6 +1141,91 @@ def _continuity_note(outline: BookOutline, page: PageSpec) -> str:
             "与前后页同一场雪连续，绝不突然放晴变成无雪场景。"
         )
     return ""
+
+
+# ============================================================
+#  场景/地点【布景连续性】层（用户拍板 2026-06-08）
+#  典型坑：L3#9 同一条走廊，每页各画一条不同样子的走廊（墙色/地面/门窗/柜子都变）。
+#  解决：识别连续多页发生在【同一地点】（走廊/教室/房间/图书馆…）的页区间，
+#       给区间内的页注入"同一套实景的不同瞬间·布景完全一致"的硬指令，
+#       并附该地点的【固定布景蓝本】（同一文案、跨页复用 → 模型每页画出一致的空间）。
+# ============================================================
+# 地点关键词 → (规范地点名, 固定布景蓝本)。蓝本跨页复用，保证同一地点每页长得一样。
+_LOCATION_PATTERNS: list[tuple[_re.Pattern, str, str]] = [
+    (_re.compile(r"hallway|corridor|走廊|长廊", _re.I), "学校走廊",
+     "同一条学校走廊：暖米白上墙 + 浅色墙裙，米色/浅灰方砖地面，一侧一整排同款木质储物柜、"
+     "另一侧一排明亮大窗（窗外淡蓝天空与绿意），天花板规则排列的方形吸顶灯，走廊尽头一扇带玻璃的门"),
+    (_re.compile(r"classroom|\bclass\b|教室|课室", _re.I), "教室",
+     "同一间教室：暖米白墙面，固定位置的一两组浅色课桌椅，一侧单扇明亮大窗（窗外淡蓝天空与绿意），"
+     "前方一面简洁浅色墙（不写满字），浅木地板，墙角同一个矮书架"),
+    (_re.compile(r"library|图书馆|阅读角|书架", _re.I), "图书馆",
+     "同一处图书馆：成排浅色木书架配柔色书脊（位置固定），暖米墙面，一侧大窗柔光，"
+     "中间同一组浅色阅读桌椅，浅色地面，角落同一盆绿植"),
+    (_re.compile(r"\bkitchen\b|厨房", _re.I), "厨房",
+     "同一间厨房：暖米白橱柜与浅色台面（布局固定），一扇窗台带绿植的窗，浅色地砖，同一组灶台与水槽位置"),
+    (_re.compile(r"bedroom|卧室|睡房", _re.I), "卧室",
+     "同一间卧室：暖色墙面，固定位置的一张小床与床头柜，一扇带浅色窗帘的窗，浅木地板，墙上同一幅小画"),
+    (_re.compile(r"living ?room|客厅|起居室", _re.I), "客厅",
+     "同一间客厅：暖米白墙面，固定位置的一张浅色沙发与矮茶几，一扇大窗柔光带绿植，浅木地板，墙上同一组装饰"),
+    (_re.compile(r"museum|博物馆|展厅|展馆", _re.I), "博物馆展厅",
+     "同一处博物馆展厅：高挑空间、浅色墙面与规则排列的展柜/展板（位置固定），柔和均匀的展陈灯光，浅色地面"),
+]
+
+
+def _page_location(outline: BookOutline, page: PageSpec) -> tuple[str, str] | None:
+    """返回本页的 (规范地点名, 固定布景蓝本)；识别不到具体地点返回 None。"""
+    txt = _page_full_text(outline, page)
+    for rex, name, blueprint in _LOCATION_PATTERNS:
+        if rex.search(txt):
+            return name, blueprint
+    return None
+
+
+def _location_runs(outline: BookOutline) -> dict[int, tuple[str, str, int, int]]:
+    """找出"连续多页处在同一地点"的页区间。
+
+    返回 {page_index: (地点名, 布景蓝本, 区间首页index, 区间末页index)}，
+    仅收录长度≥2 的同地点连续段（单页地点无需连续约束）。
+    """
+    story = [p for p in outline.pages if not (p.page_type == "cover" or p.index == 0)]
+    out: dict[int, tuple[str, str, int, int]] = {}
+    i = 0
+    while i < len(story):
+        loc = _page_location(outline, story[i])
+        if loc is None:
+            i += 1
+            continue
+        name, blueprint = loc
+        j = i + 1
+        while j < len(story):
+            nxt = _page_location(outline, story[j])
+            if nxt is None or nxt[0] != name:
+                break
+            j += 1
+        if j - i >= 2:  # ≥2 连续页同地点 → 需要布景连续
+            lo, hi = story[i].index, story[j - 1].index
+            for k in range(i, j):
+                out[story[k].index] = (name, blueprint, lo, hi)
+        i = j
+    return out
+
+
+def _location_continuity_note(outline: BookOutline, page: PageSpec,
+                              runs: dict[int, tuple[str, str, int, int]] | None = None) -> str:
+    """本页若处于"同一地点连续区间"，返回一段【布景必须完全一致】的硬指令。"""
+    if page.page_type == "cover" or page.index == 0:
+        return ""
+    runs = _location_runs(outline) if runs is None else runs
+    info = runs.get(page.index)
+    if not info:
+        return ""
+    name, blueprint, lo, hi = info
+    return (
+        f"【同一场景·布景连续】本页与第 {lo}–{hi} 页发生在【同一处{name}】，必须是【同一个空间】的不同瞬间："
+        f"{blueprint}——空间布局、建筑结构、墙面/地面/天花的材质与颜色、门窗与固定陈设(柜子/家具/装饰)的位置和外观、"
+        "整体配色与光照基调，全部与该场景其它页【保持完全一致】，像同一套实景连续拍摄的不同分镜；"
+        "只允许改变人物动作/表情、镜头机位与前景细节，绝不可重新设计、更换或改变这个场景的样貌、布局、结构与配色。"
+    )
 
 
 def _official_positive(raw: str) -> str:
@@ -1164,10 +1405,12 @@ def build_cn_page_prompt(
     #       girl→Mia / boy→Tommy 通用映射（保证每个孩子都是 IP，但不硬塞第二位主角，
     #       避免画出两个一模一样的人）。
     # ============================================================
+    _lead_keys = _lead_keys_for_book(outline)
+
     def _inject_leads(base_cast: list[dict]) -> list[dict]:
-        """把 Mia + Tommy（按 ip_age 取对应年龄定妆图）置于队首，再并入已有配角，去重，≤3 人。"""
+        """把本书的系列主角（按四规则判定：双主角 / 仅 Mia 等）置于队首，再并入已有配角，去重，≤3 人。"""
         pair = [
-            e for k in ("mia", "tommy")
+            e for k in _lead_keys
             for e in (_make_protagonist_entry(k, ip_age),) if e
         ]
         lead_keys = {e.get("key") for e in pair}
@@ -1181,33 +1424,43 @@ def build_cn_page_prompt(
         ch = CHAR_REGISTRY.get((c.get("key") or "").split("_")[0])
         return bool(ch) and ch.get("kind") not in ("pet", "brand")
 
-    # 框架寓言判定（用户拍板 2026-06-07）：他俩是读者，内页不得入故事场景。
+    # 框架寓言判定（用户拍板 2026-06-07/08）：他俩是读者，内页不得入故事场景。
+    #   默认 A+：封面=拿书引子；中间页纯故事；末页=故事结尾内容+合上书。
     _frame_fable = _is_frame_fable(outline)
-    _frame_kind = None
+    _frame_kind = (
+        _frame_page_kind(outline, page, getattr(outline, "frame_mode", "A+"))
+        if _frame_fable else None
+    )
     if official_has_scene:
         # ★ 官方权威优先（用户拍板 2026-06-07）：本页"谁在场"以官方 prompt 点名为准。
         #   纯寓言页（官方没点到 Mia/Tommy）→ 不强塞主角；封面若官方漏写主角则补全双主角。
         cast = _cast_from_official(official_raw, ip_age)
         if _frame_fable:
-            _frame_kind = _frame_page_kind(outline, page, getattr(outline, "frame_mode", "A"))
             if _frame_kind == "pure":
                 # 纯故事页：移除主角（读者不入场），只留寓言角色（由 book_cast 注入锚图）
                 cast = [c for c in cast if c.get("key") not in ("mia", "tommy")]
             else:
-                # 框架页：确保双主角作为【读者】在场（置顶），寓言角色作幻象（book_cast 注入）
+                # 框架页/合书页：确保双主角作为【读者】在场（置顶），寓言角色作幻象（book_cast 注入）
                 cast = _inject_leads(cast)
         elif is_cover and not any(c.get("key") in ("mia", "tommy") for c in cast):
             cast = _inject_leads(cast)
     else:
-        _book_leads = _book_centers_on_leads(outline)
-        _page_has_person = any(_is_person_entry(c) for c in cast)
-        if is_cover or _is_nonfiction(outline):
-            # 封面 / 科普：两位主角永远同框
-            cast = _inject_leads(cast)
-        elif _book_leads and _page_has_person:
-            # 家庭/写实故事的内页：只要有人，兄妹双主角必到场（修掉“孩子没锚图→年龄漂移/乱入Anna”）
-            cast = _inject_leads(cast)
-        # else: 纯童话内页 —— 保留通用映射（girl→Mia / boy→Tommy），单主角即可，不强制第二位
+        if _frame_fable:
+            # story-only 框架寓言：同样按 A+ 处理（封面/末页带读者，中间纯故事）
+            if _frame_kind == "pure":
+                cast = [c for c in cast if c.get("key") not in ("mia", "tommy")]
+            else:
+                cast = _inject_leads(cast)
+        else:
+            _book_leads = _book_centers_on_leads(outline)
+            _page_has_person = any(_is_person_entry(c) for c in cast)
+            if is_cover or _is_nonfiction(outline):
+                # 封面 / 科普：两位主角永远同框
+                cast = _inject_leads(cast)
+            elif _book_leads and _page_has_person:
+                # 家庭/写实故事的内页：只要有人，兄妹双主角必到场（修掉“孩子没锚图→年龄漂移/乱入Anna”）
+                cast = _inject_leads(cast)
+            # else: 纯童话内页 —— 保留通用映射（girl→Mia / boy→Tommy），单主角即可，不强制第二位
 
     # 2) 场景描述
     if is_cover:
@@ -1238,8 +1491,17 @@ def build_cn_page_prompt(
             elif _frame_fable and _frame_kind == "frame":
                 # 框架页：他俩一侧读书 + 故事以发光幻象升起（读者不入故事）
                 scene_cn = _vision_frame_wrapper(_scrub_leads_clause(scene_cn))
+            elif _frame_fable and _frame_kind == "frame_close":
+                # 末页合书：故事结尾幻象 + 他俩合上书收尾
+                scene_cn = _vision_frame_close_wrapper(_scrub_leads_clause(scene_cn))
         else:
             scene_cn = _scene_to_cn(page, outline)
+            if _frame_fable and _frame_kind == "pure":
+                scene_cn = _scrub_leads_clause(scene_cn)
+            elif _frame_fable and _frame_kind == "frame":
+                scene_cn = _vision_frame_wrapper(_scrub_leads_clause(scene_cn))
+            elif _frame_fable and _frame_kind == "frame_close":
+                scene_cn = _vision_frame_close_wrapper(_scrub_leads_clause(scene_cn))
         # Non-fiction：把双主角作为"小小探索家"自然织入画面（主人公视角贯穿全书）
         if _is_nonfiction(outline) and cast:
             names = "和".join(c["name"] for c in cast if c.get("name"))
@@ -1268,12 +1530,23 @@ def build_cn_page_prompt(
     if _cont:
         scene_cn = scene_cn.rstrip("。") + "。" + _cont
 
+    # 2.7) 场景布景连续层：同一地点连续多页 → 布景/建筑/配色完全一致（修 L3#9 走廊不连续）
+    if not is_cover:
+        _loc = _location_continuity_note(outline, page)
+        if _loc:
+            scene_cn = scene_cn.rstrip("。") + "。" + _loc
+
+    # 2.8) 老师确认的【场景安全线】（块4·用户拍板 2026-06-08）：作为本页画面权威核心，置于最前
+    _sl = (getattr(page, "safety_line", "") or "").strip()
+    if _sl and not is_cover:
+        scene_cn = f"【本页画面·老师已确认·必须照此】{_sl.rstrip('。')}。" + scene_cn
+
     # 3) 镜头 + 机位角度（v5）
     shot = (page.shot or DEFAULT_SHOT).strip().lower()
     if shot not in COMPOSITION_CN:
         shot = DEFAULT_SHOT
     composition_cn = COMPOSITION_CN[shot]
-    angle_cn = "" if is_cover else _angle_phrase(getattr(page, "camera_angle", "") or "")
+    angle_cn = "" if is_cover else _angle_phrase(_resolve_camera_angle(page, outline))
     focus_cn = "" if is_cover else (getattr(page, "focus", "") or "").strip()
     hook_cn = "" if is_cover else (getattr(page, "hook", "") or "").strip()
 
@@ -1441,12 +1714,18 @@ def _build_positive_v3(
             f"人物与年龄（硬约束·绝不能错）：画面里的儿童只能是 {names}，"
             f"且每个孩子都必须是【{ip_age} 岁】的样子——身高、脸型、身材比例都要符合 {ip_age} 岁"
             f"（{'12 岁是青春期前的少年/少女，身形修长、个子较高，绝不是矮小幼态的低龄小童' if ip_age >= 12 else ('10 岁是学龄期儿童' if ip_age >= 10 else '8 岁是低龄学童')}）；"
-            f"不要出现有清晰五官/发型的陌生同学或路人（最多远景一两个极淡的人影剪影，可省略），不要凭空新增别的小孩；"
-            f"主角（群体）居中、是画面视觉焦点、占画面高度约 50-60%；"
+            f"不要出现有清晰五官/发型的陌生同学或路人；"
+            "如剧情确需人群，只允许【远景、虚化、看不清脸】的多元族裔人影剪影做国际化氛围，"
+            "且必须高度多样（不同年龄/身高/体型/发型/衣色，以成年人与不同长相为主），"
+            f"绝不能出现与 {names} 雷同的小孩——尤其严禁背景里出现紫色高马尾女孩、蓝色上衣蓬松短发男孩等酷似主角的身影（那会变成分身）；"
+            "背景人物一律不得抢主体、不得与主角同款形象；不要凭空新增别的小孩；"
+            f"主角（群体）是画面视觉焦点、明显偏置画面一侧、占画面高度约 45-55%，另一侧留出排文字空间；"
             f"{_head_body_ratio_lock(ip_age)}；每只手 5 根手指、关节自然、双眼对称、五官端正不歪斜；"
             "头部与脖颈结构自然正确、头型圆润对称、头发与头部自然衔接（马尾/发辫根部连接处准确），"
             "侧脸或侧头视角下轮廓与五官也要准确、不变形不重叠。"
         )
+        # 家具/物件按主角年龄真实比例（用户拍板 2026-06-08）：孩子与桌椅床门等大小要符合 ip_age
+        line += _furniture_scale_lock(ip_age)
         if n_kids >= 2:
             line += "多个同龄主角必须同尺度、同景深、站在同一水平面，谁都不能比旁边的人明显大一圈。"
         # 反分身铁律（用户反馈 Goldilocks 出现“两个一模一样的 Mia”）
@@ -1584,7 +1863,11 @@ def _build_negative_v3(*, cast: list[dict], page_text: str, ip_age: int = 12) ->
             "Mia扎侧马尾或散发披肩（必须高马尾·脑后正中）"
         )
     parts.append(
-        "凭空新增陌生小孩/路人同学（有清晰五官发型的多余儿童）；同一角色出现多个分身；"
+        "凭空新增陌生小孩/路人同学（有清晰五官发型的多余儿童）；"
+        "背景出现与主角雷同的小孩（紫色高马尾女孩、蓝色上衣蓬松短发男孩等酷似 Mia/Tommy 的身影）；"
+        "背景人群清晰可辨的脸/与主角同款发型衣色；"
+        "同一角色出现多个分身/复制/双胞胎/镜像；两个 Mia、两个 Tommy、同一主角同时出现在前景和背景；"
+        "duplicate character, cloned person, twins, two identical girls, two identical boys, same character appearing twice, mirrored duplicate；"
         "色斑、杂色斑块、噪点颗粒、脏污纹理、拼贴补丁、破碎割裂的色块；同一色块颜色不均匀的脏块；"
         "可见笔触/水彩纸纹理/颗粒感；厚重立体的体积塑形、强烈明暗阴影、写实光影渐变；"
         "打印模糊、发糊、低分辨率、边缘发虚、细节糊成一团；冰冷生硬的3D塑料渲染、塑料磨皮感"

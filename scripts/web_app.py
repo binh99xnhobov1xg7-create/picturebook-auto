@@ -21,7 +21,7 @@ import sys
 import time
 import zipfile
 from concurrent.futures import (
-    ThreadPoolExecutor, FIRST_COMPLETED, wait,
+    ThreadPoolExecutor, FIRST_COMPLETED, wait, as_completed,
     TimeoutError as FuturesTimeoutError,
 )
 from datetime import datetime
@@ -49,7 +49,7 @@ from parser import BookOutline, PageSpec, enrich_from_syllabus
 from ppt_builder import build_picturebook_pptx, safe_filename
 from prompt_builder import build_page_prompt  # legacy: fallback only
 from reading_report_builder import attach_rr_questions, build_reading_report
-from seedream_client import generate_image
+from seedream_client import generate_image, generate_image_for_level
 from teacher_guide_builder import build_teacher_guide
 from worksheet_builder import attach_worksheet_questions, build_worksheet
 
@@ -1330,6 +1330,260 @@ def _render_step5_prompts(step_num: int) -> None:
 # Step 6：🖼️ 单页生图（Phase 1 保持当前 1 图，Phase 2 升级 3 候选）
 # ============================================================================
 
+def _lexile_display(outline) -> tuple[str, str]:
+    """块11：返回 (展示值, 来源说明)。禁止编造——没有官方/人工值时显示 N/A 待核。"""
+    if outline is None:
+        return "—", "未知"
+    lex = (getattr(outline, "lexile", "") or "").strip()
+    src = (getattr(outline, "lexile_source", "") or "").strip()
+    if lex and src in ("syllabus", "manual", "analyzer"):
+        label = {"syllabus": "大纲官方", "manual": "人工核值", "analyzer": "官方分析器"}.get(src, src)
+        return lex, label
+    if lex:  # 有值但来源不明（如旧数据）→ 也展示但提示待核
+        return lex, "待核实"
+    return "N/A（待官方核值）", "缺失·禁编造"
+
+
+def _render_lexile_panel(outline) -> None:
+    """块11：大纲没有官方 Lexile 时，给老师【一键打开官方分析器 + 回填】的半自动取值（绝不编造）。"""
+    if outline is None:
+        return
+    lex = (getattr(outline, "lexile", "") or "").strip()
+    src = (getattr(outline, "lexile_source", "") or "").strip()
+    has_real = bool(lex and src in ("syllabus", "manual", "analyzer"))
+    with st.expander("📊 蓝思 Lexile 取值（禁止编造 · 每个值都要有依据）", expanded=not has_real):
+        if has_real:
+            st.success(f"✅ 当前 Lexile = **{lex}**（来源：{src}）。如需更正可在下方重新回填。")
+        else:
+            st.warning(
+                "⚠️ 大纲未收录该书官方 Lexile。**不会自动编造**。请用官方分析器对正文取真实值后回填；"
+                "未回填时 RR/TG 的 Lexile 显示为 `N/A（待官方核值）`。"
+            )
+        st.markdown(
+            "🔗 打开官方分析器：[Lexile Text Analyzer](https://hub.lexile.com/text-analyzer/) "
+            "（登录后粘贴本书英文正文 → 取得 Measure）"
+        )
+        new_val = st.text_input(
+            "把官方分析器测得的 Lexile 回填到这里（如 450L / BR100L）",
+            value=lex if src in ("manual", "analyzer") else "",
+            key="lexile_manual_input",
+            placeholder="例如 450L",
+        )
+        if st.button("💾 保存 Lexile（标记为人工核值）", key="lexile_save_btn"):
+            v = (new_val or "").strip()
+            if not v:
+                st.error("请输入官方分析器测得的 Lexile 值，或留空保持 N/A。")
+            else:
+                outline.lexile = v
+                outline.lexile_source = "manual"
+                try:
+                    st.session_state.auto["lexile"] = v
+                except Exception:
+                    pass
+                st.success(f"✅ 已保存 Lexile = {v}（人工核值）。RR/TG 将使用该值。")
+                st.rerun()
+
+
+def _run_storyboard_drafts(mock_images: bool) -> None:
+    """生图前【分镜草图】：为全部 8 页各出一张快速低分草图（1024²、不自审、不放大），
+    供老师对照故事描述审稿。重生草图会清除"已确认"标记（需重新确认）。"""
+    ec = st.session_state.extracted
+    outline: BookOutline = st.session_state.outline
+    apply_extracted_to_outline(outline, ec)
+    if st.session_state.get("_syllabus_hit"):
+        enrich_from_syllabus(outline)
+        _sync_ec_from_syllabus(ec, outline)
+
+    _run_dir, img_dir, _ = _ensure_run_dir()
+    ip_age = outline.ip_age or resolve_ip_age(outline.level)
+    pages = list(outline.pages)
+    sb: dict = st.session_state.get("storyboard") or {}
+
+    def _build(page):
+        prompt, refs = _build_final_prompt_for_page(page, outline, ip_age)
+        ver = int((sb.get(page.index) or {}).get("version", 0)) + 1
+        dest = img_dir / f"draft_{page.index:02d}_v{ver}.png"
+        return (page, prompt, list(refs)[:1], ver, dest)
+
+    tasks = [_build(p) for p in pages]
+    concurrency = max(1, int(os.getenv("IMAGE_CONCURRENCY", "2")))
+    n = len(tasks)
+    progress = st.progress(0, "生成分镜草图…")
+    status = st.empty()
+    errors: dict[int, str] = {}
+
+    def _work(t):
+        page, prompt, refs, ver, dest = t
+        generate_image(prompt=prompt, dest=dest, references=refs,
+                       mock=mock_images, label=f"draft P{page.index}",
+                       size="1024x1024", deliver_print=False)
+        return t
+
+    done = 0
+    with ThreadPoolExecutor(max_workers=min(concurrency, max(1, n))) as ex:
+        futs = {ex.submit(_work, t): t for t in tasks}
+        for fut in as_completed(futs):
+            page, prompt, refs, ver, dest = futs[fut]
+            done += 1
+            try:
+                fut.result()
+                sb[page.index] = {"path": str(dest), "version": ver}
+            except Exception as e:  # noqa: BLE001
+                errors[page.index] = str(e)
+            status.text(f"分镜草图 {done}/{n}…")
+            progress.progress(done / n, f"分镜草图 {done}/{n}")
+
+    st.session_state["storyboard"] = sb
+    st.session_state["storyboard_confirmed"] = False  # 草图变了 → 必须重新确认
+    progress.progress(1.0, "✅ 分镜草图完成")
+    status.empty()
+    if errors:
+        st.warning("部分草图失败：" + "；".join(f"P{k}: {v[:40]}" for k, v in errors.items()))
+
+
+def storyboard_ready() -> bool:
+    """硬门：是否已确认全部分镜。未确认禁止正式出图。"""
+    return bool(st.session_state.get("storyboard_confirmed"))
+
+
+def _render_storyboard_panel() -> None:
+    """生图前【分镜确认台】（用户拍板 2026-06-08 · 方案A+硬门）：
+      ① 一键出 8 张快速草图分镜；
+      ② 每页：草图 + 可编辑的中文故事描述（安全线）；
+      ③ 硬门「✅ 确认全部分镜」——不确认禁止进入正式出图。
+    """
+    outline = st.session_state.get("outline")
+    if outline is None or not getattr(outline, "pages", None):
+        return
+    try:
+        from cn_prompt_builder import safety_line_default
+    except Exception:
+        return
+
+    _force_mock = not bool(JIMENG_API_KEY)
+    sb: dict = st.session_state.get("storyboard") or {}
+    confirmed = storyboard_ready()
+
+    title = "🎬 生图前·分镜确认台（先出 8 张草图 + 改故事描述 → 确认后才正式出图）"
+    with st.expander(title, expanded=not confirmed):
+        st.caption(
+            "💡 流程：① 先出 8 张【快速草图】看分镜与故事描述对不对 → ② 逐页改中文描述（谁+在哪+做什么）"
+            " → ③ 点「✅ 确认全部分镜」。**只有确认后才允许正式逐张出高清图。**"
+            "草图为低分快稿（不放大、不自审），仅供审稿。"
+        )
+        cda, cdb = st.columns([1, 3])
+        with cda:
+            if st.button("🎬 生成 / 重出 8 张分镜草图", type="primary", key="sb_gen_btn"):
+                _run_storyboard_drafts(_force_mock)
+                st.rerun()
+        with cdb:
+            if not sb:
+                st.info("还没有草图。先点左边「🎬 生成 8 张分镜草图」。")
+
+        story_pages = [p for p in outline.pages]
+        with st.form("storyboard_form"):
+            edited: dict[int, str] = {}
+            ncols = 2
+            for row_start in range(0, len(story_pages), ncols):
+                cols = st.columns(ncols)
+                for j, p in enumerate(story_pages[row_start:row_start + ncols]):
+                    with cols[j]:
+                        st.markdown(f"**{page_display_name(p.index)}**")
+                        rec = sb.get(p.index) or {}
+                        dpath = rec.get("path")
+                        if dpath and Path(dpath).exists():
+                            st.image(dpath, use_container_width=True)
+                        else:
+                            st.caption("（暂无草图）")
+                        is_cover = (p.page_type == "cover" or p.index == 0)
+                        default = (p.text if is_cover else safety_line_default(p)) or ""
+                        edited[p.index] = st.text_area(
+                            "故事描述（可改）", value=default,
+                            key=f"sb_desc_{p.index}", height=80,
+                        )
+            c1, c2 = st.columns([1, 1])
+            with c1:
+                ok = st.form_submit_button("✅ 确认全部分镜（写回 + 重建 prompt + 放行出图）",
+                                           type="primary", width="stretch")
+            with c2:
+                save_only = st.form_submit_button("💾 仅保存描述（不确认）", width="stretch")
+
+        if ok or save_only:
+            for p in story_pages:
+                if p.page_type == "cover" or p.index == 0:
+                    continue
+                p.safety_line = (edited.get(p.index, "") or "").strip()
+            _rebuild_all_cn_prompts()
+            if ok:
+                st.session_state["storyboard_confirmed"] = True
+                st.success("✅ 分镜已确认，提示词已重建。现在可以进入正式出图。")
+            else:
+                st.session_state["storyboard_confirmed"] = False
+                st.info("已保存描述（未确认）。确认后才能正式出图。")
+            st.rerun()
+
+    if not confirmed:
+        st.warning("⛔ 尚未确认分镜——「正式出图」按钮已锁定。请先出草图、改描述并点「✅ 确认全部分镜」。")
+    else:
+        st.success("✅ 分镜已确认，可正式出图。")
+
+
+def _render_safety_line_panel() -> None:
+    """块4（用户拍板 2026-06-08）：生图前逐页【简体中文场景安全线】确认。
+
+    每页给老师一句"谁+在哪+做什么"的中文安全线（默认从 scene_cn 提炼），
+    老师可逐页编辑；确认后写回 page.safety_line（注入 prompt 最前作为权威画面）并重建全部 prompt。
+    """
+    outline = st.session_state.get("outline")
+    if outline is None or not getattr(outline, "pages", None):
+        return
+    try:
+        from cn_prompt_builder import safety_line_default
+    except Exception:
+        return
+
+    confirmed = st.session_state.get("safety_lines_confirmed", False)
+    title = "🛡️ 生图前·场景安全线确认（逐页一句中文：谁+在哪+做什么）"
+    with st.expander(title, expanded=not confirmed):
+        st.caption(
+            "💡 老师先读一遍每页画面要画什么，可直接改这句话。"
+            "**确认后这句会作为该页画面的权威核心**注入提示词最前（图严格照它画），并重建全部 prompt。"
+            "不确认也能出图（默认用 AI 原句）。"
+        )
+        story_pages = [p for p in outline.pages if (p.page_type != "cover" and p.index != 0)]
+        with st.form("safety_line_form"):
+            edited: dict[int, str] = {}
+            for p in story_pages:
+                default = safety_line_default(p)
+                edited[p.index] = st.text_input(
+                    f"{page_display_name(p.index)}",
+                    value=default,
+                    key=f"safety_line_{p.index}",
+                )
+            c1, c2 = st.columns([1, 1])
+            with c1:
+                ok = st.form_submit_button("✅ 确认并写回（重建 prompt）", type="primary", width="stretch")
+            with c2:
+                reset = st.form_submit_button("↩️ 重置为 AI 原句", width="stretch")
+        if ok:
+            for p in story_pages:
+                p.safety_line = (edited.get(p.index, "") or "").strip()
+            _rebuild_all_cn_prompts()
+            st.session_state["safety_lines_confirmed"] = True
+            st.success("✅ 场景安全线已确认并写回，提示词已重建。可以开始生图了。")
+            st.rerun()
+        if reset:
+            for p in story_pages:
+                p.safety_line = ""
+            st.session_state["safety_lines_confirmed"] = False
+            _rebuild_all_cn_prompts()
+            st.info("已清空安全线，恢复使用 AI 原句。")
+            st.rerun()
+
+    if not confirmed:
+        st.caption("ℹ️ 尚未确认场景安全线——可先确认再出图（也可直接出图，使用 AI 原句）。")
+
+
 def _render_step6_image_gen(step_num: int, embed: bool = False) -> None:
     if embed:
         exp = contextlib.nullcontext()
@@ -1353,6 +1607,11 @@ def _render_step6_image_gen(step_num: int, embed: bool = False) -> None:
         if mock_imgs:
             st.warning("⚠️ 当前为 **占位图模式**。要出正式 PPT 请先取消勾选。")
 
+        # 生图前【分镜确认台】（方案A+硬门）：先出 8 张草图 + 改故事描述 → 确认后才放行正式出图。
+        #   （内含逐页中文故事描述编辑，等价并取代原独立的场景安全线面板）
+        _render_storyboard_panel()
+        _sb_ok = storyboard_ready()
+
         col_a, col_b = st.columns([4, 1])
         with col_a:
             n_pages = len(st.session_state.outline.pages) if st.session_state.outline else 8
@@ -1369,8 +1628,11 @@ def _render_step6_image_gen(step_num: int, embed: bool = False) -> None:
                 )
         with col_b:
             if st.button("🎨 生成 / 重新生成所有图", type="primary",
-                         width="stretch", key="s6_gen_btn"):
+                         width="stretch", key="s6_gen_btn", disabled=not _sb_ok,
+                         help=None if _sb_ok else "需先在上方「分镜确认台」确认全部分镜才能正式出图"):
                 _run_image_generation_only(mock_imgs)
+        if not _sb_ok:
+            st.info("ℹ️「正式出图」已锁定：请先在上方「🎬 分镜确认台」出草图、改描述并点「✅ 确认全部分镜」。")
 
         if st.session_state.get("image_results"):
             st.divider()
@@ -1683,6 +1945,185 @@ def _render_batch_mode() -> None:
                 st.error(f"批量生产启动失败：{e}")
 
 
+def _extract_uploaded_page_images(uploaded_files, dest_dir: Path) -> list[Path]:
+    """块5：把上传的成品绘本（PDF / PPTX / 散图）抽成有序页图 PNG 列表。
+
+    - 图片：直接落盘（按文件名排序）。
+    - PDF：用 PyMuPDF 逐页渲染成图。
+    - PPTX：取每页幻灯片里面积最大的图片（适配本系统自产绘本）。
+    """
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    out: list[Path] = []
+    img_seq = sorted(uploaded_files, key=lambda f: f.name.lower())
+    n = 0
+    for f in img_seq:
+        name = (f.name or "").lower()
+        data = f.getvalue()
+        if name.endswith(".pdf"):
+            try:
+                import fitz  # PyMuPDF
+                doc = fitz.open(stream=data, filetype="pdf")
+                for pi in range(doc.page_count):
+                    pg = doc.load_page(pi)
+                    pix = pg.get_pixmap(matrix=fitz.Matrix(2, 2))
+                    n += 1
+                    p = dest_dir / f"page_{n:02d}.png"
+                    pix.save(str(p))
+                    out.append(p)
+                doc.close()
+            except Exception as e:
+                st.warning(f"PDF 解析失败（{f.name}）：{e}")
+        elif name.endswith(".pptx"):
+            try:
+                from pptx import Presentation
+                from pptx.util import Emu
+                import io as _io
+                prs = Presentation(_io.BytesIO(data))
+                for slide in prs.slides:
+                    best = None
+                    best_area = -1
+                    for shape in slide.shapes:
+                        if shape.shape_type == 13 or getattr(shape, "image", None) is not None:  # PICTURE
+                            try:
+                                area = int(shape.width) * int(shape.height)
+                            except Exception:
+                                area = 0
+                            if area > best_area:
+                                best_area = area
+                                best = shape
+                    if best is not None:
+                        try:
+                            blob = best.image.blob
+                            ext = best.image.ext or "png"
+                            n += 1
+                            p = dest_dir / f"page_{n:02d}.{ext}"
+                            p.write_bytes(blob)
+                            out.append(p)
+                        except Exception:
+                            pass
+            except Exception as e:
+                st.warning(f"PPTX 解析失败（{f.name}）：{e}")
+        elif name.endswith((".png", ".jpg", ".jpeg", ".webp")):
+            n += 1
+            p = dest_dir / f"page_{n:02d}.png"
+            try:
+                from PIL import Image as _Image
+                import io as _io
+                im = _Image.open(_io.BytesIO(data)).convert("RGB")
+                im.save(p, "PNG")
+                out.append(p)
+            except Exception:
+                p2 = dest_dir / f"page_{n:02d}{Path(name).suffix}"
+                p2.write_bytes(data)
+                out.append(p2)
+    return out[:8]
+
+
+def _render_upload_mode() -> None:
+    """块5（用户拍板 2026-06-08）：上传成品绘本(PDF/PPT/散图) → 只生成 Worksheet + RR + TG（不重出绘本本体）。"""
+    st.subheader("📤 上传成品绘本 → 生成教辅（Worksheet + Reading Report + Teacher's Guide）")
+    st.caption(
+        "💡 已有成品绘本时用这里：上传 **PDF / PPTX / 散图**（最多 8 张：封面+7 页，允许缺页）。"
+        "系统**不重出绘本本体**，只产出 WS + RR + TG。单词/拼读 **逐字取自该 Level 大纲**。"
+    )
+
+    c1, c2 = st.columns([3, 1])
+    with c1:
+        up_title = st.text_input("📕 Book Title *", value="", key="up_title",
+                                 help="用于匹配大纲、文档大标题、文件名。")
+    with c2:
+        up_level = st.selectbox("🎚️ Level *", LEVEL_OPTIONS, index=4, key="up_level")
+
+    files = st.file_uploader(
+        "上传成品绘本（PDF / PPTX / 多张图片）",
+        type=["pdf", "pptx", "png", "jpg", "jpeg", "webp"],
+        accept_multiple_files=True,
+        key="up_files",
+    )
+    up_text = st.text_area(
+        "📝 故事英文原文（强烈建议粘贴：用于出阅读题/正文；留空则尽量用大纲）",
+        height=160, key="up_raw_text",
+        placeholder="把这本绘本的英文正文粘进来，用于生成阅读理解题与 RR 正文。",
+    )
+    rr_answers = st.checkbox("RR 生成示例答案版（教师版）", value=False, key="up_rr_answers")
+
+    if not st.button("🚀 生成教辅三件套（WS + RR + TG）", type="primary", key="up_run_btn"):
+        return
+
+    if not up_title.strip():
+        st.error("请填写 Book Title。")
+        return
+    if not files:
+        st.error("请至少上传 1 个文件（PDF / PPTX / 图片）。")
+        return
+
+    run_dir, img_dir, name_prefix = _ensure_run_dir()
+    with st.spinner("解析上传文件，抽取页图…"):
+        image_paths = _extract_uploaded_page_images(files, img_dir)
+    if not image_paths:
+        st.error("没有从上传文件里解析出任何页图。请确认文件内容（PDF/PPTX 是否含图）。")
+        return
+    st.success(f"✅ 已解析出 {len(image_paths)} 张页图。")
+
+    ip_age = resolve_ip_age(up_level)
+    raw = (up_text or "").strip()
+    # 1) 构建 outline（有正文→AI 抽题/拆页；无正文→空页骨架，靠大纲补词/题）
+    outline = _build_outline(
+        title=up_title, level=up_level, book_number="", cefr="", theme="",
+        ip_age=int(ip_age), raw_story=raw, custom_chars_text="",
+    )
+    ec = None
+    if raw:
+        try:
+            ec = run_with_live_timer("AI 抽取（抽词 · 拆段 · 出题）", extract_all,
+                                     raw_story=raw, title=up_title, level=up_level,
+                                     cefr="", theme="")
+            apply_extracted_to_outline(outline, ec)
+        except Exception as e:
+            st.warning(f"AI 抽取失败，改用大纲/兜底：{e}")
+    # 2) 大纲权威逐字覆盖词表/拼读（块6）
+    hit = enrich_from_syllabus(outline)
+    if hit:
+        st.info("📚 命中 S&S 大纲：单词/拼读已按大纲逐字覆盖。")
+    elif not raw:
+        st.warning("⚠️ 未命中大纲且未粘贴正文 —— 题目/词表可能为占位，建议粘贴正文或确认书名与大纲一致。")
+    # 3) 挂题
+    if ec is not None:
+        attach_rr_questions(outline, ec.rr_questions)
+        rqc = int(st.session_state.get("ws_reading_q_count", 4))
+        attach_worksheet_questions(outline, ec.worksheet_questions, reading_q_count=rqc)
+
+    # 4) 组装 WS + RR + TG（不出绘本本体）
+    progress = st.progress(0, "组装教辅中…")
+    ws_path = run_dir / f"{name_prefix}_Worksheet.pptx"
+    rr_path = run_dir / f"{name_prefix}_Reading_Report.docx"
+    tg_path = run_dir / f"{name_prefix}_Teachers_Guide.docx"
+    try:
+        progress.progress(1 / 3, "生成 Worksheet…")
+        build_worksheet(outline, ws_path, image_paths=image_paths)
+        progress.progress(2 / 3, "生成 Reading Report…")
+        build_reading_report(outline, rr_path, with_answers=rr_answers)
+        progress.progress(3 / 3, "生成 Teacher's Guide…")
+        build_teacher_guide(outline, tg_path)
+    except Exception as e:
+        st.error(f"组装失败：{e}")
+        return
+
+    zip_path = run_dir / f"{name_prefix}_Teaching_Kit.zip"
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as z:
+        for p in (ws_path, rr_path, tg_path):
+            if p.exists():
+                z.write(p, arcname=p.name)
+        for img in image_paths:
+            z.write(img, arcname=f"images/{img.name}")
+
+    progress.progress(1.0, "完成 ✅")
+    st.success("✅ 教辅三件套已生成。")
+    with open(zip_path, "rb") as fh:
+        st.download_button("⬇️ 下载 ZIP（WS + RR + TG + 页图）", fh.read(),
+                           file_name=zip_path.name, mime="application/zip")
+
+
 def _render_global_standards_panel() -> None:
     """Section 0：全局底层逻辑（只读）。放在最前，让老师一眼看清今天的硬标准。
 
@@ -1951,6 +2392,35 @@ def _render_sidebar_brand() -> None:
     )
 
 
+def _require_password() -> None:
+    """可选访问密码门。
+
+    仅当配置了 APP_PASSWORD（Streamlit Cloud 的 Secrets 或环境变量）时才启用；
+    未配置则直接放行（本地 / 内网不受影响）。验证通过后本会话记住，不再追问。
+    """
+    pwd = ""
+    try:
+        pwd = str(st.secrets.get("APP_PASSWORD", "")).strip()
+    except Exception:
+        pwd = ""
+    if not pwd:
+        pwd = os.getenv("APP_PASSWORD", "").strip()
+    if not pwd or st.session_state.get("_authed"):
+        return
+
+    st.markdown("## 🔒 VIPKID Dino 绘本工作台")
+    st.caption("请输入访问密码（向管理员获取）。")
+    with st.form("login_gate", clear_on_submit=False):
+        entered = st.text_input("访问密码", type="password")
+        ok = st.form_submit_button("进入")
+    if ok:
+        if entered == pwd:
+            st.session_state["_authed"] = True
+            st.rerun()
+        st.error("密码错误，请重试。")
+    st.stop()
+
+
 def main() -> None:
     _icon_arg = str(_DINO_ICON) if _DINO_ICON.exists() else "📘"
     st.set_page_config(
@@ -1959,6 +2429,7 @@ def main() -> None:
         layout="wide",
     )
     _inject_css()
+    _require_password()
 
     _render_sidebar_brand()
     _render_hero()
@@ -1987,13 +2458,16 @@ def main() -> None:
     # ---------- 模式：单本 / 批量 ----------
     mode = st.radio(
         "制作模式",
-        ["📖 单本制作", "📚 批量生产"],
+        ["📖 单本制作", "📚 批量生产", "📤 上传成品绘本 → 教辅"],
         horizontal=True,
         key="produce_mode",
-        help="单本：逐本精调出图 + 4 件套。批量：一次跑多本大纲 → 每本 4 件套（绘本全自动出图）。",
+        help="单本：逐本精调出图 + 4 件套。批量：一次跑多本大纲。上传成品：已有绘本(PDF/PPT/散图)→只出 Worksheet+RR+TG。",
     )
     if mode == "📚 批量生产":
         _render_batch_mode()
+        return
+    if mode == "📤 上传成品绘本 → 教辅":
+        _render_upload_mode()
         return
 
     # ---------- Section A：输入表单 ----------
@@ -2161,6 +2635,7 @@ def main() -> None:
         apply_extracted_to_outline(outline, ec)
         if enrich_from_syllabus(outline):
             st.session_state["_syllabus_hit"] = True
+            _sync_ec_from_syllabus(ec, outline)   # 命中大纲→把官方词表/拼读逐字同步进工作台
         st.session_state.extracted = ec
         st.session_state.outline = outline
         st.session_state.auto = auto
@@ -2244,9 +2719,11 @@ def _render_auto_summary_panel() -> None:
     st.divider()
     st.subheader("🤖 AI 自动推断（你不用填，系统已根据故事 + 级别算好）")
 
+    outline = st.session_state.get("outline")
+    _lex_disp, _lex_src = _lexile_display(outline)
     c1, c2, c3, c4, c5 = st.columns(5)
     c1.metric("📏 CEFR 等级", auto["cefr"])
-    c2.metric("📊 蓝思 Lexile", auto["lexile"])
+    c2.metric("📊 蓝思 Lexile", _lex_disp, help=f"来源：{_lex_src}")
     c3.metric("🔢 故事字数", auto["word_count"])
     c4.metric("📖 故事类型", "Fiction" if auto["fiction_type"] == "fiction" else "Non-Fiction")
     c5.metric("🏷️ 主题", auto["theme"] or "(空)")
@@ -2254,6 +2731,9 @@ def _render_auto_summary_panel() -> None:
     st.caption(
         "💡 以上字段 AI 自动生成，需要覆盖请去顶部「⚙️ 选填字段」展开后填入对应项 → 会覆盖自动值。"
     )
+
+    # 块11：蓝思值半自动取值（禁止编造）—— 大纲没有官方 Lexile 时，用官方分析器取真实值后回填
+    _render_lexile_panel(outline)
 
     # === 主角识别面板 ===
     st.subheader("🎭 主角识别（让你确认 AI 理解的故事人物是谁）")
@@ -3504,69 +3984,136 @@ def _run_image_generation_only(mock_images: bool) -> None:
     # 并发生图：模型单张 20-60 秒去不掉，但多张同时跑可整体缩短到 ~原时间/并发数。
     # 主线程先算好每页 prompt/refs/dest（子线程不碰 st/session_state），再丢线程池并发。
     concurrency = max(1, int(os.getenv("IMAGE_CONCURRENCY", "2")))
-    tasks = []
+
+    # 块2（用户拍板 2026-06-08）：同一地点连续页【图链锚定】——
+    #   段内首页=锚点，先生成；其后页把锚点成图作为【场景参考图】传入，让走廊/房间真正一致。
+    try:
+        from cn_prompt_builder import _location_runs
+        _runs = _location_runs(outline)
+    except Exception:
+        _runs = {}
+    # dep_anchor[page_index] = 锚点页 index（该页布景应跟随锚点成图）
+    dep_anchor: dict[int, int] = {}
+    for _idx, _info in (_runs or {}).items():
+        _lo = _info[2]
+        if _idx != _lo:
+            dep_anchor[_idx] = _lo
+
+    pages_to_gen = []
+    skipped_locked = 0
     for page in outline.pages:
-        final_prompt, refs = _build_final_prompt_for_page(page, outline, ip_age)
         prev = image_results.get(page.index, {})
+        # 块7（用户拍板 2026-06-08）：批量重生时跳过【已锁定 ✅】的图，只重生未锁定的，锁定图原样保留。
+        if prev.get("locked") and prev.get("path") and Path(prev["path"]).exists():
+            skipped_locked += 1
+            continue
+        pages_to_gen.append(page)
+
+    if skipped_locked:
+        status.text(f"🔒 跳过 {skipped_locked} 张已锁定的图，只重生其余 {len(pages_to_gen)} 张。")
+    if not pages_to_gen:
+        progress.progress(1.0, "全部图已锁定 ✅，无需重生")
+        status.empty()
+        st.info("🔒 所有图都已锁定，没有需要重生的页。如需重生请先在下方解锁对应图。")
+        st.session_state.image_results = image_results
+        return
+    n = len(pages_to_gen)
+
+    # 把待生成页分两批：第1批=锚点+非连续页（可并发）；第2批=同地点跟随页（等锚点成图后再生，带场景参考）
+    gen_idx = {p.index for p in pages_to_gen}
+    first_pages = [p for p in pages_to_gen if p.index not in dep_anchor or dep_anchor[p.index] not in gen_idx]
+    dep_pages = [p for p in pages_to_gen if p.index in dep_anchor and dep_anchor[p.index] in gen_idx]
+
+    def _scene_ref_for(page) -> list[Path]:
+        """跟随页：取锚点页已生成的成图作为额外【场景参考图】。"""
+        a = dep_anchor.get(page.index)
+        if a is None:
+            return []
+        rec = image_results.get(a) or {}
+        p = rec.get("path")
+        if p and Path(p).exists():
+            return [Path(p)]
+        return []
+
+    def _build_task(page):
+        prev = image_results.get(page.index, {})
+        final_prompt, refs = _build_final_prompt_for_page(page, outline, ip_age)
+        # 场景参考图排在角色参考之后，整体不超过 3 张（角色一致性优先，场景锚定其次）
+        scene_refs = _scene_ref_for(page)
+        if scene_refs:
+            refs = (list(refs) + scene_refs)[:3]
         version = int(prev.get("version", 0)) + 1
         dest = img_dir / f"page_{page.index:02d}_v{version}.png"
-        tasks.append((page, final_prompt, refs, version, dest))
+        return (page, final_prompt, refs, version, dest)
 
-    def _work(t):
-        page, final_prompt, refs, version, dest = t
-        generate_image(
-            prompt=final_prompt, dest=dest,
-            references=refs, mock=mock_images, label=page.label,
-            deliver_print=False,  # 审图阶段不放大；定稿组装时只对锁定图放大
-        )
-        return t
-
-    workers = min(concurrency, max(1, n))
     errors: dict[int, str] = {}
     done = 0
     start_ts = time.time()
-    progress.progress(0.0, f"并发生图中（{workers} 张同时）... 0/{n}")
-    status.text(f"⏳ 已提交 {n} 张，{workers} 张并发生成中…（单张约 30–60 秒）")
-    with ThreadPoolExecutor(max_workers=workers) as ex:
-        fut_map = {ex.submit(_work, t): t for t in tasks}
-        pending = set(fut_map)
-        # 用带超时的 wait 轮询：即使还没有图完成，也每 ~3 秒刷新一次"已用时"，避免看起来卡死
-        while pending:
-            finished, pending = wait(pending, timeout=3, return_when=FIRST_COMPLETED)
-            for fut in finished:
-                page, final_prompt, refs, version, dest = fut_map[fut]
-                done += 1
-                display_name = page_display_name(page.index)
-                try:
-                    fut.result()
-                except Exception as e:
-                    errors[page.index] = str(e)
-                    try:
-                        with (run_dir / "image_errors.log").open("a", encoding="utf-8") as _lf:
-                            _lf.write(f"[{display_name} / {page.label}] {type(e).__name__}: {e}\n")
-                    except Exception:
-                        pass
-                    continue
-                prev = image_results.get(page.index, {})
-                image_results[page.index] = {
-                    "path": str(dest),
-                    "prompt": final_prompt,
-                    "label": page.label,
-                    "version": version,
-                    "locked": prev.get("locked", False),  # 重生时保留锁定状态
-                }
-            elapsed = int(time.time() - start_ts)
-            progress.progress(done / n, f"已完成 {done}/{n}")
-            n_fail = len(errors)
-            status.text(
-                f"⏳ 已用 {elapsed}s · 完成 {done}/{n}"
-                + (f"（{n_fail} 张失败）" if n_fail else "")
-                + f" · {len(pending)} 张进行中…"
-            )
 
-    # ★ 失败页自动补跑：并发突发常因限流/图床抖动丢几张，这里串行（单张、退避）重试，
-    #   尽量保证 8 张全成（质量优先 → 不能丢图）。每页最多再补跑 2 轮。
-    task_by_idx = {t[0].index: t for t in tasks}
+    def _work(t):
+        page, final_prompt, refs, version, dest = t
+        generate_image_for_level(
+            outline.level,
+            prompt=final_prompt, dest=dest,
+            references=refs, mock=mock_images, label=page.label,
+            deliver_print=False,  # 审图阶段不放大；定稿组装时只对锁定图放大
+            review_meta={
+                "page_text": getattr(page, "text", "") or "",
+                "ip_age": getattr(outline, "ip_age", None),
+            },
+        )
+        return t
+
+    def _run_pass(tasks, pass_label: str):
+        nonlocal done
+        if not tasks:
+            return
+        workers = min(concurrency, max(1, len(tasks)))
+        status.text(f"⏳ {pass_label}：提交 {len(tasks)} 张，{workers} 张并发…（单张约 30–60 秒）")
+        with ThreadPoolExecutor(max_workers=workers) as ex:
+            fut_map = {ex.submit(_work, t): t for t in tasks}
+            pending = set(fut_map)
+            while pending:
+                finished, pending = wait(pending, timeout=3, return_when=FIRST_COMPLETED)
+                for fut in finished:
+                    page, final_prompt, refs, version, dest = fut_map[fut]
+                    done += 1
+                    display_name = page_display_name(page.index)
+                    try:
+                        fut.result()
+                    except Exception as e:
+                        errors[page.index] = str(e)
+                        try:
+                            with (run_dir / "image_errors.log").open("a", encoding="utf-8") as _lf:
+                                _lf.write(f"[{display_name} / {page.label}] {type(e).__name__}: {e}\n")
+                        except Exception:
+                            pass
+                        continue
+                    prev = image_results.get(page.index, {})
+                    image_results[page.index] = {
+                        "path": str(dest), "prompt": final_prompt, "label": page.label,
+                        "version": version, "locked": prev.get("locked", False),
+                    }
+                elapsed = int(time.time() - start_ts)
+                progress.progress(min(done, n) / n, f"已完成 {min(done, n)}/{n}")
+                status.text(
+                    f"⏳ {pass_label} · 已用 {elapsed}s · 完成 {min(done, n)}/{n}"
+                    + (f"（{len(errors)} 张失败）" if errors else "")
+                    + f" · {len(pending)} 张进行中…"
+                )
+
+    progress.progress(0.0, "生图中... 0/%d" % n)
+    # 第1批：锚点 + 非连续页
+    first_tasks = [_build_task(p) for p in first_pages]
+    _run_pass(first_tasks, "第1批·锚点/独立页")
+    # 第2批：同地点跟随页（此时锚点已成图 → 作为场景参考注入）
+    dep_tasks = [_build_task(p) for p in dep_pages]
+    if dep_tasks:
+        _run_pass(dep_tasks, "第2批·同场景跟随页(锚定布景)")
+
+    # ★ 失败页自动补跑：并发突发常因限流/图床抖动丢几张，这里串行（单张、退避）重试。
+    all_tasks = first_tasks + dep_tasks
+    task_by_idx = {t[0].index: t for t in all_tasks}
     for _retry_round in range(2):
         if not errors:
             break
@@ -3582,7 +4129,8 @@ def _run_image_generation_only(mock_images: bool) -> None:
                 f"· 剩 {len(failed_idx) - ri}"
             )
             try:
-                generate_image(
+                generate_image_for_level(
+                    outline.level,
                     prompt=final_prompt, dest=dest,
                     references=refs, mock=mock_images, label=page.label,
                     deliver_print=False,
@@ -3600,8 +4148,6 @@ def _run_image_generation_only(mock_images: bool) -> None:
                 "version": version, "locked": prev.get("locked", False),
             }
             errors.pop(page_index, None)
-            done += 1
-            progress.progress(min(done, n) / n, f"已完成 {min(done, n)}/{n}")
 
     st.session_state.image_results = image_results
     status.empty()
@@ -3655,6 +4201,59 @@ def _regenerate_single_image(page_index: int, mock_images: bool) -> None:
     }
     st.session_state.image_results = image_results
     st.success(f"✅ {display_name} 已重新生成（v{version}）")
+
+
+def _review_fix_single(page_index: int, mock_images: bool) -> None:
+    """块3：对单张图跑 GPT 视觉自审；审出硬伤则图生图定向修，存为新版本。结果写入 session 供面板展示。"""
+    reviews = st.session_state.get("image_reviews") or {}
+    image_results = st.session_state.get("image_results") or {}
+    entry = image_results.get(page_index) or {}
+    img_path = entry.get("path")
+    if not img_path or not Path(img_path).exists():
+        st.error("图片不存在，无法审图")
+        return
+    outline: BookOutline = st.session_state.outline
+    page = next((p for p in outline.pages if p.index == page_index), None)
+    ip_age = outline.ip_age or resolve_ip_age(outline.level)
+    if mock_images:
+        st.info("占位图模式不审图。")
+        return
+    try:
+        from seedream_client import _review_image, _fix_prompt, generate_image as _gen, host_image_to_url
+    except Exception as e:
+        st.error(f"审图模块不可用：{e}")
+        return
+    with st.spinner(f"GPT 审图中… {page_display_name(page_index)}"):
+        verdict = _review_image(
+            Path(img_path),
+            page_text=(getattr(page, "text", "") or "") if page else "",
+            scene_cn=(getattr(page, "scene_cn", "") or "") if page else "",
+            ip_age=ip_age,
+        )
+    verdict = dict(verdict or {})
+    verdict["fixed"] = False
+    if not verdict.get("ok", True) and (verdict.get("issues") or verdict.get("fix")):
+        # 定向修图（图生图，保留画风/构图）→ 新版本
+        _, img_dir, _ = _ensure_run_dir()
+        version = int(entry.get("version", 0)) + 1
+        dest = img_dir / f"page_{page_index:02d}_v{version}.png"
+        try:
+            ref_url = host_image_to_url(Path(img_path))
+            with st.spinner("按问题定向修图中…"):
+                _gen(prompt=_fix_prompt(verdict.get("issues") or [], verdict.get("fix") or ""),
+                     dest=dest, reference_url=ref_url, mock=False,
+                     label=f"{page_display_name(page_index)} 定向修图", deliver_print=False)
+            image_results[page_index] = {
+                "path": str(dest), "prompt": entry.get("prompt", ""),
+                "label": entry.get("label", ""), "version": version,
+                "locked": False,
+            }
+            st.session_state.image_results = image_results
+            verdict["fixed"] = True
+        except Exception as e:
+            st.error(f"定向修图失败：{e}")
+    reviews[page_index] = verdict
+    st.session_state.image_reviews = reviews
 
 
 def _render_image_review_panel(mock_imgs: bool) -> None:
@@ -3724,6 +4323,20 @@ def _render_image_review_panel(mock_imgs: bool) -> None:
                 if new_lock != bool(entry.get("locked")):
                     entry["locked"] = new_lock
                     st.session_state.image_results[idx] = entry
+
+            # 块3：GPT 审图面板 —— 一键审 + 按需定向修（展示问题 + 一键修图）
+            if st.button("🩺 GPT 审图并按需修复", key=f"review_btn_{idx}", width="stretch",
+                         help="让 GPT 看这张图，挑 IP不一致/多指畸形/图文不符/分身/家具比例等硬伤；有问题就图生图定向修，只修瑕疵不改画风"):
+                _review_fix_single(idx, mock_imgs)
+                st.rerun()
+            _rv = (st.session_state.get("image_reviews") or {}).get(idx)
+            if _rv is not None:
+                if _rv.get("ok", True) and not _rv.get("issues"):
+                    st.success("✅ 审图通过：未发现硬伤")
+                else:
+                    st.warning("🔍 审出问题：" + "；".join(str(i) for i in (_rv.get("issues") or [])))
+                    if _rv.get("fixed"):
+                        st.caption("🔧 已按问题定向修图，生成新版本。")
 
             # 提示词折叠（默认收起，不刷屏；像即梦：图为主，提示词点开才看）
             with st.expander("✏️ 提示词（点开编辑 + 重生）", expanded=False):
@@ -4016,6 +4629,38 @@ def _download_button(path: Path, label: str, *, primary: bool = False) -> None:
 
 
 # =============================== 工具 ===============================
+def _sync_ec_from_syllabus(ec, outline) -> None:
+    """命中大纲时，把官方【词表 / 拼读 / 语法】逐字同步进 ec（工作台单一真值源）。
+
+    工作台 UI 读的是 ec，而 enrich_from_syllabus 只改 outline；不同步会出现「明明命中大纲，
+    工作台仍显示 AI 抽的词」。这里以大纲 verbatim 覆盖 ec，让显示/编辑/产出一致。
+    """
+    syl = getattr(outline, "syllabus", None)
+    if syl is None:
+        return
+    try:
+        if outline.is_dual_vocab_level:
+            if getattr(syl, "vocab_mastery", None):
+                ec.mastery = list(syl.vocab_mastery)
+            if getattr(syl, "vocab_exposure", None):
+                ec.exposure = list(syl.vocab_exposure)
+        else:
+            words = syl.vocab_words()
+            if words:
+                ec.vocabulary = list(words)
+        if getattr(syl, "phonics_rule", ""):
+            ph = syl.phonics_rule
+            if getattr(syl, "phonics_examples", ""):
+                ph = f"{ph}: {syl.phonics_examples}"
+            ec.phonics = ph
+        # 语法：大纲若有句型/句法焦点，用作 Grammar Focus（否则保留 AI 值）
+        gram = getattr(syl, "syntax_focus", "") or getattr(syl, "sentence_pattern", "")
+        if gram:
+            ec.grammar_focus = gram
+    except Exception:
+        pass
+
+
 def _build_outline(
     *, title: str, level: str, book_number: str, cefr: str, theme: str,
     ip_age: int, raw_story: str, custom_chars_text: str,
