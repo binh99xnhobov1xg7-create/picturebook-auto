@@ -23,6 +23,12 @@ class PageSpec:
     text_corner: str = ""    # "top-left" | "top-right" | "bottom-left" | "bottom-right"
     expression: str = ""     # 该页人物情绪（如 "excited" / "worried" / "amazed"）
     shot: str = ""           # "close" | "medium" | "full" | "wide"，留空走默认 medium
+    # v5 新增：机位角度（俯视/仰视/平视/越肩…），由 AI 按剧情选，避免全本平视
+    camera_angle: str = ""   # "eye" | "high" | "low" | "birdseye" | "over_shoulder"，留空走 eye
+    # v5 新增：本页画面 hook（一句话趣味彩蛋，如"桌下卡着橡皮的小仓鼠"），增强趣味性
+    hook: str = ""
+    # v6 新增：本页"高潮/焦点动作"——本页最具视觉张力的那一下，作为画面主体居中动作（如"Tommy 俯身扑向逃窜的小仓鼠"）
+    focus: str = ""
 
     @property
     def label(self) -> str:
@@ -61,6 +67,16 @@ class BookOutline:
 
     # 自定义独立角色（v1.3.2）
     custom_characters: dict[str, str] = field(default_factory=dict)
+
+    # v7 新增：官方 S&S 大纲注入（命中 references/syllabus 时为真值，未命中保持空/None）
+    reading_strategy: str = ""       # 大纲精确策略名（如 "Visualizing (视觉化)"）
+    reading_skill: str = ""          # 大纲精确技能名（如 "Main Idea and Supporting Details"）
+    graphic_organizer: str = ""      # GO 名称（如 "Bubble Map (气泡图)"）
+    graphic_organizer_desc: str = "" # GO 使用说明（大纲"描述"列）
+    syllabus: object | None = None   # 命中的 SyllabusEntry（teacher_guide 直接取用），未命中 None
+    official_image_prompt: object | None = None  # 命中的官方每课出图 Prompt（OfficialImagePrompt），出图时权威参考注入
+    book_cast: dict | None = None    # 书内角色册：反复出场的一次性/非 IP 角色 → 全书形象锁 + 书内定妆锚图
+    frame_mode: str = "B"            # 框架寓言呈现模式（已锁定默认 B）：B=每页"读者一角看书+故事幻象铺满"；A/A+ 备选
 
     @property
     def slug(self) -> str:
@@ -151,6 +167,8 @@ def parse_outline_text(text: str) -> BookOutline:
     pos_re = re.compile(r"^Text_?Position\s*:\s*(.*)$", re.I)
     expr_re = re.compile(r"^Expression\s*:\s*(.*)$", re.I)
     shot_re = re.compile(r"^Shot\s*:\s*(.*)$", re.I)
+    angle_re = re.compile(r"^(?:Camera_?Angle|Angle)\s*:\s*(.*)$", re.I)
+    hook_re = re.compile(r"^Hook\s*:\s*(.*)$", re.I)
 
     for raw in lines:
         line = raw.rstrip()
@@ -205,6 +223,14 @@ def parse_outline_text(text: str) -> BookOutline:
         m_shot = shot_re.match(s)
         if m_shot:
             current["shot"] = m_shot.group(1).strip().lower()
+            continue
+        m_angle = angle_re.match(s)
+        if m_angle:
+            current["camera_angle"] = m_angle.group(1).strip().lower()
+            continue
+        m_hook = hook_re.match(s)
+        if m_hook:
+            current["hook"] = m_hook.group(1).strip()
             continue
         # 其它行：拼到 text
         if s:
@@ -301,10 +327,29 @@ _DEFAULT_CORNERS = [
 ]
 
 
+_VALID_ANGLES = ("eye", "high", "low", "birdseye", "over_shoulder", "")
+
+
+def _norm_angle(raw: str) -> str:
+    a = (raw or "").strip().lower().replace("-", "_").replace(" ", "_")
+    # 常见同义词归一
+    alias = {
+        "level": "eye", "eye_level": "eye", "front": "eye", "straight": "eye",
+        "overhead": "birdseye", "top_down": "birdseye", "top": "birdseye", "aerial": "birdseye",
+        "high_angle": "high", "looking_down": "high",
+        "low_angle": "low", "looking_up": "low", "worms_eye": "low",
+        "over_the_shoulder": "over_shoulder", "ots": "over_shoulder", "pov": "over_shoulder",
+    }
+    a = alias.get(a, a)
+    return a if a in _VALID_ANGLES else ""
+
+
 def _normalize_pages(raw: list[dict], title: str) -> list[PageSpec]:
     cover_scene = ""
     cover_text = title
     cover_shot = ""
+    cover_angle = ""
+    cover_hook = ""
     story: list[dict] = []
 
     for blk in raw:
@@ -314,6 +359,8 @@ def _normalize_pages(raw: list[dict], title: str) -> list[PageSpec]:
             cover_shot = (blk.get("shot") or "").strip().lower()
             if cover_shot not in ("close", "medium", "full", "wide", ""):
                 cover_shot = ""
+            cover_angle = _norm_angle(blk.get("camera_angle", ""))
+            cover_hook = (blk.get("hook") or "").strip()
         else:
             story.append(blk)
 
@@ -325,7 +372,8 @@ def _normalize_pages(raw: list[dict], title: str) -> list[PageSpec]:
 
     pages: list[PageSpec] = [
         PageSpec(
-            index=0, page_type="cover", text=cover_text, scene=cover_scene, shot=cover_shot
+            index=0, page_type="cover", text=cover_text, scene=cover_scene, shot=cover_shot,
+            camera_angle=cover_angle, hook=cover_hook,
         ),
     ]
     for i, blk in enumerate(story, start=1):
@@ -344,6 +392,66 @@ def _normalize_pages(raw: list[dict], title: str) -> list[PageSpec]:
                 text_corner=corner,
                 expression=blk.get("expression", "").strip(),
                 shot=shot_raw,
+                camera_angle=_norm_angle(blk.get("camera_angle", "")),
+                hook=(blk.get("hook") or "").strip(),
             )
         )
     return pages
+
+
+# ---------- 官方 S&S 大纲注入 ----------
+def enrich_from_syllabus(outline: BookOutline) -> bool:
+    """用官方 S&S 大纲（references/syllabus）补强 outline。
+
+    命中时把权威的 Reading Strategy / Skill / GO 写入 outline，并仅在 outline
+    对应字段为空时回填 cefr/lexile/word_count/phonics/theme/fiction_type/vocab。
+    把整条 SyllabusEntry 挂在 outline.syllabus 上供 teacher_guide_builder 取用。
+
+    返回 True 表示命中（注入了真值），False 表示未命中（调用方维持现有启发式）。
+    """
+    # 官方每课出图 Prompt（独立检索，按 level+title；与 S&S 命中无关）
+    try:
+        from image_prompts import match as _img_match
+        oip = _img_match(outline.level, outline.title)
+        if oip is not None:
+            outline.official_image_prompt = oip
+    except Exception:
+        pass
+
+    try:
+        from syllabus import match as _match
+    except Exception:
+        return False
+
+    entry = _match(outline.level, outline.title)
+    if entry is None:
+        return False
+
+    outline.syllabus = entry
+    if entry.reading_strategy:
+        outline.reading_strategy = entry.reading_strategy
+    if entry.reading_skill:
+        outline.reading_skill = entry.reading_skill
+    if entry.graphic_organizer:
+        outline.graphic_organizer = entry.graphic_organizer
+    if entry.go_description:
+        outline.graphic_organizer_desc = entry.go_description
+
+    # 仅在 outline 缺失时回填（不覆盖用户大纲里的显式值）
+    if not outline.cefr and entry.cefr:
+        outline.cefr = entry.cefr
+    if not outline.lexile and entry.lexile:
+        outline.lexile = entry.lexile
+    if not outline.word_count_override and entry.word_count:
+        outline.word_count_override = entry.word_count
+    if not outline.phonics and entry.phonics_rule:
+        outline.phonics = entry.phonics_rule
+    if not outline.fiction_type and entry.genre in ("fiction", "nonfiction"):
+        outline.fiction_type = "non-fiction" if entry.genre == "nonfiction" else "fiction"
+
+    # 词汇回填：outline 没有词时用大纲权威词（单行模式）
+    if not outline.vocabulary_simple and not outline.vocabulary_mastery and not outline.vocabulary_exposure:
+        words = entry.vocab_words()
+        if words:
+            outline.vocabulary_simple = words
+    return True

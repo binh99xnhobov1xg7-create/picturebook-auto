@@ -33,28 +33,34 @@ MIA = {
     "gender": "girl",
     "aliases": [],
     "reference_by_age": {
-        8: "mia_age10.png",   # 官方无 8 岁定妆图 → 用最接近的 10 岁正样做风格锚（衣服仍按 8 岁描述）
+        8: "mia_age8.png",    # 官方正样 Mia8（水彩人物 PDF / 世界观 PPTX，L0-2 专用）
         10: "mia_age10.png",  # 官方正样 Mia10
         12: "mia_age12.png",  # 官方正样 Mia12
     },
+    # HAIR LOCK（用户拍板 2026-06-07）：Mia 任何年龄都是「高马尾·扎在脑后正中(back-CENTER, high)」，
+    # 绝不是侧马尾、绝不披散两侧。前面留短刘海+几缕碎发，长发全部上扎到脑后。
     "description_by_age": {
         8: (
-            "Mia: 8y GIRL, long brown hair in a SINGLE soft PONYTAIL tied at back-middle "
-            "of head, ponytail tail flows past shoulders, soft face-framing strands. "
-            "lavender purple SHORT-SLEEVE tee, denim jeans, white sneakers, bare wrists, "
-            + NO_ACCESSORY
+            "Mia: 8y GIRL. HAIR LOCK: dark-brown hair tied UP into a HIGH PONYTAIL at the "
+            "BACK-CENTER (back-top middle) of the head, ponytail flows straight down behind; "
+            "short fringe bangs + a few thin face-framing strands in front (NEVER a side ponytail, "
+            "NEVER loose flowing hair on both sides). "
+            "lavender purple SHORT-SLEEVE tee, light-blue WIDE-LEG denim jeans (cuffed hems), "
+            "lilac-and-white sneakers, bare wrists, " + NO_ACCESSORY
         ),
         10: (
-            "Mia: 10y GIRL, long brown hair in a SINGLE soft PONYTAIL tied at back-middle "
-            "of head, soft face-framing strands. "
+            "Mia: 10y GIRL. HAIR LOCK: dark-brown hair tied UP into a HIGH PONYTAIL at the "
+            "BACK-CENTER (back-top middle) of the head, ponytail flows straight down behind; "
+            "short fringe bangs + a few thin face-framing strands (NEVER a side ponytail, "
+            "NEVER loose flowing hair on both sides). "
             "lavender purple LONG-SLEEVE sweatshirt, light gray sweatpants, white sneakers, "
             "bare wrists, " + NO_ACCESSORY
         ),
         12: (
-            "Mia: 12y GIRL — HAIR LOCK: long brown hair tied UP into a HIGH PONYTAIL at the "
-            "back-top of the head with a small white scrunchie, ponytail flows down behind shoulders. "
-            "From FRONT/3-quarter: short fringe bangs + a few thin face-framing strands; the LONG part "
-            "is GATHERED UP behind (NEVER cascading loose on both sides). "
+            "Mia: 12y GIRL. HAIR LOCK: dark-brown hair tied UP into a HIGH PONYTAIL at the "
+            "BACK-CENTER (back-top middle) of the head with a small white scrunchie, ponytail flows "
+            "straight down behind; short fringe bangs + a few thin face-framing strands "
+            "(NEVER a side ponytail, NEVER cascading loose on both sides). "
             "lavender purple LONG-SLEEVE polo-collar pullover, white wide-leg trousers, white sneakers, "
             "bare wrists, " + NO_ACCESSORY
         ),
@@ -66,15 +72,15 @@ TOMMY = {
     "gender": "boy",
     "aliases": [],
     "reference_by_age": {
-        8: "tommy_age10.png",   # 官方无 8 岁定妆图 → 用最接近的 10 岁正样做风格锚（衣服仍按 8 岁描述）
+        8: "tommy_age8.png",    # 官方正样 Tommy8（水彩人物 PDF / 世界观 PPTX，L0-2 专用）
         10: "tommy_age10.png",  # 官方正样 Tommy10
         12: "tommy_age12.png",  # 官方正样 Tommy12
     },
     "description_by_age": {
         8: (
             "Tommy: 8y BOY (NOT a girl, NO ponytail, NO long hair), short tidy brown hair, "
-            "blue-and-white striped SHORT-SLEEVE tee, denim jeans, white sneakers, "
-            "bare wrists, " + NO_ACCESSORY
+            "blue-and-white horizontally striped SHORT-SLEEVE tee, light gray-blue trousers "
+            "(cuffed hems), white sneakers, bare wrists, " + NO_ACCESSORY
         ),
         10: (
             "Tommy: 10y BOY (NOT a girl, NO ponytail, NO long hair), short messy brown hair, "
@@ -134,15 +140,39 @@ WINNIE = {
 # ============================================================
 
 DINO = {
+    # 用户拍板 2026-06-07：Dino 是 VIPKID 专属冷门吉祥物，模型一画就崩（不在通用概念里）。
+    # 以后【所有级别】都不让 Dino 作为故事角色出现；仅在确有需要时做角落小 logo。
     "kind": "brand",
     "gender": "brand",
     "aliases": ["dino", "vipkid dino"],
     "reference_by_age": {"brand": "dino_official.png"},
     "description_by_age": {
         "brand": (
-            "Dino: VIPKID official mascot — small friendly orange dinosaur character. "
+            "Dino: VIPKID official mascot — small friendly YELLOW dinosaur with brown rounded "
+            "back-spikes and a pale cream horizontally-striped belly, big round eyes. "
             "STRICTLY use official appearance (do NOT redesign shape, color, or proportions). "
-            "ONLY use as logo / corner sticker, do NOT make Dino a story character"
+            "DO NOT include Dino as a story character in ANY scene at ANY level "
+            "(the model renders him incorrectly). Use ONLY as a tiny corner logo if ever needed."
+        ),
+    },
+}
+
+
+# ============================================================
+#  狗（常驻 IP）—— Max，Tommy & Mia 家的柯基
+# ============================================================
+
+MAX = {
+    "kind": "pet",
+    "gender": "pet",
+    "aliases": ["max", "the dog", "puppy", "doggy"],
+    "reference_by_age": {"pet": "max_dog.png"},
+    "description_by_age": {
+        "pet": (
+            "Max: small friendly corgi-type dog, golden-tan fur with WHITE chest, belly and paws, "
+            "large upright ears with pink inner ears, big round dark eyes, black nose, "
+            "pink tongue often out in a happy smile, fluffy curled-up tail. "
+            "Watercolor children's book style, cute and soft, NOT photorealistic"
         ),
     },
 }
@@ -158,9 +188,11 @@ ALI = {
     "aliases": [],
     "reference_by_age": {6: "ali_age6.png"},
     "description_by_age": {
+        # 官方定妆 Ali6.png：浅肤色 + 棕色微竖短发 + 蓝色短袖T + 卡其短裤（用户拍板 2026-06-07 订正）
         6: (
-            "Ali: 6y BOY (NOT Tommy), short curly black hair, warm brown skin, "
-            "yellow cotton t-shirt, brown shorts, white sneakers, cheerful smile"
+            "Ali: 6y BOY (NOT Tommy), short tousled/spiky BROWN hair, fair/light skin, "
+            "warm brown eyes, BLUE short-sleeve t-shirt, KHAKI/tan shorts, white sneakers, "
+            "cheerful smile"
         ),
     },
 }
@@ -195,10 +227,13 @@ BLACK_GIRL = {
         12: "black_girl_age12.jpg",
     },
     "description_by_age": {
+        # 官方定妆图（8/10/12 一致，用户拍板 2026-06-07 订正）：
+        #   深棕肤色 + 黑色长卷发散开（非丸子头）+ 淡紫长袖上衣 + 浅蓝牛仔裤 + 粉色鞋
         age: (
-            f"a young Black girl ({age}y, NOT Mia, NOT Anna), warm dark brown skin, "
-            "natural curly Afro hair in two puff buns, large bright eyes, "
-            "colorful patterned dress, white sneakers, friendly smile"
+            f"a young Black girl ({age}y, NOT Mia, NOT Anna), warm dark-brown skin, "
+            "LONG voluminous CURLY black hair worn LOOSE (NOT buns, NOT an afro puff), "
+            "large bright eyes, LAVENDER / light-purple LONG-SLEEVE top, light-blue jeans, "
+            "PINK sneakers, friendly smile"
         )
         for age in (8, 10, 12)
     },
@@ -214,10 +249,12 @@ BLACK_BOY = {
         12: "black_boy_age12.jpg",
     },
     "description_by_age": {
+        # 官方定妆图（8/10/12 一致，用户拍板 2026-06-07 订正）：
+        #   深棕肤色 + 黑色短卷发 + 白色长袖上衣 + 蓝色长牛仔裤 + 白鞋
         age: (
-            f"a young Black boy ({age}y, NOT Tommy), warm dark brown skin, "
-            "short curly black hair, large bright eyes, "
-            "colorful t-shirt, denim shorts, white sneakers, cheerful smile"
+            f"a young Black boy ({age}y, NOT Tommy), warm dark-brown skin, "
+            "short CURLY black hair, large bright eyes, "
+            "WHITE LONG-SLEEVE top, BLUE full-length jeans, white sneakers, cheerful smile"
         )
         for age in (8, 10, 12)
     },
@@ -303,7 +340,8 @@ GRANDPA = {
 #   - 圆脸 + 腮粉 + 棕色大眼 + 小鼻子 + 温和微笑，亚洲女孩
 #   - 绝不：马尾 / 双低马尾 / 麻花辫 / 长发披肩 / 眼镜
 ANNA = {
-    "kind": "protagonist",
+    # 用户拍板 2026-06-06：Anna 是【朋友/配角】，不是主角（不抢主角锚位）
+    "kind": "supporting",
     "gender": "girl",
     "aliases": [],
     "reference_by_age": {
@@ -346,6 +384,7 @@ REGISTRY: dict[str, dict] = {
     "anna": ANNA,
     "teacher_kim": TEACHER_KIM,
     "winnie": WINNIE,
+    "max": MAX,
     "dino": DINO,
     "ali": ALI,
     "cate": CATE,

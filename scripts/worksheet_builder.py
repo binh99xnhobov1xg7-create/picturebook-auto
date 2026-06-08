@@ -28,8 +28,8 @@ from typing import Iterable, Optional
 
 from pptx import Presentation
 from pptx.dml.color import RGBColor
-from pptx.enum.shapes import MSO_SHAPE
-from pptx.enum.text import PP_ALIGN, MSO_ANCHOR
+from pptx.enum.shapes import MSO_SHAPE, MSO_CONNECTOR
+from pptx.enum.text import PP_ALIGN, MSO_ANCHOR, MSO_AUTO_SIZE
 from pptx.util import Inches as _RawInches, Pt, Emu
 
 from config import BRAND_DIR, brand_color_rgb
@@ -221,12 +221,17 @@ def _find_past_verb(sentence: str) -> Optional[tuple[str, str]]:
     return None
 
 
+_PAGE_PREFIX_RE = re.compile(r"^\s*(?:page|p|第)\s*\d+\s*[页:：.、)\-]?\s*", re.IGNORECASE)
+
+
 def _story_sentences_for_grammar(outline: BookOutline) -> list[str]:
     out: list[str] = []
     for p in outline.pages:
         if p.page_type == "story" and (p.text or "").strip():
-            for s in re.split(r"(?<=[.!?])\s+", p.text.strip()):
-                s = s.strip()
+            # 去掉可能残留的分页标记前缀（"Page 1" / "P2" / "第3页"），避免混进句型题。
+            txt = _PAGE_PREFIX_RE.sub("", p.text.strip())
+            for s in re.split(r"(?<=[.!?])\s+", txt.strip()):
+                s = _PAGE_PREFIX_RE.sub("", s.strip()).strip()
                 if s and len(s.split()) >= 4:
                     out.append(capitalize_names(s))
     return out
@@ -268,20 +273,28 @@ def _present_form(base: str, plural: bool) -> str:
 def _sentence_to_present(sent: str) -> Optional[str]:
     """把整句里所有过去式动词换成一般现在时，得到（错误的）现在时句子；无可换则 None。"""
     first = "".join(ch for ch in sent.split()[0] if ch.isalpha()).lower() if sent.split() else ""
-    plural = first in _PLURAL_SUBJECTS
+    sent_plural = first in _PLURAL_SUBJECTS
     tokens = sent.split()
     changed = False
+    prev_clean = ""  # 动词前一个实词 → 判断主语单复数（修「At recess they plays」）
     for i, tok in enumerate(tokens):
         clean = "".join(ch for ch in tok if ch.isalpha())
-        if not clean or clean.lower() in _NOT_VERB:
+        if not clean:
+            continue
+        if clean.lower() in _NOT_VERB:
+            prev_clean = clean.lower()
             continue
         base = _past_to_base(clean)
         if not base or base == clean.lower():
+            prev_clean = clean.lower()
             continue  # 非过去式 / 过去=原形同形（put/read），跳过不制造对比
+        # 主语单复数：优先看动词紧邻的前一个词（they/we/you/I → 复数），否则用句首判断
+        plural = (prev_clean in _PLURAL_SUBJECTS) or (not prev_clean and sent_plural)
         present = _present_form(base, plural)
         if clean[:1].isupper():
             present = present[:1].upper() + present[1:]
         tokens[i] = tok.replace(clean, present, 1)
+        prev_clean = clean.lower()
         changed = True
     return " ".join(tokens) if changed else None
 
@@ -305,6 +318,240 @@ def _tense_mc_items(outline: BookOutline, max_n: int = 4) -> list[dict]:
 # 兼容旧调用名
 def _sentence_fill_items(outline: BookOutline, max_n: int = 4) -> tuple[list[dict], list[str]]:
     return _tense_fill_items(outline, max_n=max_n)
+
+
+# ============================================================
+#  句型考点引擎（现在时）：主谓一致 / 现在时填空 —— 适配非虚构等现在时文本
+# ============================================================
+# 现在时常见动作动词原形（用于在文中可靠识别"现在时动词"并做主谓一致变形）。
+# 只对白名单内的词动手，避免把名词误判成动词（如 water/areas）。
+_PRESENT_ACTION_BASES: set[str] = {
+    "cover", "carry", "flow", "meet", "create", "help", "make", "live", "grow",
+    "feed", "give", "take", "bring", "keep", "hold", "move", "show", "need",
+    "mean", "use", "form", "join", "reach", "protect", "call", "find", "turn",
+    "run", "fall", "rise", "mix", "fill", "feel", "look", "play", "work", "want",
+    "like", "love", "eat", "drink", "swim", "jump", "see", "hear", "know",
+    "think", "say", "tell", "read", "write", "sing", "walk", "talk", "open",
+    "close", "start", "stop", "build", "plant", "catch", "throw", "fly", "drive",
+    "wash", "shine", "melt", "freeze", "burn", "blow", "sail", "float", "sink",
+    "include", "contain", "support", "produce", "provide", "connect", "spread",
+    "begin", "happen", "appear", "remain", "become", "belong", "depend",
+}
+
+
+def _base_of_present(low: str) -> Optional[tuple[str, str]]:
+    """识别一个现在时动词 token（小写、纯字母）→ 返回 (原形 base, 数 'sing'/'plur')。
+
+    'sing' = 第三人称单数形态（covers/carries/is/has），'plur' = 原形/复数形态（cover/are/have）。
+    仅命中白名单或 be/have 才返回，杜绝把名词误判为动词。"""
+    if low in ("is", "has"):
+        return ("be" if low == "is" else "have", "sing")
+    if low in ("are", "have"):
+        return ("be" if low == "are" else "have", "plur")
+    if low in _PRESENT_ACTION_BASES:
+        return (low, "plur")                       # 原形 = 复数/第一二人称
+    # 第三人称单数 -s/-es/-ies → 还原原形再核对白名单
+    if low.endswith("ies") and len(low) > 3:
+        cand = low[:-3] + "y"
+        if cand in _PRESENT_ACTION_BASES:
+            return (cand, "sing")
+    if low.endswith("es") and len(low) > 2:
+        cand = low[:-2]
+        if cand in _PRESENT_ACTION_BASES:
+            return (cand, "sing")
+    if low.endswith("s") and len(low) > 1:
+        cand = low[:-1]
+        if cand in _PRESENT_ACTION_BASES:
+            return (cand, "sing")
+    return None
+
+
+def _wrong_agreement_form(base: str, number: str) -> str:
+    """给出"错误的"主谓一致形态：单数↔复数互换。"""
+    if base == "be":
+        return "are" if number == "sing" else "is"
+    if base == "have":
+        return "have" if number == "sing" else "has"
+    return base if number == "sing" else _present_3rd(base)
+
+
+def _swap_token(sentence: str, old_tok: str, new_word: str) -> str:
+    """把句中第一处 old_tok 换成 new_word，保留首字母大小写。"""
+    clean = "".join(ch for ch in old_tok if ch.isalpha())
+    if clean[:1].isupper():
+        new_word = new_word[:1].upper() + new_word[1:]
+    replaced = old_tok.replace(clean, new_word, 1)
+    return sentence.replace(old_tok, replaced, 1)
+
+
+def _find_present_verb(sentence: str) -> Optional[tuple[str, str, str]]:
+    """找句中第一个可做主谓一致变形的现在时动词。返回 (原 token, base, number)。"""
+    for tok in sentence.split():
+        clean = "".join(ch for ch in tok if ch.isalpha())
+        low = clean.lower()
+        if not clean or low in _NOT_VERB:
+            continue
+        info = _base_of_present(low)
+        if info:
+            base, number = info
+            return tok, base, number
+    return None
+
+
+def _present_agreement_mc_items(outline: BookOutline, max_n: int = 4) -> list[dict]:
+    """现在时主谓一致二选一：正确句 vs 主谓不一致（错误）句。
+
+    正确项 = 故事原句；干扰项 = 把主要现在时动词换成错误的单复数形态。
+    """
+    mcs: list[dict] = []
+    seen: set[str] = set()
+    for sent in _story_sentences_for_grammar(outline):
+        if len(mcs) >= max_n:
+            break
+        found = _find_present_verb(sent)
+        if not found:
+            continue
+        tok, base, number = found
+        wrong_form = _wrong_agreement_form(base, number)
+        wrong = _swap_token(sent, tok, wrong_form)
+        if wrong == sent or sent in seen:
+            continue
+        seen.add(sent)
+        mcs.append({"options": [sent, wrong], "correct": 0})
+    return mcs
+
+
+def _present_fill_items(outline: BookOutline, max_n: int = 4) -> tuple[list[dict], list[str]]:
+    """现在时填空：挖空主要现在时动词，括号给原形，学生写出正确形态。
+
+    例：『Oceans ________ (cover) most of Earth.』 答案 cover。
+    返回 (fills, word_bank=正确形态列表)。
+    """
+    fills: list[dict] = []
+    bank: list[str] = []
+    seen: set[str] = set()
+    for sent in _story_sentences_for_grammar(outline):
+        if len(fills) >= max_n:
+            break
+        found = _find_present_verb(sent)
+        if not found:
+            continue
+        tok, base, _number = found
+        ans = "".join(ch for ch in tok if ch.isalpha())
+        prompt_base = "be" if base == "be" else base
+        blanked = sent.replace(tok, f"________ ({prompt_base})", 1)
+        if blanked == sent or sent in seen:
+            continue
+        seen.add(sent)
+        fills.append({"sentence": blanked, "answer": ans})
+        bank.append(ans)
+    return fills, bank
+
+
+def _dominant_tense(outline: BookOutline) -> str:
+    """统计故事主时态：返回 'past' 或 'present'。
+
+    逐句看首个可识别动词是过去式还是现在时；过去式句占比 ≥ 40% → 'past'，否则 'present'。
+    （非虚构科普文几乎全是一般现在时 → 'present'，从而切换到现在时考点。）"""
+    sents = _story_sentences_for_grammar(outline)
+    if not sents:
+        return "past"
+    past = present = 0
+    for s in sents:
+        if _find_past_verb(s):
+            past += 1
+        elif _find_present_verb(s):
+            present += 1
+    total = past + present
+    if total == 0:
+        return "past"
+    return "past" if (past / total) >= 0.40 else "present"
+
+
+# ============================================================
+#  分级出题：词汇/句型按 Level 选型（用户拍板 2026-06-04）
+# ============================================================
+def _lvl_band(lvl_n: int) -> str:
+    """L0-2→'l02'，L3-4→'l34'，L5-6→'l56'。"""
+    if lvl_n <= 2:
+        return "l02"
+    if lvl_n <= 4:
+        return "l34"
+    return "l56"
+
+
+def _first_letter_mask(word: str) -> str:
+    """nervous → 'n _ _ _ _ _ _'（首字母提示 + 其余下划线）。"""
+    w = (word or "").strip()
+    if len(w) <= 1:
+        return w
+    return w[0] + " " + " ".join("_" for _ in w[1:])
+
+
+def _suffix_mask(word: str) -> str:
+    """nervous → 'nerv _ _ _'（保留词根、空出词尾；一个下划线=一个字母）。"""
+    w = (word or "").strip()
+    n = len(w)
+    cut = max(2, n - 3)
+    blanks = " ".join("_" for _ in range(n - cut))
+    return w[:cut] + " " + blanks if blanks else w
+
+
+def _word_fill_meaning_items(pairs: list[dict], max_n: int = 5) -> list[dict]:
+    """L0-2 看词义/首字母写词：clue=释义，hint=首字母掩码。"""
+    out: list[dict] = []
+    for p in pairs[:max_n]:
+        w = str(p.get("word", "")).strip()
+        if not w:
+            continue
+        d = str(p.get("def", "")).strip()
+        out.append({"clue": d or "Write the word.", "answer": w, "hint": _first_letter_mask(w)})
+    return out
+
+
+def _word_fill_morph_items(pairs: list[dict], max_n: int = 5) -> list[dict]:
+    """L5-6 构词/拼写补全：clue=释义，hint=词根+空词尾。"""
+    out: list[dict] = []
+    for p in pairs[:max_n]:
+        w = str(p.get("word", "")).strip()
+        if len(w) < 4:
+            continue
+        d = str(p.get("def", "")).strip()
+        out.append({"clue": d or "Complete the word.", "answer": w, "hint": _suffix_mask(w)})
+    return out
+
+
+def _unscramble_items(sentences: list[str], max_n: int = 5) -> list[dict]:
+    """L0-2 连词成句：把 3-9 词的句子打乱词序。"""
+    import random as _rnd
+    out: list[dict] = []
+    for s in sentences:
+        words = s.rstrip(".!?").split()
+        if not (3 <= len(words) <= 9):
+            continue
+        order = list(range(len(words)))
+        for _ in range(8):
+            _rnd.shuffle(order)
+            if order != list(range(len(words))):
+                break
+        scrambled = "  /  ".join(words[i] for i in order)
+        out.append({"scrambled": scrambled, "answer": s})
+        if len(out) >= max_n:
+            break
+    return out
+
+
+def _rewrite_items(outline: BookOutline, max_n: int = 5) -> list[dict]:
+    """L5-6 句子改写：给现在时句子，改写成故事原句（过去时）。"""
+    out: list[dict] = []
+    for s in _story_sentences_for_grammar(outline):
+        pres = _sentence_to_present(s)
+        if not pres or pres == s:
+            continue
+        out.append({"prompt": pres, "answer": s})
+        if len(out) >= max_n:
+            break
+    return out
 
 
 # ---------- 官方 A4 模板（底版/母版）----------
@@ -361,13 +608,46 @@ def _set_footer(slide, footer_text: str) -> None:
             Inches(7.46), Inches(7.16), Inches(2.94), Inches(0.35))
     tf = target.text_frame
     tf.clear()
+    # 不换行、不自动缩放 + 给足宽度 → 长标题不再被截断
+    tf.word_wrap = False
+    try:
+        tf.auto_size = MSO_AUTO_SIZE.NONE
+    except Exception:
+        pass
+    try:
+        target.left = Inches(3.0)
+        target.width = Inches(SLIDE_W - 3.0 - 0.33)
+    except Exception:
+        pass
     p = tf.paragraphs[0]
     p.alignment = PP_ALIGN.RIGHT
     r = p.add_run()
     r.text = footer_text
     r.font.name = FONT
-    r.font.size = Pt(FOOTER_PT)
+    # 标题长则自动降字号，保证整行不溢出
+    fp = FOOTER_PT
+    if len(footer_text) > 42:
+        fp = 11.0
+    elif len(footer_text) > 32:
+        fp = 12.5
+    r.font.size = Pt(fp)
     r.font.color.rgb = WHITE
+
+
+def _fix_name_badge(slide) -> None:
+    """关掉模板 Name 角标的自动换行（避免 LibreOffice/字体替换把 'Name' 折成 'Nam e'）。"""
+    for sh in slide.shapes:
+        if not sh.has_text_frame:
+            continue
+        txt = (sh.text_frame.text or "").strip().lower()
+        if txt in ("name", "name:", "姓名", "姓名:"):
+            tf = sh.text_frame
+            tf.word_wrap = False
+            try:
+                tf.auto_size = MSO_AUTO_SIZE.NONE
+            except Exception:
+                pass
+            return
 
 
 def _retell_writing_scaffold(outline: BookOutline) -> dict:
@@ -396,15 +676,57 @@ def _retell_writing_scaffold(outline: BookOutline) -> dict:
 
 
 def _resolve_second_reading_mode(mode: str, lvl_n: int) -> str:
-    """解析第 2 张 Reading 页内容模式。
+    """解析第 2 张 Reading 页内容模式（用户拍板 2026-06-04，P6 = 分级 PBL）。
 
-    auto：L0-2 用思维导图(SWBST 复述)，L3-6 用写作脚手架。
+    auto 分级：
+      • L0–L3 → pbl     看图造句 + 画框（低龄动手项目）
+      • L4    → mindmap  思维导图(SWBST)
+      • L5–L6 → writing  写作脚手架（顶部 SWBST 规划框 + 写作区 = 思维导图+写作）
     其余取值原样返回：reading / mindmap / writing / pbl。
     """
     m = (mode or "auto").strip().lower()
-    if m in ("reading", "mindmap", "writing", "pbl"):
+    if m in ("reading", "mindmap", "writing", "writing_official", "pbl"):
         return m
-    return "mindmap" if lvl_n <= 2 else "writing"
+    if lvl_n <= 3:
+        return "pbl"
+    if lvl_n == 4:
+        return "mindmap"
+    return "writing"
+
+
+def _unify_reading_questions(rq: list[dict]) -> tuple[list[dict], str]:
+    """同页题型统一（用户硬要求）：阅读页只能"全选择"或"全判断"，不混排 short。
+
+    取数量更多的同质题型（mc / tf）；不足 3 题则退回原始混合，避免空页。
+    返回 (questions, kind)，kind ∈ {"mc","tf","mixed"}。
+    """
+    def _difficulty_key(q: dict) -> tuple:
+        # 易→难排序（不改版式，只调顺序，方便孩子顺手作答）：
+        # 闭合题(mc/tf)先于开放题(short)；指向越靠前页的事实题越简单先排；题干越短越简单。
+        kind_rank = {"tf": 0, "mc": 1, "short": 2}.get((q.get("kind") or "").lower(), 3)
+        try:
+            page = int(q.get("page") or 99)
+        except (TypeError, ValueError):
+            page = 99
+        return (kind_rank, page, len((q.get("q") or "")))
+
+    mc = [q for q in rq if q.get("kind") == "mc" and q.get("q")]
+    tf = [q for q in rq if q.get("kind") == "tf" and q.get("q")]
+    chosen, kind = (mc, "mc") if len(mc) >= len(tf) else (tf, "tf")
+    if len(chosen) < 3:
+        # 混排兜底：按易→难稳定排序
+        return sorted([q for q in rq if q.get("q")], key=_difficulty_key), "mixed"
+    # 同质题内部也按易→难（靠前页事实题先、短题先）稳定排序
+    return sorted(chosen, key=_difficulty_key), kind
+
+
+def _reading_subtitle(kind: str) -> str:
+    """副标题随题型自适应，提示学生本页统一的作答方式。"""
+    if kind == "mc":
+        return "Read the passage. Circle the correct answer (A / B / C) for each question."
+    if kind == "tf":
+        return "Read the passage. Write T (true) or F (false) for each statement."
+    return "Read the passage and answer the questions."
 
 
 def build_worksheet(
@@ -413,7 +735,7 @@ def build_worksheet(
     *,
     image_paths: Optional[Iterable[Path]] = None,
     sentence_image_mode: str = "reuse",  # reuse=复用绘本图 / none=不配图
-    second_reading_mode: str = "auto",   # auto/reading/mindmap/writing/pbl
+    second_reading_mode: str = "auto",   # auto/reading/mindmap/writing/writing_official/pbl
 ) -> Path:
     """生成 worksheet（所有级别统一 6 页）：
 
@@ -460,30 +782,102 @@ def build_worksheet(
         if use_template:
             s = _clone_template_slide(prs, tpl_src)
             _set_footer(s, footer_text)
+            _fix_name_badge(s)
         else:
             s = prs.slides.add_slide(blank)
             _draw_brand_frame(s, brand_rgb, footer_text, logo_icon)
         return s
 
-    # ===== 2 词汇页 =====
-    _build_p1_match(new_page(), brand_rgb, data["match_pairs"], images)
-    _build_p2_fill(new_page(), brand_rgb, data["fill_blanks"], data["word_bank"], images)
+    band = _lvl_band(lvl_n)
 
-    # ===== 2 句型页（考点 = 故事时态，一般过去时；学什么考什么）=====
-    # 句型页① 二选一：选出用正确过去式的句子；AI 数据不贴合考点时用时态引擎兜底
-    tense_mcs = _tense_mc_items(outline)
-    sent_mcs = tense_mcs if tense_mcs else data["sentence_mcs"]
+    # ===== 2 词汇页（分级选型；学什么考什么）=====
+    # 词汇页① 匹配：词 ↔ 释义/图（乱序）—— 各级别通用
+    _build_p1_match(new_page(), brand_rgb, data["match_pairs"], images)
+    # 词汇页② 分级：L0-2 看义/首字母写词；L3-4 原文挖空；L5-6 构词补全
+    if band == "l02":
+        wf = _word_fill_meaning_items(data["match_pairs"], max_n=6)
+        if wf:
+            _build_word_fill_page(new_page(), brand_rgb, wf, "Vocabulary",
+                                  "Read the meaning and write the word. The first letter is given.")
+        else:
+            _build_p2_fill(new_page(), brand_rgb, data["fill_blanks"], data["word_bank"], images)
+    elif band == "l56":
+        wf = _word_fill_morph_items(data["match_pairs"], max_n=6)
+        if wf:
+            _build_word_fill_page(new_page(), brand_rgb, wf, "Vocabulary",
+                                  "Complete each word using the correct ending.")
+        else:
+            _build_p2_fill(new_page(), brand_rgb, data["fill_blanks"], data["word_bank"], images)
+    else:  # l34 → 原文挖空
+        _build_p2_fill(new_page(), brand_rgb, data["fill_blanks"], data["word_bank"], images)
+
+    # ===== 2 句型页（考点 = 本课语法焦点；学什么考什么）=====
+    # 时态自适应（用户拍板 2026-06-06）：现在时为主的文本（如非虚构科普）→ 现在时考点
+    #   （主谓一致 / 现在时填空）；过去式为主 → 维持过去式考点。避免"现在时文出过去式题"
+    #   既考点错、又因可转动词太少导致一页一题。每页保底 3-4 题填满版面。
+    tense = _dominant_tense(outline)
+
+    # —— 句型页① 二选一（保底 ≥3 题，目标 4 题）——
+    if tense == "present":
+        sent_mcs = _present_agreement_mc_items(outline, max_n=4)
+        if len(sent_mcs) < 3:
+            sent_mcs = (sent_mcs + _tense_mc_items(outline, max_n=4))[:4]
+        mc_sub = "Tick (\u2713) the sentence that is correct."
+    else:
+        sent_mcs = _tense_mc_items(outline, max_n=4)
+        mc_sub = "Tick (\u2713) the sentence that uses the correct past tense."
+    if len(sent_mcs) < 3 and data.get("sentence_mcs"):
+        sent_mcs = (sent_mcs + data["sentence_mcs"])[:4]
+        mc_sub = "Tick (\u2713) the correct sentence."
     _build_p3_sentence(new_page(), brand_rgb, sent_mcs, images,
-                       show_images=(sentence_image_mode != "none"))
-    # 句型页② 填空：写出动词的正确过去式（给原形提示）
-    sent_fills, sent_bank = _tense_fill_items(outline)
-    if not sent_fills:
-        sent_fills, sent_bank = _sentence_fill_items(outline)
-    _build_p2_fill(
-        new_page(), brand_rgb, sent_fills, [], images,
-        title="Sentence",
-        subtitle="Write the correct past tense of each verb in brackets.",
-    )
+                       show_images=(sentence_image_mode != "none"), subtitle=mc_sub)
+
+    # —— 句型页② 分级 + 时态自适应（保底 ≥3 题）——
+    def _present_fill_page():
+        sf, _bk = _present_fill_items(outline, max_n=4)
+        if len(sf) < 3:
+            xf, _ = _tense_fill_items(outline, max_n=4)
+            sf = (sf + xf)[:4]
+        _build_p2_fill(new_page(), brand_rgb, sf, [], images, title="Sentences",
+                       subtitle="Write the correct form of the verb to complete each sentence.")
+
+    if band == "l02":
+        unsc = _unscramble_items(_story_sentences_for_grammar(outline), max_n=6)
+        if len(unsc) >= 3:
+            _build_prompt_line_page(new_page(), brand_rgb, unsc, "Sentences",
+                                    "Put the words in order to make a sentence.",
+                                    prompt_key="scrambled")
+        elif tense == "present":
+            _present_fill_page()
+        else:
+            sf, _ = _tense_fill_items(outline, max_n=4)
+            _build_p2_fill(new_page(), brand_rgb, sf, [], images, title="Sentences",
+                           subtitle="Write the correct verb to complete each sentence.")
+    elif tense == "present":
+        # 现在时为主：l34/l56 第 2 句型页统一用现在时填空（学什么考什么）
+        _present_fill_page()
+    elif band == "l56":
+        rw = _rewrite_items(outline, max_n=6)
+        if len(rw) >= 3:
+            _build_prompt_line_page(
+                new_page(), brand_rgb, rw, "Sentences",
+                "Rewrite each sentence in the past tense.",
+                prompt_key="prompt",
+                example="I walk to school.  →  I walked to school.",
+            )
+        else:
+            sf, _ = _tense_fill_items(outline, max_n=4)
+            _build_p2_fill(new_page(), brand_rgb, sf, [], images, title="Sentences",
+                           subtitle="Write the correct past tense of each verb in brackets.")
+    else:  # l34（过去式为主）→ 写动词过去式
+        sent_fills, sent_bank = _tense_fill_items(outline, max_n=4)
+        if not sent_fills:
+            sent_fills, sent_bank = _sentence_fill_items(outline, max_n=4)
+        _build_p2_fill(
+            new_page(), brand_rgb, sent_fills, [], images,
+            title="Sentences",
+            subtitle="Write the correct past tense of each verb in brackets.",
+        )
 
     # ===== 阅读 / 思维导图 / 写作 =====
     # 阅读理解题优先用专用 _reading_questions（mc/tf/short），否则兜底旧 reading_mcs。
@@ -495,27 +889,73 @@ def build_worksheet(
              "correct": m.get("correct", 0)}
             for m in (data.get("reading_mcs") or []) if m.get("q")
         ]
+    # 保底填满（用户拍板 2026-06-06）：worksheet 阅读题不足 3 题时，用 RR 阅读表达题
+    # （AI 已生成、内容正确、紧扣原文）补齐到 4 题，杜绝阅读页"只有两题、下半页空白"。
+    _valid = [q for q in rq if q.get("q")]
+    if len(_valid) < 4:
+        seen_q = {(q.get("q") or "").strip().lower() for q in _valid}
+        for rrq in (getattr(outline, "_rr_questions", []) or []):
+            if len(_valid) >= 4:
+                break
+            text = (rrq.get("q") or rrq.get("question") or "").strip()
+            if not text or text.lower() in seen_q:
+                continue
+            seen_q.add(text.lower())
+            item = {"kind": "short", "q": text,
+                    "answer": rrq.get("answer", ""), "page": rrq.get("page")}
+            rq.append(item)
+            _valid.append(item)
 
     # 所有级别统一 6 页：2 词汇 + 2 句型 + 2 阅读（两页标题都叫 Reading）。
     # 第 2 张 Reading 页内容按 second_reading_mode（auto=按级别）：
     #   reading 阅读延伸 / mindmap 思维导图(SWBST) / writing 写作脚手架 / pbl 迷你项目
+    # 同页题型统一：整套阅读题先归一为"全选择"或"全判断"，两页同质、不混排。
+    rq_uni, rq_kind = _unify_reading_questions(rq)
+    sub_uni = _reading_subtitle(rq_kind)
+
+    # 用户拍板（2026-06-06）：L3-L6 都在 Reading 页印完整原文（原文在上 + 题目下方两列横竖对齐）；
+    # L5/6 锁定 4 题(2左2右)，L3/4 可放 4-5 题(左多右少，铺满整页)；答案在上方原文，不再标 (P#)。
+    # L0-2 仍不配原文（按常规排，靠 (P#) 回看绘本）。
+    show_passage = lvl_n >= 3
+
     mode = _resolve_second_reading_mode(second_reading_mode, lvl_n)
     if mode == "reading":
-        mc_first = [q for q in rq if q.get("kind") == "mc"]
-        rest = [q for q in rq if q.get("kind") != "mc"]
-        ordered = mc_first + rest
+        ordered = rq_uni
         half = max(4, (len(ordered) + 1) // 2)
         page1_q, page2_q = ordered[:half], ordered[half:]
         _build_reading_page(new_page(), brand_rgb, reading_text, page1_q,
-                            subtitle="Choose the correct answer for each question.", start_no=1)
+                            subtitle=sub_uni, start_no=1, show_passage=show_passage)
         _build_reading_page(new_page(), brand_rgb, reading_text, page2_q,
-                            subtitle="Read the passage and answer the questions.",
-                            start_no=len(page1_q) + 1)
+                            subtitle=sub_uni, start_no=len(page1_q) + 1, show_passage=show_passage)
     else:
-        _build_reading_page(new_page(), brand_rgb, reading_text, rq[:6],
-                            subtitle="Read and answer the questions.", start_no=1)
+        # 横版阅读页（用户拍板 2026-06-06）：①同页题型必须统一（全选择 or 全判断，绝不混排）；
+        # ②锁定 4 题（2×2 行对齐：左右各 2，横向两题对齐、纵向两题对齐）。先用归一后的同质题；
+        # 不足 4 时只补【同种】，杜绝混入异类。若归一是 mixed（任何单一题型都 <3），则改取池中
+        # 数量最多的单一题型，保证整页统一。
+        q_cap = 4
+        if rq_kind in ("mc", "tf"):
+            first_q = list(rq_uni[:q_cap])
+            if len(first_q) < 4:
+                for q in rq:
+                    if len(first_q) >= 4:
+                        break
+                    if q.get("q") and q.get("kind") == rq_kind and q not in first_q:
+                        first_q.append(q)
+        else:
+            by_kind: dict[str, list[dict]] = {}
+            for q in rq:
+                if q.get("q"):
+                    by_kind.setdefault(q.get("kind", "mc"), []).append(q)
+            best_k = max(("mc", "tf", "short"), key=lambda k: len(by_kind.get(k, [])))
+            first_q = by_kind.get(best_k, [])[:q_cap]
+            sub_uni = _reading_subtitle(best_k if best_k in ("mc", "tf") else "mixed")
+        _build_reading_page(new_page(), brand_rgb, reading_text, first_q,
+                            subtitle=sub_uni, start_no=1, show_passage=show_passage)
         if mode == "writing":
             _build_p5_writing(new_page(), brand_rgb, data["writing"], title="Reading")
+        elif mode == "writing_official":
+            # 官方 L4-13 风格：页面大标题 = Writing（写作脚手架 + 书写区）
+            _build_p5_writing(new_page(), brand_rgb, data["writing"], title="Writing")
         elif mode == "pbl":
             _build_pbl_page(new_page(), brand_rgb, data, outline, title="Reading")
         else:  # mindmap
@@ -527,9 +967,29 @@ def build_worksheet(
         for sld in list(sld_lst)[:n_template]:
             sld_lst.remove(sld)
 
+    # 全局收尾：锁死所有方格(自选图形)的 auto_size → 禁止随文字缩放，
+    # 保证所有级别、所有页的方格严格等大、排版统一（用户硬要求 2026-06-04）。
+    _lock_box_autosize(prs)
+
     out_path.parent.mkdir(parents=True, exist_ok=True)
     prs.save(str(out_path))
     return out_path
+
+
+def _lock_box_autosize(prs) -> None:
+    """把所有 slide 上【自选图形方格】的文本框 auto_size 设为 NONE。
+
+    渲染器(PowerPoint/LibreOffice)默认会让自选图形“随文字自适应大小”，导致同一组
+    方格因文字长短被撑成不同尺寸。锁成 NONE 后方格尺寸完全由代码控制 → 整齐统一。
+    仅作用于 AUTO_SHAPE（方格/卡片），不影响流式文本框。"""
+    from pptx.enum.shapes import MSO_SHAPE_TYPE
+    for slide in prs.slides:
+        for sh in slide.shapes:
+            try:
+                if sh.shape_type == MSO_SHAPE_TYPE.AUTO_SHAPE and sh.has_text_frame:
+                    sh.text_frame.auto_size = MSO_AUTO_SIZE.NONE
+            except Exception:
+                pass
 
 
 def attach_worksheet_questions(
@@ -542,7 +1002,12 @@ def attach_worksheet_questions(
       - list[dict]（AI 抽出来的 6 道题 list，每条 {type, items, ...}）→ 自动跑 adapter
 
     v2.0: 加 reading_q_count 参数（4/6/8），控制 Reading MC 页题量。
+    v6: 修「写死 4 与 L5-6 规格冲突」——L5/6 有两张 Reading 页（每页 4 题，共 8），
+        故 L5/6 至少需要 8 题；这里按 level 自动抬高下限，避免第二张 Reading 页内容空/薄。
     """
+    lvl_n = _level_num(getattr(outline, "level", "") or "")
+    if lvl_n >= 5:
+        reading_q_count = max(reading_q_count, 8)
     if isinstance(data, list):
         # 原始 6 题（含 title/instruction/answer_key）也存一份，供 Teacher Guide 同源取 Answer Key
         setattr(outline, "_worksheet_questions", data)
@@ -684,8 +1149,29 @@ def _questions_list_to_template_data(qlist: list[dict], outline: BookOutline) ->
                         })
 
         elif qtype in ("word_order", "word_order_simple", "story_sequence"):
-            # 当 sentence_mcs（按 order 排）— 不太贴合，跳过
-            pass
+            # v6：不再丢弃——落进 fill_blanks 槽位（版式不变），呈现为"按顺序编号"的排序题。
+            # 兼容多种字段：{text/event/sentence, order} 或纯字符串。
+            if not out["fill_blanks"]:
+                seq = []
+                for it in items:
+                    txt = it.get("text") or it.get("event") or it.get("sentence") or it.get("_str", "")
+                    if not txt:
+                        continue
+                    try:
+                        order = int(it.get("order")) if it.get("order") is not None else None
+                    except (TypeError, ValueError):
+                        order = None
+                    seq.append((order, txt))
+                # 有 order 的按 order 给答案；缺 order 的按出现顺序兜底编号
+                ordered = [t for t in seq if t[0] is not None]
+                ordered.sort(key=lambda t: t[0])
+                answer_map = {txt: i + 1 for i, (_, txt) in enumerate(ordered)} if ordered \
+                    else {txt: i + 1 for i, (_, txt) in enumerate(seq)}
+                for _, txt in seq[:5]:
+                    out["fill_blanks"].append({
+                        "sentence": f"___  {txt}",
+                        "answer": str(answer_map.get(txt, "")),
+                    })
 
         elif qtype in ("rewrite_tense", "rewrite_voice"):
             if not out["fill_blanks"]:
@@ -918,18 +1404,28 @@ def _add_title(slide, title: str, subtitle: str) -> None:
     r.font.size = Pt(TITLE_PT)
     r.font.color.rgb = TITLE_RGB
 
-    # Subtitle
+    # Subtitle —— 自动缩字号保证【一行】，避免长指令换行压到下方内容框
+    sub_pt = float(SUBTITLE_PT)
+    sub_w = CONTENT_W - 0.40
+    for cand in (20.0, 18.0, 16.0, 15.0, 14.0):
+        cpl = max(10, int(sub_w / (cand / 72.0 * 0.50)))
+        if len(subtitle or "") <= cpl:
+            sub_pt = cand
+            break
+    else:
+        sub_pt = 14.0
     sb = slide.shapes.add_textbox(
-        Inches(CONTENT_X), Inches(CONTENT_Y + 0.78),
-        Inches(CONTENT_W), Inches(0.30),
+        Inches(CONTENT_X), Inches(CONTENT_Y + 0.80),
+        Inches(CONTENT_W), Inches(0.34),
     )
     sb.text_frame.margin_left = sb.text_frame.margin_right = 0
+    sb.text_frame.word_wrap = False
     p2 = sb.text_frame.paragraphs[0]
     p2.alignment = PP_ALIGN.CENTER
     r2 = p2.add_run()
     r2.text = subtitle
     r2.font.name = FONT
-    r2.font.size = Pt(SUBTITLE_PT)
+    r2.font.size = Pt(sub_pt)
     r2.font.color.rgb = SUB_RGB
 
 
@@ -963,7 +1459,7 @@ def _build_p1_match(slide, brand_rgb: tuple, pairs: list[dict], images: list[Pat
     """
     _add_title(slide, "Vocabulary", _get_subtitle("vocab_match_definition", "Match the words to their definitions."))
 
-    n = min(len(pairs), 5)
+    n = min(len(pairs), 6)
     if n == 0:
         return
 
@@ -982,10 +1478,23 @@ def _build_p1_match(slide, brand_rgb: tuple, pairs: list[dict], images: list[Pat
     word_w = 1.85
     def_x = word_x + word_w + 0.30
     def_w = CONTENT_W - (def_x - CONTENT_X) - 0.40
-    row_gap = 0.20
+    row_gap = 0.18
     row_h = (area_h - row_gap * (n - 1)) / n
     word_pt = 15
-    def_pt = 13
+
+    # 统一字号：让【最长定义】在固定行高内放得下 → 所有方格同尺寸、同字号、排版整齐
+    _defs = [
+        str((pairs[def_render_order[i]] if def_render_order[i] < len(pairs)
+             else pairs[i]).get("def", ""))
+        for i in range(n)
+    ]
+    def_pt = 10
+    for cand in (13, 12, 11, 10):
+        lh = cand / 72.0 * 1.16
+        max_lines = max((_est_lines(d, def_w - 0.30, cand) for d in _defs), default=1)
+        if max_lines * lh <= row_h - 0.14:
+            def_pt = cand
+            break
 
     for i, pair in enumerate(pairs[:n]):
         y = area_top + i * (row_h + row_gap)
@@ -1028,7 +1537,10 @@ def _build_p1_match(slide, brand_rgb: tuple, pairs: list[dict], images: list[Pat
         wc.shadow.inherit = False
         tf = wc.text_frame
         tf.margin_left = tf.margin_right = Inches(0.1)
+        tf.margin_top = tf.margin_bottom = Inches(0.02)
         tf.vertical_anchor = MSO_ANCHOR.MIDDLE
+        tf.word_wrap = True
+        tf.auto_size = MSO_AUTO_SIZE.NONE   # 锁死方格尺寸，禁止随文字缩放（保证等大）
         p = tf.paragraphs[0]
         p.alignment = PP_ALIGN.CENTER
         r = p.add_run()
@@ -1051,8 +1563,10 @@ def _build_p1_match(slide, brand_rgb: tuple, pairs: list[dict], images: list[Pat
         dc.shadow.inherit = False
         tf = dc.text_frame
         tf.margin_left = tf.margin_right = Inches(0.15)
+        tf.margin_top = tf.margin_bottom = Inches(0.04)
         tf.vertical_anchor = MSO_ANCHOR.MIDDLE
         tf.word_wrap = True
+        tf.auto_size = MSO_AUTO_SIZE.NONE   # 锁死方格尺寸，禁止随文字缩放（保证等大）
         p = tf.paragraphs[0]
         p.alignment = PP_ALIGN.LEFT  # v1.8: 定义文本左对齐更易读
         r = p.add_run()
@@ -1109,8 +1623,8 @@ def _build_p2_fill(slide, brand_rgb: tuple, fills: list[dict], word_bank: list[s
         r.font.color.rgb = WHITE
         r.font.bold = False
 
-    # 填空题（垂直排列）
-    n = min(len(fills), 5)
+    # 填空题（垂直排列）—— 最多 6 题（用户：4-6 题，保持整洁）
+    n = min(len(fills), 6)
     if n == 0:
         return
     # 有词库 → 题目区从词库下方开始；无词库（如"写出动词过去式"页）→ 紧贴标题下方，
@@ -1118,25 +1632,64 @@ def _build_p2_fill(slide, brand_rgb: tuple, fills: list[dict], word_bank: list[s
     qa_top = (bank_top + bank_h + 0.45) if has_bank else (CONTENT_Y + 1.30)
     qa_bottom = CONTENT_Y + CONTENT_H - 0.30
     qa_h = qa_bottom - qa_top
-    row_h = qa_h / n
-    # 无词库时字号略大、每题下方补一条作答横线，把版面填得均衡好看
+    box_w = CONTENT_W - 1.60
+    # 无词库时字号略大，把版面填得均衡好看
     fill_pt = BODY_PT if has_bank else (BODY_PT + 2)
 
-    for i, qa in enumerate(fills[:n]):
-        y = qa_top + i * row_h
-        tb = slide.shapes.add_textbox(
-            Inches(CONTENT_X + 0.80), Inches(y),
-            Inches(CONTENT_W - 1.60), Inches(row_h),
-        )
+    items = [
+        f"{i + 1}.  {capitalize_names(_ensure_blank(str(qa.get('sentence', ''))))}"
+        for i, qa in enumerate(fills[:n])
+    ]
+    # B1：按单题实际换行数自适应每题高度；B4：题间统一间距、整体垂直居中。
+    # gap_max 放宽到 1.1"：题少（3-4 题）时也把版面铺满，避免上下大片留白（用户拍板 2026-06-06）。
+    _flow_lines(slide, items, qa_top, qa_h, CONTENT_X + 0.80, box_w, fill_pt,
+                gap_min=0.18, gap_max=1.1)
+
+
+def _est_lines(text: str, box_w_in: float, font_pt: float) -> int:
+    """估算一段文本在给定宽度/字号下的换行行数（保守略多估，避免重叠）。"""
+    cpl = max(8, int(box_w_in / (font_pt / 72.0 * 0.52)))
+    n = 1
+    for seg in str(text).split("\n"):
+        n += max(0, -(-len(seg) // cpl) - 1) if seg else 0
+    return max(1, n)
+
+
+def _flow_lines(slide, items: list[str], area_top: float, area_h: float,
+                x_in: float, box_w: float, font_pt: float,
+                *, gap_min: float = 0.18, gap_max: float = 0.55,
+                color: RGBColor = BLACK) -> None:
+    """流式排版一组题干：每题高度随实际行数自适应，题间统一间距，整体垂直居中。
+
+    解决"按行号均分 + 居中"导致的单/双行题间距忽大忽小、换行题被下一题挤压的问题。
+    """
+    if not items:
+        return
+    line_h = font_pt / 72.0 * 1.20
+    pad = 0.06
+    heights = [_est_lines(t, box_w, font_pt) * line_h + pad for t in items]
+    total_content = sum(heights)
+    n = len(items)
+    # 统一题间距 = 剩余空间均分，夹在 [gap_min, gap_max]
+    slack = area_h - total_content
+    gap = slack / (n + 1) if n > 0 else 0
+    gap = max(gap_min, min(gap_max, gap))
+    block_h = total_content + gap * (n - 1)
+    # 整体垂直居中（剩余空间不足时从顶部开始）
+    y = area_top + max(0.0, (area_h - block_h) / 2.0)
+
+    for text, h in zip(items, heights):
+        tb = slide.shapes.add_textbox(Inches(x_in), Inches(y), Inches(box_w), Inches(h))
         tf = tb.text_frame
         tf.margin_left = tf.margin_right = Inches(0.05)
-        tf.vertical_anchor = MSO_ANCHOR.MIDDLE
+        tf.margin_top = tf.margin_bottom = Inches(0.0)
+        tf.vertical_anchor = MSO_ANCHOR.TOP
         tf.word_wrap = True
         p = tf.paragraphs[0]
         p.alignment = PP_ALIGN.LEFT
-        p.line_spacing = 1.15
-        sentence = capitalize_names(_ensure_blank(str(qa.get("sentence", ""))))
-        _emit_with_underscore_lock(p, f"{i + 1}.  {sentence}", fill_pt, BLACK)
+        p.line_spacing = 1.12
+        _emit_with_underscore_lock(p, text, font_pt, color)
+        y += h + gap
 
 
 def _ensure_blank(text: str) -> str:
@@ -1176,19 +1729,37 @@ def _emit_with_underscore_lock(paragraph, text: str, size_pt: int, color: RGBCol
         r.font.color.rgb = color
 
 
+def _draw_writing_line(slide, x_in: float, y_in: float, w_in: float,
+                       color: RGBColor = LIGHT_GRAY, weight_pt: float = 1.2) -> None:
+    """画一条整宽作答横线（用直线连接符，比下划线字符更整齐、长度精准）。"""
+    ln = slide.shapes.add_connector(
+        MSO_CONNECTOR.STRAIGHT,
+        Inches(x_in), Inches(y_in), Inches(x_in + w_in), Inches(y_in),
+    )
+    ln.line.color.rgb = color
+    ln.line.width = Pt(weight_pt)
+    try:
+        ln.shadow.inherit = False
+    except Exception:
+        pass
+
+
 # ============================================================
 #  Page 3 — Sentence MC (二选一 + 绘本配图)
 # ============================================================
 
 def _build_p3_sentence(slide, brand_rgb: tuple, mcs: list[dict], images: list[Path],
-                       show_images: bool = True) -> None:
+                       show_images: bool = True, *,
+                       subtitle: str = "Tick (\u2713) the sentence that uses the correct past tense.") -> None:
     """4 题二选一，每题左侧绘本图 + 右侧 A/B 选项 + 行首圆圈题号。
 
     show_images=False → 不配图（选项满宽展开），供老师在「配图来源」选『不配图』时使用。
+    subtitle → 按考点（过去式/主谓一致…）覆盖副标题。
     """
-    _add_title(slide, "Sentence", "Tick (\u2713) the sentence that uses the correct past tense.")
+    _add_title(slide, "Sentences", subtitle)
 
-    n = min(len(mcs), 4)
+    # 带图每行占位多 → 最多 4 题；不配图 → 选项满宽，可放 5 题（用户：句型要多一点但保持整洁）
+    n = min(len(mcs), 4 if show_images else 5)
     if n == 0:
         return
 
@@ -1441,158 +2012,375 @@ def _build_p4_reading(slide, brand_rgb: tuple, text: str, mcs: list[dict]) -> No
             ro.font.color.rgb = BLACK
 
 
+def _build_word_fill_page(slide, brand_rgb: tuple, items: list[dict],
+                          title: str, subtitle: str) -> None:
+    """Word Fill 版式：每题 = 释义提示行 + 下方"掩码 + 作答空"。
+    L0-2 用首字母掩码，L5-6 用词尾掩码（构词）。"""
+    _add_title(slide, title, subtitle)
+    n = min(len(items), 6)
+    if n == 0:
+        return
+    area_top = CONTENT_Y + 1.30
+    area_bottom = CONTENT_Y + CONTENT_H - 0.46   # 留足底部页脚间距
+    avail = area_bottom - area_top
+    box_w = CONTENT_W - 1.60
+    clues = [f"{i + 1}.  {capitalize_names(str(it.get('clue', '')))}" for i, it in enumerate(items[:n])]
+
+    # 自适应字号：题少时放大、间距加宽 → 把版面填满、排版均衡（不再底部大片留白）
+    def _hs(pt: float):
+        lh = pt / 72.0 * 1.18
+        return [(_est_lines(c, box_w, pt) + 1) * lh + 0.12 for c in clues]
+
+    body_pt = float(BODY_PT)
+    for cand in (BODY_PT + 4, BODY_PT + 2, BODY_PT, BODY_PT - 1):
+        if sum(_hs(float(cand))) + 0.20 * (n - 1) <= avail:
+            body_pt = float(cand)
+            break
+    heights = _hs(body_pt)
+    total = sum(heights)
+    gap = max(0.20, min(1.10, (avail - total) / (n + 1)))
+    y = area_top + max(0.0, (avail - (total + gap * (n - 1))) / 2.0)
+    for it, clue, h in zip(items[:n], clues, heights):
+        tb = slide.shapes.add_textbox(
+            Inches(CONTENT_X + 0.80), Inches(y), Inches(box_w), Inches(h),
+        )
+        tf = tb.text_frame
+        tf.margin_left = tf.margin_right = 0
+        tf.margin_top = tf.margin_bottom = 0
+        tf.vertical_anchor = MSO_ANCHOR.TOP
+        tf.word_wrap = True
+        p = tf.paragraphs[0]
+        p.alignment = PP_ALIGN.LEFT
+        p.line_spacing = 1.14
+        r = p.add_run()
+        r.text = clue
+        r.font.name = FONT
+        r.font.size = Pt(body_pt)
+        r.font.color.rgb = BLACK
+        p2 = tf.add_paragraph()
+        p2.alignment = PP_ALIGN.LEFT
+        p2.line_spacing = 1.14
+        _emit_with_underscore_lock(p2, f"      {it.get('hint', '')}", body_pt + 1, BLACK)
+        y += h + gap
+
+
+def _build_prompt_line_page(slide, brand_rgb: tuple, items: list[dict],
+                            title: str, subtitle: str, *,
+                            prompt_key: str, example: Optional[str] = None) -> None:
+    """连词成句 / 句子改写 版式：每题 = 提示句 + 一条【整宽】作答横线。
+
+    用户拍板（2026-06-04）：
+      • 作答横线必须和题目一样长（整条内容宽）、尽量多留书写空间；
+      • 所有题（含第 6 题）必须落在白底内、绝不被页脚遮挡 → 字号/题距自适应。
+    """
+    _add_title(slide, title, subtitle)
+    n = min(len(items), 6)
+    if n == 0:
+        return
+    area_top = CONTENT_Y + 1.28
+    x = CONTENT_X + 0.62
+    box_w = CONTENT_W - 1.24            # 题目 + 横线统一宽度（更宽 → 书写空间更大）
+    if example:
+        eb = slide.shapes.add_textbox(
+            Inches(x), Inches(area_top), Inches(box_w), Inches(0.34),
+        )
+        ep = eb.text_frame.paragraphs[0]
+        ep.alignment = PP_ALIGN.LEFT
+        er = ep.add_run()
+        er.text = f"e.g.  {example}"
+        er.font.name = FONT
+        er.font.italic = True
+        er.font.size = Pt(13)
+        er.font.color.rgb = SUB_RGB
+        area_top += 0.40
+    area_bottom = CONTENT_Y + CONTENT_H - 0.40   # 给页脚留足，杜绝遮挡
+    avail = area_bottom - area_top
+    prompts = [f"{i + 1}.  {capitalize_names(str(it.get(prompt_key, '')))}"
+               for i, it in enumerate(items[:n])]
+
+    # —— 对齐官方模板（L4-13 Sentences 页）：每题一个等高「题槽」slot —— 
+    #   题干在 slot 顶部，作答横线落在 slot 下部 → 题干与横线之间留出充足书写区，
+    #   学生就写在横线上方/横线上（用户拍板 2026-06-04：要给学生书写空间）。
+    #   字号尽量大（官方 20pt），但保证每题最多 2 行且书写区不小于 0.34in。
+    def _max_qlines(pt: float) -> int:
+        return max(_est_lines(pr, box_w, pt) for pr in prompts)
+
+    WRITE_MIN = 0.36       # 题干底 → 横线 的最小书写空间
+    pt = 14.0
+    for cand in (20.0, 18.0, 16.0, 15.0, 14.0):
+        lh = cand / 72.0 * 1.16
+        slot_need = _max_qlines(cand) * lh + WRITE_MIN + 0.14
+        if slot_need * n <= avail:
+            pt = cand
+            break
+    lh = pt / 72.0 * 1.16
+    slot_h = avail / n
+    for i, prompt in enumerate(prompts):
+        y_q = area_top + i * slot_h
+        plines = _est_lines(prompt, box_w, pt)
+        q_h = plines * lh
+        tb = slide.shapes.add_textbox(
+            Inches(x), Inches(y_q), Inches(box_w), Inches(q_h),
+        )
+        tf = tb.text_frame
+        tf.margin_left = tf.margin_right = 0
+        tf.margin_top = tf.margin_bottom = 0
+        tf.vertical_anchor = MSO_ANCHOR.TOP
+        tf.word_wrap = True
+        p = tf.paragraphs[0]
+        p.alignment = PP_ALIGN.LEFT
+        p.line_spacing = 1.14
+        r = p.add_run()
+        r.text = prompt
+        r.font.name = FONT
+        r.font.size = Pt(pt)
+        r.font.color.rgb = BLACK
+        # 作答横线：落在题槽下部，与题干之间留足书写区（≥ WRITE_MIN）
+        q_bottom = y_q + q_h
+        line_y = y_q + slot_h - 0.20
+        line_y = max(line_y, q_bottom + WRITE_MIN)
+        line_y = min(line_y, y_q + slot_h - 0.10)
+        _draw_writing_line(slide, x, line_y, box_w)
+
+
+def _set_indent(paragraph, inches: float) -> None:
+    """给段落设置固定左缩进（marL，EMU）+ indent=0 → 整段悬挂缩进。
+
+    用固定英寸值而非空格前缀，保证 A/B/C 选项首字符严格落在同一条垂直线上，
+    且换行后的续行也对齐（杜绝参差不齐）。"""
+    pPr = paragraph._p.get_or_add_pPr()
+    pPr.set("marL", str(int(inches * 914400)))
+    pPr.set("indent", "0")
+
+
 def _build_reading_page(
     slide, brand_rgb: tuple, text: str, questions: list[dict],
     *, subtitle: str = "Choose the correct answer for each question.",
-    start_no: int = 1,
+    start_no: int = 1, show_passage: bool = True,
 ) -> None:
-    """阅读页 v2.1：大标题 Reading + 灰副标题 + 完整原文框 + 原文下方【垂直列表】题目。
+    """阅读页 v2.2：大标题 Reading + 灰副标题 +（可选）完整原文框 + 题目（左右两列对称）。
+
+    show_passage：
+      • True（L5/6）：顶部印完整原文框，下方 4 题 2 左 2 右对称。
+      • False（其他级别）：不印原文（常规排），题目用 (P#) 提示回看绘本，占满整页更舒展。
     题目 kind 支持 mc / tf / short，禁止网格卡片。题号从 start_no 起。"""
+    # 不印原文时，副标题里的 "Read the passage..." 不再适用 → 换成回看绘本的指引
+    if not show_passage and subtitle.strip().lower().startswith("read the passage"):
+        if "true" in subtitle.lower() or "(true)" in subtitle.lower():
+            subtitle = "Look back at the book. Write T (true) or F (false) for each statement."
+        else:
+            subtitle = "Look back at the book. Choose the correct answer for each question."
     _add_title(slide, "Reading", subtitle)
 
     text = (text or "").strip()
-    tlen = len(text)
-    if tlen > 780:
-        read_pt, read_ls = 10.5, 1.12
-    elif tlen > 560:
-        read_pt, read_ls = 11.5, 1.15
-    elif tlen > 380:
-        read_pt, read_ls = 12.5, 1.20
-    else:
-        read_pt, read_ls = float(READING_PT), 1.25
 
-    text_top = CONTENT_Y + 1.35
-    text_h = 1.95
-    text_box = slide.shapes.add_shape(
-        MSO_SHAPE.ROUNDED_RECTANGLE,
-        Inches(CONTENT_X + 0.40), Inches(text_top),
-        Inches(CONTENT_W - 0.80), Inches(text_h),
-    )
-    text_box.adjustments[0] = 0.03
-    text_box.fill.solid()
-    text_box.fill.fore_color.rgb = WHITE
-    text_box.line.color.rgb = READ_BORDER
-    text_box.line.width = Pt(1.5)
-    text_box.shadow.inherit = False
-    tf = text_box.text_frame
-    tf.margin_left = tf.margin_right = Inches(0.20)
-    tf.margin_top = Inches(0.08)
-    tf.margin_bottom = Inches(0.06)
-    tf.word_wrap = True
-    p = tf.paragraphs[0]
-    p.alignment = PP_ALIGN.LEFT
-    r = p.add_run()
-    r.text = text
-    r.font.name = FONT
-    r.font.size = Pt(read_pt)
-    r.font.color.rgb = BLACK
-    p.line_spacing = read_ls
+    if show_passage:
+        tlen = len(text)
+        if tlen > 780:
+            read_pt, read_ls = 10.5, 1.12
+        elif tlen > 560:
+            read_pt, read_ls = 11.5, 1.15
+        elif tlen > 380:
+            read_pt, read_ls = 12.5, 1.20
+        else:
+            read_pt, read_ls = float(READING_PT), 1.25
+
+        text_top = CONTENT_Y + 1.35
+        # 自适应正文框高：短文压缩，给下方题目（含 P#/Hint）腾出空间，避免裁题。
+        import math as _mh
+        _cpl_passage = max(40, int(94 * (12.5 / read_pt)))
+        _passage_lines = max(1, _mh.ceil(tlen / _cpl_passage))
+        text_h = min(2.4, max(1.0, _passage_lines * (read_pt / 72.0 * read_ls) + 0.30))
+        text_box = slide.shapes.add_shape(
+            MSO_SHAPE.ROUNDED_RECTANGLE,
+            Inches(CONTENT_X + 0.40), Inches(text_top),
+            Inches(CONTENT_W - 0.80), Inches(text_h),
+        )
+        text_box.adjustments[0] = 0.03
+        text_box.fill.solid()
+        text_box.fill.fore_color.rgb = WHITE
+        # 边框跟随级别品牌色（用户硬要求 2026-06-06）：L5 粉、L4 蓝绿…与模板统一，不再固定红框。
+        text_box.line.color.rgb = RGBColor(*brand_rgb)
+        text_box.line.width = Pt(1.5)
+        text_box.shadow.inherit = False
+        tf = text_box.text_frame
+        tf.margin_left = tf.margin_right = Inches(0.20)
+        tf.margin_top = Inches(0.08)
+        tf.margin_bottom = Inches(0.06)
+        tf.word_wrap = True
+        p = tf.paragraphs[0]
+        p.alignment = PP_ALIGN.LEFT
+        r = p.add_run()
+        r.text = text
+        r.font.name = FONT
+        r.font.size = Pt(read_pt)
+        r.font.color.rgb = BLACK
+        p.line_spacing = read_ls
+        list_top = text_top + text_h + 0.18
+    else:
+        # 不印原文：题目从标题下方直接开始，占满整页
+        list_top = CONTENT_Y + 1.35
 
     qs = [q for q in (questions or []) if q.get("q")]
     if not qs:
         return
 
-    list_top = text_top + text_h + 0.18
-    list_bottom = CONTENT_Y + CONTENT_H - 0.25
+    list_bottom = CONTENT_Y + CONTENT_H - 0.18  # 贴近白卡底边，让题目区竖向铺满
     avail_h = list_bottom - list_top
 
-    # 估算每题"行数"——含自动换行（按字符数 / 每行容量），避免长题干换行后压到下一题
-    box_w_in = CONTENT_W - 1.10
-    # 用保守（偏小）的每行容量，宁可多留白也不压字重叠
-    cpl_stem = 72
-    cpl_opt = 66
+    # 布局（用户拍板 2026-06-04/05/06）：横版 worksheet 阅读页【左右两列】，横竖对齐。
+    # 偶数题左右等分（2+2 完全对称）；奇数题左列多一题（如 3 左 2 右，对齐官方参考样式），
+    # 杜绝"左满右空"。印原文页（L3-6）答案在上方原文里，题目不再标 (P#)/Hint。
+    n = len(qs)
+    two_col = n >= 2
+    gutter = 0.45
+    if two_col:
+        mid = (n + 1) // 2                 # 左列取上整：偶数→等分；奇数→左多一题
+        col_qs = [qs[:mid], qs[mid:]]
+        col_w = (CONTENT_W - 1.10 - gutter) / 2.0
+        col_x = [CONTENT_X + 0.55, CONTENT_X + 0.55 + col_w + gutter]
+    else:
+        col_qs = [qs]
+        col_w = CONTENT_W - 1.10
+        col_x = [CONTENT_X + 0.55]
+
+    import math as _m2
+
+    # ============================================================
+    #  阅读页标准化排版（用户拍板 2026-06-06）：
+    #  ① 字号固定梯度：正文(read_pt) > 题干(stem_pt) > 选项(opt_pt)
+    #  ② 行对齐 + 等距平铺：左右栏同一行【题干顶端基线齐平】；
+    #     原文↔首行、行↔行、末行↔底栏 三段间距统一为同一模数 GAP
+    #  ③ 缩进统一：所有题干首字共用列左基线；A/B/C 选项用固定悬挂缩进 OPT_INDENT，
+    #     同栏选项首字符落在同一条垂直线上
+    # ============================================================
+    LS = 1.14                      # 全页统一行距
+    OPT_INDENT = 0.26              # 选项悬挂缩进（英寸，固定值 → A/B/C 对齐同一竖线）
+
+    def _cpl(width_in: float, pt: float, base: float = 6.8) -> int:
+        return max(8, int(base * width_in * (12.5 / pt)))
 
     def _wrap(text_len: int, cpl: int) -> int:
-        import math as _m
-        return max(1, _m.ceil(text_len / max(1, cpl)))
-
-    def _lines(q: dict) -> int:
-        kind = q.get("kind", "mc")
-        stem = str(q.get("q", ""))
-        nl = _wrap(len(stem), cpl_stem)
-        if kind == "mc":
-            for opt in (q.get("options") or [])[:3]:
-                nl += _wrap(len(f"    A. {opt}"), cpl_opt)
-        else:  # tf / short：题干 + 一行作答
-            nl += 1
-        return nl
-    # v2.2 防重叠：按"真实行高"选字号，并在放不下时裁掉末尾题目，
-    #   绝不让 per_line < 真实行高（那会导致每个文本框溢出、压到下一题造成叠字）。
-    GAP = 0.06          # 每题之间的固定间距（英寸）
-    SPACE_PER_Q = 0.05  # 段后留白折算
+        return max(1, _m2.ceil(text_len / max(1, cpl)))
 
     def _line_h(pt: float) -> float:
-        # 单行真实占高（含 1.05 行距与少量段距余量）
-        return pt / 72.0 * 1.05 + 0.035
+        return pt / 72.0 * LS + 0.028
 
-    def _fits(qs_sel: list[dict], pt: float) -> bool:
-        tl = sum(_lines(q) for q in qs_sel)
-        need = tl * _line_h(pt) + (len(qs_sel)) * (GAP + SPACE_PER_Q)
-        return need <= avail_h
+    def _opt_pt_of(sp: float) -> float:
+        return max(9.5, sp - 1.0)      # 选项比题干小 1pt（字号梯度）
 
-    # 依次尝试 14 / 12.5 / 11 pt，挑能把【全部题目】塞下的最大字号
-    q_pt = 11.0
-    for cand in (14.0, 12.5, 11.0):
-        if _fits(qs, cand):
-            q_pt = cand
-            break
-    else:
-        # 连 11pt 全题都塞不下 → 从末尾裁题，直到 11pt 能放下
-        while len(qs) > 3 and not _fits(qs, 11.0):
-            qs = qs[:-1]
-        q_pt = 11.0
+    def _stem_lines(q: dict, sp: float) -> int:
+        extra = 0 if show_passage else 7
+        return _wrap(len(str(q.get("q", ""))) + extra, _cpl(col_w, sp))
 
-    line_h = _line_h(q_pt)
-
-    y = list_top
-    x = CONTENT_X + 0.55
-    box_w = CONTENT_W - 1.10
-    for i, q in enumerate(qs):
+    def _opt_line_counts(q: dict, op: float) -> list:
+        cpl = _cpl(col_w - OPT_INDENT, op)
         kind = q.get("kind", "mc")
-        n_lines = _lines(q)
-        h = n_lines * line_h + SPACE_PER_Q
-        tb = slide.shapes.add_textbox(Inches(x), Inches(y), Inches(box_w), Inches(h))
+        if kind == "mc":
+            return [_wrap(len(f"{chr(65 + j)}. {o}"), cpl)
+                    for j, o in enumerate((q.get("options") or [])[:3])]
+        return [1]                      # tf / short：一行作答
+    SPACE_AFTER = 0.05                  # 题干↔选项、选项↔选项之间的细微段距（统一）
+
+    def _q_height(q: dict, sp: float) -> float:
+        op = _opt_pt_of(sp)
+        h = _stem_lines(q, sp) * _line_h(sp) + SPACE_AFTER
+        for n in _opt_line_counts(q, op):
+            h += n * _line_h(op) + SPACE_AFTER
+        if q.get("page") and not show_passage:
+            h += _line_h(op)            # Hint 行
+        return h
+
+    def _row_heights(sp: float) -> list:
+        n_left = len(col_qs[0])
+        n_right = len(col_qs[1]) if len(col_qs) > 1 else 0
+        rows = max(n_left, n_right)
+        rh = []
+        for r in range(rows):
+            hl = _q_height(col_qs[0][r], sp) if r < n_left else 0.0
+            hr = _q_height(col_qs[1][r], sp) if (len(col_qs) > 1 and r < n_right) else 0.0
+            rh.append(max(hl, hr))
+        return rh
+
+    def _fits(sp: float) -> bool:
+        rh = _row_heights(sp)
+        return sum(rh) + (len(rh) + 1) * 0.16 <= avail_h
+
+    # 题干字号：固定梯度 → 上限 = 正文 - 1（保证 正文 > 题干），向下自适应直到放得下
+    stem_cap = max(10.5, float(read_pt) - 1.0) if show_passage else 12.5
+    stem_pt = 10.0
+    cand = stem_cap
+    while cand >= 10.0:
+        if _fits(cand):
+            stem_pt = cand
+            break
+        cand -= 0.5
+    opt_pt = _opt_pt_of(stem_pt)
+
+    def _render_q(x: float, y: float, w: float, q: dict, qno: int) -> None:
+        kind = q.get("kind", "mc")
+        h = _q_height(q, stem_pt) + 0.05
+        tb = slide.shapes.add_textbox(Inches(x), Inches(y), Inches(w), Inches(h))
         tfb = tb.text_frame
+        tfb.vertical_anchor = MSO_ANCHOR.TOP        # 顶端对齐 → 左右栏同行题干基线齐平
         tfb.margin_left = tfb.margin_right = 0
         tfb.margin_top = tfb.margin_bottom = 0
         tfb.word_wrap = True
+
+        def _opt_para(text: str, *, font=FONT, pt=opt_pt, color=BLACK, italic=False):
+            """统一的选项/作答段：固定悬挂缩进 OPT_INDENT（marL/indent），A/B/C 首字对齐同一竖线。"""
+            po = tfb.add_paragraph()
+            po.alignment = PP_ALIGN.LEFT
+            po.line_spacing = LS
+            po.space_after = Pt(SPACE_AFTER * 72)
+            _set_indent(po, OPT_INDENT)
+            ro = po.add_run()
+            ro.text = text
+            ro.font.name = font
+            ro.font.size = Pt(pt)
+            ro.font.color.rgb = color
+            ro.font.italic = italic
+
+        page_no = None if show_passage else q.get("page")
         para = tfb.paragraphs[0]
         para.alignment = PP_ALIGN.LEFT
-        para.line_spacing = 1.05
-        para.space_after = Pt(2)
+        para.line_spacing = LS
+        para.space_after = Pt(SPACE_AFTER * 72)
+        stem_txt = f"{qno}. {q.get('q', '')}"
+        if page_no:
+            stem_txt += f"  (P{page_no})"
         run = para.add_run()
-        run.text = f"{start_no + i}. {q.get('q', '')}"
+        run.text = stem_txt
         run.font.name = FONT
-        run.font.size = Pt(q_pt)
+        run.font.size = Pt(stem_pt)          # 题干字号（< 正文）
         run.font.color.rgb = BLACK
         if kind == "mc":
             for j, opt in enumerate((q.get("options") or [])[:3]):
-                po = tfb.add_paragraph()
-                po.alignment = PP_ALIGN.LEFT
-                po.line_spacing = 1.05
-                po.space_after = Pt(1)
-                ro = po.add_run()
-                ro.text = f"    {chr(ord('A') + j)}. {opt}"
-                ro.font.name = FONT
-                ro.font.size = Pt(q_pt)
-                ro.font.color.rgb = BLACK
+                _opt_para(f"{chr(ord('A') + j)}. {opt}")
         elif kind == "tf":
-            po = tfb.add_paragraph()
-            po.alignment = PP_ALIGN.LEFT
-            ro = po.add_run()
-            ro.text = "    True  /  False"
-            ro.font.name = FONT
-            ro.font.size = Pt(q_pt)
-            ro.font.color.rgb = BLACK
-        else:  # short：留作答横线（Arial 显得清晰）
-            po = tfb.add_paragraph()
-            po.alignment = PP_ALIGN.LEFT
-            ro = po.add_run()
-            ro.text = "    " + "_" * 46
-            ro.font.name = FONT_BLANK
-            ro.font.size = Pt(q_pt)
-            ro.font.color.rgb = BLACK
-        y += h + GAP
+            _opt_para("Your answer (T / F): ____")
+        else:  # short
+            n_us = max(10, int((w - OPT_INDENT) / 0.12))
+            _opt_para("_" * n_us, font=FONT_BLANK)
+        if page_no:
+            _opt_para(f"Hint: read page {page_no} again.",
+                      pt=max(8.5, opt_pt - 1), color=SUB_RGB, italic=True)
+
+    # —— 等距平铺（用户硬要求）：三段间距统一为同一模数 GAP —— 
+    # GAP = (可用高 - 各行内容高之和) / (行数 + 1)；首行上边距 = 行间距 = 末行下边距 = GAP，
+    # 全页留白标准化；同时左右栏【同一行共用同一 y】→ 题干顶端基线齐平、横竖对齐。
+    n_left = len(col_qs[0])
+    n_right = len(col_qs[1]) if len(col_qs) > 1 else 0
+    rows = max(n_left, 1)
+    row_h = _row_heights(stem_pt)
+    gap = max(0.16, (avail_h - sum(row_h)) / (len(row_h) + 1))
+    y = list_top + gap
+    for r in range(len(row_h)):
+        if r < n_left:
+            _render_q(col_x[0], y, col_w, col_qs[0][r], start_no + r)
+        if len(col_qs) > 1 and r < n_right:
+            _render_q(col_x[1], y, col_w, col_qs[1][r], start_no + n_left + r)
+        y += row_h[r] + gap
 
 
 # ============================================================
@@ -1603,7 +2391,10 @@ def _build_p5_writing(slide, brand_rgb: tuple, writing: dict, title: str = "Read
     # 用户拍板：L4-6 第 2 阅读页 = 写作/PBL，但页面大标题仍叫 Reading（写作内嵌）
     # v2.2：写作任务必须【基于本文故事】（复述/分析），不再写空泛抽象题；
     #   副标题改成明确的复述指令，让孩子读完原文就知道怎么写。
-    subtitle = writing.get("subtitle") or "Read the story again, then retell it in your own words."
+    _default_sub = ("Plan with the chart, then write your own short story."
+                    if title == "Writing"
+                    else "Read the story again, then retell it in your own words.")
+    subtitle = writing.get("subtitle") or _default_sub
     _add_title(slide, title, subtitle)
 
     # 中部黄虚线框 = 5 步骨架
@@ -2094,11 +2885,11 @@ def _normalize_worksheet_data(data: dict) -> dict:
         definition = _fix_vocab_def(word, definition)
         if word:
             pairs.append({"word": word, "def": definition, "_len": len(word)})
-    # v2.0：题数上限改为 4（按官方模板，每页 3-4 题最佳）
+    # 用户拍板（2026-06-04）：词汇匹配要显示【全部】目标词（每级 4-6 个），上限 6。
     pairs.sort(key=lambda x: (x["_len"], x["word"]))
     for p in pairs:
         p.pop("_len", None)
-    out["match_pairs"] = pairs[:4]
+    out["match_pairs"] = pairs[:6]
 
     # 2) word_bank：小写美式
     out["word_bank"] = [format_word_answer(w) for w in (data.get("word_bank") or []) if w]

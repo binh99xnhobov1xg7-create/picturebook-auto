@@ -1,4 +1,4 @@
-﻿"""Reading Report DOCX 生成器 v2.1 — 严格 1 页 + 顶格 + 课堂参与度方框。
+"""Reading Report DOCX 生成器 v2.1 — 严格 1 页 + 顶格 + 课堂参与度方框。
 
 排版完全复刻 VIPKID 官方模板（Desktop/L0_Book92/L0_Book92 reading report.docx
 + Desktop/LX_BookXX reading report Sample.docx），并满足以下口径：
@@ -97,12 +97,12 @@ LOGO_PATH = config.BRAND_DIR / "dino_reading_logo.png"
 # 从大字号档位逐档下探，选第一个能整体落进一页预算的档位（字号/行距/行高/段后）。
 # 这样无论故事多长、题目多长、语法行多长，都能自动收进一页而不溢出。
 # ============================================================================
-def _plan_layout(outline) -> dict:
+def _plan_layout(outline, shrink_steps: int = 0) -> dict:
     PAGE_H = 16838           # 29.7cm A4 高 (twips)
     MARGINS = 1020           # 上下各 0.9cm
-    TITLE_BLOCK = 1050       # 标题行（含 logo）估高
-    NAME_LINE = 360          # 姓名/日期行
-    SAFETY = 420             # 安全余量（边框/取整误差）
+    TITLE_BLOCK = 1520       # 标题行（含 logo）估高；按长书名折成两行预留（防溢出第二页）
+    NAME_LINE = 380          # 姓名/日期行
+    SAFETY = 760             # 安全余量（边框/取整/渲染误差）→ 严格守住 1 页（用户硬要求）
     budget = PAGE_H - MARGINS - TITLE_BLOCK - NAME_LINE - SAFETY
 
     def cpl(pt: float) -> int:
@@ -118,13 +118,17 @@ def _plan_layout(outline) -> dict:
         for p in outline.pages
         if p.page_type == "story" and p.text and p.text.strip()
     ))
+    _cap = getattr(outline, "_rr_passage_char_cap", None)
+    if _cap and len(passage) > _cap:
+        passage = passage[:_cap]
     title = outline.title or ""
     p_chars = len(passage) + len(title) + 2
 
     qs = _resolve_rr_questions(outline)
     q_lens: list[int] = []
     for q in qs:
-        extra = 4 + (6 if q.get("page") is not None else 0)
+        # 序号"1. " + 句末"?" ≈ 4；(P#) ≈ 6；★ 星级 ≈ 4（保证一行不被星星挤换行）
+        extra = 4 + 4 + (6 if q.get("page") is not None else 0)
         q_lens.append(len((q.get("q") or "")) + extra)
 
     phon = (_normalize_morphology(outline.phonics, outline)
@@ -132,15 +136,24 @@ def _plan_layout(outline) -> dict:
             else _normalize_phonics(outline.phonics)) or ""
     vocab_ok = any(_vocab_words_for_rr(outline))
 
+    # 对齐人工模板（L5-1 5.27）：正文/难度/章节标题统一 12pt（标题 14pt 在别处），
+    # 行距适中、学生看着舒服。再往下是兜底小档，仅在内容超多时才用。
     profiles = [
-        dict(body=11.0, diff=14.0, sec=14.0, ls=1.20, pa=1),
-        dict(body=11.0, diff=13.0, sec=14.0, ls=1.15, pa=1),
-        dict(body=10.5, diff=13.0, sec=13.0, ls=1.12, pa=0),
-        dict(body=10.0, diff=12.0, sec=13.0, ls=1.10, pa=0),
-        dict(body=10.0, diff=12.0, sec=12.0, ls=1.05, pa=0),
-        dict(body=9.5,  diff=11.0, sec=12.0, ls=1.05, pa=0),
-        dict(body=9.0,  diff=11.0, sec=11.0, ls=1.00, pa=0),
+        dict(body=12.0, diff=12.0, sec=12.0, ls=1.15, pa=1),
+        dict(body=11.5, diff=12.0, sec=12.0, ls=1.12, pa=1),
+        dict(body=11.0, diff=11.5, sec=12.0, ls=1.10, pa=0),
+        dict(body=11.0, diff=11.0, sec=11.0, ls=1.08, pa=0),
+        dict(body=10.5, diff=11.0, sec=11.0, ls=1.05, pa=0),
+        dict(body=10.0, diff=11.0, sec=11.0, ls=1.04, pa=0),
+        dict(body=10.0, diff=10.0, sec=10.0, ls=1.02, pa=0),
+        # 兜底：更小档，确保内容再多也能压进一页
+        dict(body=9.5,  diff=10.0, sec=10.0, ls=1.00, pa=0),
+        dict(body=9.0,  diff=10.0, sec=10.0, ls=1.00, pa=0),
+        dict(body=8.5,  diff=9.0,  sec=9.5,  ls=0.98, pa=0),
+        dict(body=8.0,  diff=9.0,  sec=9.0,  ls=0.96, pa=0),
     ]
+
+    longest_q = max(q_lens) if q_lens else 0
 
     def estimate(prof: dict):
         body, diff, sec, ls, pa = prof["body"], prof["diff"], prof["sec"], prof["ls"], prof["pa"]
@@ -154,7 +167,9 @@ def _plan_layout(outline) -> dict:
         g_lines = max(1, math.ceil(g_eff / cpl(diff)))
         diff_h = max((3 + g_lines) * lh_d + 4 * pa_tw, lh_d + 80)
 
-        vocab_h = max(lh_b + 150, 500) if vocab_ok else 340
+        # 词汇掌握 = 紧凑单行（词格 + 书写空格交替），对齐官方模板 R3≈539 twips：
+        # 就一行，不拉高留白（用户拍板 2026-06-04 + 5 份官方样板）。
+        vocab_h = 560 if vocab_ok else 420
 
         ph_lines = max(1, math.ceil((len(phon) + 10) / cpl(body)))
         phon_h = max(ph_lines * lh_b + 100, 360)
@@ -173,16 +188,70 @@ def _plan_layout(outline) -> dict:
                     questions_h=int(questions_h), engage_h=int(engage_h))
         return total, mins
 
-    chosen, mins = profiles[-1], None
+    # 先收集所有"能塞进一页"的档；在其中优先选"每道阅读题都能一行"的最大字号档（C4）。
+    fitting: list[tuple[dict, dict]] = []
     for prof in profiles:
         total, mins_ = estimate(prof)
         if total <= budget:
-            chosen, mins = prof, mins_
-            break
-    if mins is None:
-        _, mins = estimate(profiles[-1])
-        chosen = profiles[-1]
+            fitting.append((prof, mins_))
 
+    # 选档原则（对齐官方模板）：优先用最大可一页容纳的字号（≈12pt，和官方一致），
+    # 允许长题目自然换行——官方样板里长题本就折行，不为"每题一行"硬压小字号。
+    chosen, mins = None, None
+    if fitting:
+        chosen, mins = fitting[0]            # 最大可容纳字号
+        # 若最大字号下长题需折行，而仅小半档即可让每题一行且字号仍 >=11pt，则取该档（更美观）
+        if longest_q > cpl(chosen["body"]):
+            for prof, mins_ in fitting:
+                if prof["body"] >= 11.0 and longest_q <= cpl(prof["body"]):
+                    chosen, mins = prof, mins_
+                    break
+    if chosen is None:                       # 极端兜底：用最小档（仍强制一页优先）
+        chosen = profiles[-1]
+        _, mins = estimate(profiles[-1])
+
+    # —— 降档重排（硬保证 1 页）——
+    # build_reading_report 实测渲染页数 >1 时，会带着递增的 shrink_steps 重排：
+    # 在已选档基础上强制下移 N 档（更小字号/更紧行距），直到实测落进一页。
+    if shrink_steps > 0:
+        try:
+            cur_idx = profiles.index(chosen)
+        except ValueError:
+            cur_idx = 0
+        new_idx = min(len(profiles) - 1, cur_idx + shrink_steps)
+        chosen = profiles[new_idx]
+        _, mins = estimate(chosen)
+
+    # —— 整页铺满（用户拍板 2026-06-04：内容必须铺满竖版 A4）——
+    # 把剩余高度几乎全部补给两块"书写/阅读区"：答题区(阅读表达，主区，占大头) + 流利度(正文区)，
+    # 二者顶部对齐 → 内容在上、下方留白 = 学生书写空间；只保留极小安全余量，整页填满不空。
+    used = (6 * mins["header_h"] + mins["diff_h"] + mins["vocab_h"] + mins["phon_h"]
+            + mins["fluency_h"] + mins["questions_h"] + mins["engage_h"])
+    leftover = budget - used
+    # 降档 4 档及以上 = 正在和溢出搏斗，彻底关闭"铺满"扩张（绝不再加高度）。
+    if leftover > 200 and shrink_steps < 4:
+        # 余量按三大内容区（难度/正文/答题）当前高度比例均摊 → 整页均衡铺满、
+        # 不在某一块堆出大片空白（对齐官方模板均衡的版面），词汇/拼读/参与度保持紧凑。
+        fill_keys = ["diff_h", "fluency_h", "questions_h"]
+        base = sum(mins[k] for k in fill_keys) or 1
+        # 铺满系数（用户拍板 2026-06-06：底部不能留大片空白）：首轮吃掉 ~92% 余量，
+        # 降档重排时每档少给 12%（防被撑大又溢出到第二页）。
+        fill_factor = max(0.40, 0.85 - 0.12 * shrink_steps)
+        give = int(leftover * fill_factor)   # 留安全余量，严格防溢出到第二页
+        natural = {k: max(1, mins[k]) for k in fill_keys}
+        for k in fill_keys:
+            mins[k] += int(give * mins[k] / base)
+        # 关键（用户拍板 2026-06-06）：竖版 A4 内容少时，靠【放大文字行距】让文字本身铺满
+        # 加高后的格子，而不是把文字顶在上面、下方留白。按 加高后/自然 比例放大行距，分段封顶。
+        # （封顶偏保守 + count_pages 实测降档双保险，严格守 1 页。）
+        base_ls = float(chosen["ls"])
+        for _key, _ls_name, _cap in (
+            ("diff_h", "ls_diff", 1.8),
+            ("fluency_h", "ls_fluency", 1.9),
+            ("questions_h", "ls_questions", 2.4),
+        ):
+            _boost = mins[_key] / natural[_key]
+            chosen[_ls_name] = round(min(_cap, max(base_ls, base_ls * _boost)), 2)
     plan = dict(chosen)
     plan.update(mins)
     plan["grammar"] = grammar
@@ -196,11 +265,9 @@ def _lp(outline) -> dict:
 # ============================================================================
 # 公开入口
 # ============================================================================
-def build_reading_report(outline: BookOutline, out_path: Path,
-                         *, with_answers: bool = False) -> Path:
-    """生成阅读报告。with_answers=True → 示例答案版（演示）；False → 空白版（教师手填）。"""
-    setattr(outline, "_rr_with_answers", bool(with_answers))
-    setattr(outline, "_rr_lp", _plan_layout(outline))
+def _render_rr_doc(outline: BookOutline, shrink_steps: int = 0):
+    """按给定 shrink_steps 规划版式并构建 RR 文档（不落盘）。"""
+    setattr(outline, "_rr_lp", _plan_layout(outline, shrink_steps=shrink_steps))
     doc = Document()
     _set_a4_portrait(doc)
     _set_default_style(doc)
@@ -213,9 +280,62 @@ def build_reading_report(outline: BookOutline, out_path: Path,
     _build_title_paragraph(doc, outline)
     _build_name_date_paragraph(doc)
     _build_main_table(doc, outline)
+    return doc
 
+
+# 降档重排最大尝试次数（profiles 共 9 档，足够把任何内容压进一页）
+_MAX_SHRINK_STEPS = 8
+
+
+def build_reading_report(outline: BookOutline, out_path: Path,
+                         *, with_answers: bool = False) -> Path:
+    """生成阅读报告，**硬保证严格 1 张 A4**（用户拍板 2026-06-05）。
+
+    with_answers=True → 示例答案版（演示）；False → 空白版（教师手填）。
+
+    单页保证机制：先按自适应规划器排版并落盘，随后用 LibreOffice 实测渲染页数；
+    若 >1 页，则带着递增的 shrink_steps（强制更小字号/更紧行距）重排重存，循环直到
+    实测正好 1 页。soffice 不可用时回退到纯估算（规划器本身已偏保守）。
+    """
+    setattr(outline, "_rr_with_answers", bool(with_answers))
     out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # 先按最佳（最大可容纳）字号渲染落盘
+    doc = _render_rr_doc(outline, shrink_steps=0)
     doc.save(str(out_path))
+
+    # 实测页数 → 超一页则降档重排，硬保证 1 页
+    try:
+        from doc_preview import count_pages
+    except Exception:
+        count_pages = None  # type: ignore
+
+    if count_pages is not None:
+        pages = count_pages(out_path)
+        shrink = 0
+        # pages 为 None = 无法实测（soffice/fitz 缺失）→ 不强制，回退估算
+        while pages is not None and pages > 1 and shrink < _MAX_SHRINK_STEPS:
+            shrink += 1
+            doc = _render_rr_doc(outline, shrink_steps=shrink)
+            doc.save(str(out_path))
+            pages = count_pages(out_path)
+
+        # 最终硬兜底：极端超长内容连最小档仍溢出 → 逐步截断流利度区原文，
+        # 直到实测正好 1 页（杜绝任何情况下出现第二张 A4）。
+        if pages is not None and pages > 1:
+            full_len = len(" ".join(
+                (p.text or "").strip() for p in outline.pages
+                if p.page_type == "story" and (p.text or "").strip()
+            ))
+            cap = max(280, int(full_len * 0.85))
+            while pages is not None and pages > 1 and cap >= 200:
+                setattr(outline, "_rr_passage_char_cap", cap)
+                doc = _render_rr_doc(outline, shrink_steps=_MAX_SHRINK_STEPS)
+                doc.save(str(out_path))
+                pages = count_pages(out_path)
+                cap = int(cap * 0.85)
+            setattr(outline, "_rr_passage_char_cap", None)
+
     return out_path
 
 
@@ -227,10 +347,22 @@ def _build_title_paragraph(doc, outline: BookOutline) -> None:
     保证长书名不会把 logo 挤到下一行（对齐官方模板：标题左、logo 右上）。"""
     title_str = f"阅读报告 {_level_label(outline.level)} - {capitalize_names(outline.title or '')}"
 
+    # 标题尽量一行：按有效字宽（CJK 记 2）反推字号，长标题自动缩小（用户拍板）。
+    left_w_in = (TABLE_WIDTH_DXA * 0.72) / 1440.0
+    eff_len = sum(2 if ord(ch) > 0x2E80 else 1 for ch in title_str)
+    title_pt = TITLE_PT
+    for cand in (TITLE_PT, 16, 15, 14, 13):
+        cap = left_w_in / (cand * 0.0085)
+        if eff_len <= cap:
+            title_pt = cand
+            break
+    else:
+        title_pt = 13
+
     table = doc.add_table(rows=1, cols=2)
     table.autofit = False
     _set_tbl_w(table, TABLE_WIDTH_DXA)
-    _set_tbl_grid(table, [int(TABLE_WIDTH_DXA * 0.70), TABLE_WIDTH_DXA - int(TABLE_WIDTH_DXA * 0.70)])
+    _set_tbl_grid(table, [int(TABLE_WIDTH_DXA * 0.72), TABLE_WIDTH_DXA - int(TABLE_WIDTH_DXA * 0.72)])
     _set_tbl_no_borders(table)
 
     left = table.rows[0].cells[0]
@@ -245,7 +377,7 @@ def _build_title_paragraph(doc, outline: BookOutline) -> None:
     pl.paragraph_format.space_after = Pt(0)
     pl.paragraph_format.line_spacing = 1.0
     run = pl.add_run(title_str)
-    _bind_run(run, ascii_font=FONT_EN, east_asia=FONT_CN, size_pt=TITLE_PT, bold=True)
+    _bind_run(run, ascii_font=FONT_EN, east_asia=FONT_CN, size_pt=title_pt, bold=True)
 
     if LOGO_PATH.exists():
         _clear_paragraphs(right)
@@ -273,13 +405,34 @@ def _build_name_date_paragraph(doc) -> None:
 # ============================================================================
 # 主表（12 行 × 8 列）
 # ============================================================================
+def _vocab_grid_widths(n_words: int) -> list[int]:
+    """词汇行的列宽：每词 = [词格(宽)] + [书写空格(窄)] 交替，总宽 = 表宽。
+    对齐官方模板（L5-1）：词格 ≈ 1.45× 空格。"""
+    n = max(1, n_words)
+    cols = n * 2
+    unit = TABLE_WIDTH_DXA // n
+    word_w = int(unit * 0.59)
+    blank_w = unit - word_w
+    widths: list[int] = []
+    for _ in range(n):
+        widths += [word_w, blank_w]
+    widths[-1] = TABLE_WIDTH_DXA - sum(widths[:-1])  # 末列吸收取整误差
+    return widths
+
+
 def _build_main_table(doc, outline: BookOutline) -> None:
-    table = doc.add_table(rows=12, cols=8)
+    # 列数 = 词汇数 × 2（词格/空格交替），其余行整体合并 → 完全对齐官方模板单表结构。
+    _words = [w for w in _vocab_words_for_rr(outline) if w] or [""]
+    n_words = len(_words)
+    cols = n_words * 2
+    grid_widths = _vocab_grid_widths(n_words)
+
+    table = doc.add_table(rows=12, cols=cols)
     table.autofit = False
 
     _set_tbl_w(table, TABLE_WIDTH_DXA)
     _set_tbl_borders(table)
-    _set_tbl_grid(table, COL_WIDTHS_DXA)
+    _set_tbl_grid(table, grid_widths)
 
     lp = _lp(outline)
     sec_pt = lp.get("sec", SECTION_PT)
@@ -300,8 +453,8 @@ def _build_main_table(doc, outline: BookOutline) -> None:
         header_row = table.rows[sec_idx * 2]
         content_row = table.rows[sec_idx * 2 + 1]
 
-        # ---- header row：合并 8 列 + 灰底 + 左对齐粗体（对齐官方模板）----
-        _set_row_height(header_row, header_h)
+        # ---- header row：合并所有列 + 灰底 + 左对齐粗体（对齐官方模板）----
+        _set_row_height(header_row, header_h, exact=True)
         header_cell = _merge_row(header_row)
         _shade_cell(header_cell, HEADER_FILL)
         _vert_center(header_cell)
@@ -334,7 +487,7 @@ def _fill_difficulty(row, outline: BookOutline) -> None:
 
     lp = _lp(outline)
     diff_pt = lp.get("diff", DIFF_PT)
-    ls = lp.get("ls", LINE_SPACING)
+    ls = lp.get("ls_diff", lp.get("ls", LINE_SPACING))  # 放大行距铺满（短内容时）
     pa = lp.get("pa", PARA_AFTER_PT)
 
     pairs = [
@@ -356,33 +509,23 @@ def _fill_difficulty(row, outline: BookOutline) -> None:
 
 
 def _fill_vocab(row, outline: BookOutline) -> None:
-    """8 cells：4 词放 c0/c2/c4/c6，c1/c3/c5/c7 留空白打勾位。"""
+    """词汇掌握 —— 完全对齐官方模板（L5-1 5.27）：本行就是表格自身的 词数×2 个单元格，
+    [词格] + [书写空格] 交替，紧凑单行（行高 ≈ 539），不嵌套子表、下方不留白。"""
     body_pt = _lp(outline).get("body", BODY_PT)
-    words = _vocab_words_for_rr(outline)
-    for col_idx in range(8):
-        cell = row.cells[col_idx]
-        _vert_center(cell)
-        _clear_paragraphs(cell)
-        if col_idx % 2 == 0:
-            word_idx = col_idx // 2
-            text = words[word_idx] if word_idx < len(words) else ""
-            if text:
-                p = cell.paragraphs[0]
-                p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                p.paragraph_format.space_before = Pt(0)
-                p.paragraph_format.space_after = Pt(0)
-                run = p.add_run(text)
-                _bind_run(run, FONT_EN, FONT_CN, size_pt=body_pt, bold=False)
-        else:
-            # QA：单词后配一个空格框，供老师打勾/打分
-            word_idx = col_idx // 2
-            if word_idx < len(words) and words[word_idx]:
-                p = cell.paragraphs[0]
-                p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-                p.paragraph_format.space_before = Pt(0)
-                p.paragraph_format.space_after = Pt(0)
-                r_box = p.add_run(EMPTY_BOX)
-                _bind_run(r_box, SYMBOL_FONT, SYMBOL_FONT, size_pt=body_pt + 2, bold=False)
+    words = [w for w in _vocab_words_for_rr(outline) if w] or [""]
+    cells = row.cells
+    for i, w in enumerate(words):
+        wi = i * 2
+        if wi >= len(cells):
+            break
+        wc = cells[wi]                 # 词格（居中显示目标词）
+        _vert_center(wc)
+        _clear_and_fill_text(
+            wc, w, size_pt=body_pt, bold=False,
+            align=WD_ALIGN_PARAGRAPH.CENTER,
+        )
+        if wi + 1 < len(cells):        # 书写空格（学生写中文意思）
+            _vert_center(cells[wi + 1])
 
 
 def _fill_phonics(row, outline: BookOutline) -> None:
@@ -402,22 +545,27 @@ def _fill_phonics(row, outline: BookOutline) -> None:
         text = _normalize_morphology(outline.phonics, outline)
     else:
         text = _normalize_phonics(outline.phonics)
+    text = _concise_affix(text)   # 固定格式：去引号 + 保留例词 + 多条用 / 隔开
     run = p.add_run(text)
     _bind_run(run, FONT_EN, FONT_CN, size_pt=body_pt, bold=False)
 
 
 def _fill_fluency(row, outline: BookOutline) -> None:
     cell = _merge_row(row)
-    _vert_center(cell)
+    _vert_top(cell)   # 顶部对齐：短文从格子顶端开始，避免上下居中留白
     _clear_paragraphs(cell)
 
     lp = _lp(outline)
-    ls = lp.get("ls", LINE_SPACING)
+    ls = lp.get("ls_fluency", lp.get("ls", LINE_SPACING))  # 放大行距铺满正文区（短文时）
     body_text = capitalize_names(_strip_wrapping_quotes(" ".join(
         _strip_wrapping_quotes(page.text.strip())
         for page in outline.pages
         if page.page_type == "story" and page.text and page.text.strip()
     )))
+    # 最终兜底：极端超长正文时按可容纳长度截断（确保严格 1 页，仅在降档仍溢出时触发）
+    cap = getattr(outline, "_rr_passage_char_cap", None)
+    if cap and len(body_text) > cap:
+        body_text = body_text[:cap].rstrip().rstrip(",.;:") + "\u2026"
     # 字号由自适应规划器统一决定（保证 1 页）
     body_size = lp.get("body", BODY_PT)
 
@@ -441,12 +589,12 @@ def _fill_fluency(row, outline: BookOutline) -> None:
 
 def _fill_questions(row, outline: BookOutline) -> None:
     cell = _merge_row(row)
-    _vert_center(cell)
+    _vert_top(cell)   # 顶部对齐：题目在上、下方留白 = 学生答题书写空间
     _clear_paragraphs(cell)
 
     lp = _lp(outline)
     body_pt = lp.get("body", BODY_PT)
-    ls = lp.get("ls", LINE_SPACING)
+    ls = lp.get("ls_questions", lp.get("ls", LINE_SPACING))  # 放大行距铺满答题区（题少时）
     pa = lp.get("pa", PARA_AFTER_PT)
 
     questions = _resolve_rr_questions(outline)
@@ -478,10 +626,11 @@ def _fill_questions(row, outline: BookOutline) -> None:
             r_p = p.add_run(f" (P{page})")
             _bind_run(r_p, FONT_EN, FONT_CN, size_pt=body_pt, bold=False)
 
-        # 金黄实心星 ⭐ (U+2B50) emoji —— 对齐官方真人样本（彩色填充星，而非橙色空心 ★）。
-        # 用 Segoe UI Emoji 字体渲染（Word/WPS/LibreOffice 均能显示彩色 emoji）。
-        r_s = p.add_run(" " + ("\u2B50" * stars))
-        _bind_run(r_s, EMOJI_FONT, EMOJI_FONT, size_pt=body_pt, bold=False)
+        # 实心五角星 ★ (U+2605)，用阿里巴巴普惠体渲染（用户拍板：emoji ⭐ 在 WPS 显示为空心，
+        # 改用 CJK 字体的实心 ★ + 橙色，保证填充实心）。
+        r_s = p.add_run(" " + ("\u2605" * stars))
+        _bind_run(r_s, FONT_CN, FONT_CN, size_pt=body_pt, bold=False)
+        _set_run_color(r_s, STAR_COLOR)
 
         # 示例答案版：题干下方加一行灰色斜体示例答案（空白版不渲染）
         if getattr(outline, "_rr_with_answers", False):
@@ -512,11 +661,12 @@ def _fill_engagement(row, outline: BookOutline) -> None:
     # 对齐官方真人样本：笑脸 emoji + label + 空白方框（学生打勾）。
     # 😎 Excellent / 😄 Great / 🙂 Good，emoji 用 Segoe UI Emoji 渲染（彩色）。
     body_pt = _lp(outline).get("body", BODY_PT)
-    items = [("\U0001F60E", "Excellent"), ("\U0001F604", "Great"), ("\U0001F642", "Good")]
+    # 统一三档笑脸 + label + 空格 + 方框（方框前留足空格，避免 emoji 与方框贴在一起/被挡）
+    items = [("\U0001F606", "Excellent"), ("\U0001F604", "Great"), ("\U0001F642", "Good")]
     for idx, (face, label) in enumerate(items):
         r_f = p.add_run(face)
         _bind_run(r_f, EMOJI_FONT, EMOJI_FONT, size_pt=body_pt + 2, bold=False)
-        r_l = p.add_run(" " + label + " ")
+        r_l = p.add_run("  " + label + "   ")
         _bind_run(r_l, FONT_EN, FONT_CN, size_pt=body_pt, bold=False)
         r_box = p.add_run(EMPTY_BOX)
         _bind_run(r_box, SYMBOL_FONT, SYMBOL_FONT, size_pt=body_pt + 4, bold=False)
@@ -528,8 +678,24 @@ def _fill_engagement(row, outline: BookOutline) -> None:
 # ============================================================================
 # 数据规整
 # ============================================================================
+def _rr_vocab_max(level: str) -> int:
+    """RR 词汇格子数量上限（用户拍板 2026-06-04，分级 4-6 个）：
+      • L0-2 / L3-4：4 个
+      • L5-6：     最多 6 个（可含词组）
+    """
+    key = str(level or "").strip().lower()
+    if "smart" in key:
+        return 4
+    digits = "".join(ch for ch in key if ch.isdigit())
+    try:
+        n = int(digits)
+    except ValueError:
+        return 4
+    return 6 if n >= 5 else 4
+
+
 def _vocab_words_for_rr(outline: BookOutline) -> list[str]:
-    """RR r4 严格 4 词：L0-2 用 mastery 第一行 4 词；L3-6 用 vocabulary 4 词。"""
+    """RR 词汇掌握取词：按级别返回 4-6 个真实词（不补空字符串，便于格子自适应）。"""
     if outline.is_dual_vocab_level and outline.vocabulary_mastery:
         words = list(outline.vocabulary_mastery)
     elif outline.vocabulary_simple:
@@ -544,41 +710,30 @@ def _vocab_words_for_rr(outline: BookOutline) -> list[str]:
         if ww:
             # v1.8：词汇统一小写、美式拼写
             cleaned.append(_to_us_spelling(ww.lower()))
-    while len(cleaned) < 4:
-        cleaned.append("")
-    return cleaned[:4]
+    return cleaned[:_rr_vocab_max(outline.level)]
 
 
 def _resolve_rr_questions(outline: BookOutline) -> list[dict]:
     """读取 outline._rr_questions（AI 抽取 / 人工编辑后挂载），按口径星级补齐。
 
-    口径（新规范）：
-      • L0-L2: 4 题，3 颗星 ⭐⭐⭐ 不带 (P#)
-      • L3:    5 题，3 颗星不带 (P#)；1-4 题带 (P#)
-      • L4-L6: 5 题，**全部不带 (P#)**（新规范要求）
+    页码 (P#) 统一口径（所有级别一致，唯一规范）：
+      • 事实定位题（⭐ / ⭐⭐）：必须带 (P#)，指向答案所在绘本页（P2-P8）。
+      • 末尾开放拓展题（⭐⭐⭐，生活化/个人观点/PBL）：不带 (P#)（无法定位到具体某页）。
 
     若上游缺失，按 Level 题量给占位题。
     """
     raw = getattr(outline, "_rr_questions", None)
     dist = config.rr_question_distribution(outline.level)
-    no_page = _no_page_numbers(outline.level)
 
     def _page_for(i: int, stars: int) -> int | None:
-        if no_page:
-            return None
-        if stars == 3:
-            return None
-        return i + 2
+        # 末尾开放拓展题 ⭐⭐⭐ 无页码；事实题落在 P2-P8（i 从 0 起 → i+2）。
+        return None if _rr_omit_page(stars) else (i + 2)
 
     if raw and isinstance(raw, list) and len(raw) > 0:
         normalized: list[dict] = []
         for i, q in enumerate(raw[:len(dist)]):
             stars = dist[i]
-            # 上游可显式给 page；若没给则默认 i+2（除非级别要求隐藏 or ⭐⭐⭐）
-            if no_page or stars == 3:
-                page = None
-            else:
-                page = q.get("page") or (i + 2)
+            page = None if _rr_omit_page(stars) else (q.get("page") or (i + 2))
             normalized.append({
                 "q": str(q.get("q") or q.get("question") or "").strip(),
                 "stars": stars,
@@ -605,15 +760,12 @@ def _resolve_rr_questions(outline: BookOutline) -> list[dict]:
     ]
 
 
-def _no_page_numbers(level: str) -> bool:
-    """L4-L6 报告中不标注绘本页码（新规范）。"""
-    key = (str(level or "").strip().lower())
-    if "smart" in key:
-        return False
-    digits = "".join(ch for ch in key if ch.isdigit())
+def _rr_omit_page(stars: int) -> bool:
+    """RR 页码统一规范（唯一事实源，已接入 _resolve_rr_questions）：
+    末尾开放拓展题 ⭐⭐⭐ 不标 (P#)，其余事实题都标。"""
     try:
-        return int(digits) >= 4
-    except ValueError:
+        return int(stars) >= 3
+    except (TypeError, ValueError):
         return False
 
 
@@ -780,7 +932,7 @@ def _is_morphology_level(level: str) -> bool:
 
 # 常见后缀 / 前缀 → 含义（构词法兜底库，从故事词汇里自动检测）
 _SUFFIX_MEANINGS = {
-    "-ous":  "having/full of quality",
+    "-ous":  "having/full of a quality",
     "-ful":  "full of",
     "-less": "without",
     "-able": "can be / capable of",
@@ -814,7 +966,9 @@ _PREFIX_MEANINGS = {
 def _detect_morphology_in_words(words: list[str]) -> Optional[str]:
     """从词汇里检测最高频的构词法规则（后缀优先于前缀）。
 
-    返回如 'suffix \"-ous\" (= having/full of quality, e.g. nervous, famous)' 的字符串。
+    返回固定格式（用户拍板 2026-06-04）：
+      'suffix -ous (= having/full of a quality): nervous, famous'
+      —— 去引号、冒号分隔例词、**最多 2 例**、保证一行。
     """
     if not words:
         return None
@@ -825,8 +979,8 @@ def _detect_morphology_in_words(words: list[str]) -> Optional[str]:
         suf_letters = suf.lstrip("-")
         hits = [w for w in words if len(w) > len(suf_letters) + 1 and w.endswith(suf_letters)]
         if len(hits) >= 1:
-            examples = ", ".join(hits[:3])
-            return f'suffix "{suf}" (= {meaning}, e.g. {examples})'
+            examples = ", ".join(hits[:2])
+            return f"suffix {suf} (= {meaning}): {examples}"
 
     # 前缀检测：词头匹配
     for pre, meaning in _PREFIX_MEANINGS.items():
@@ -835,10 +989,61 @@ def _detect_morphology_in_words(words: list[str]) -> Optional[str]:
                 # 排除 "income" 误判 "in-" 等：前缀后接元音/辅音规则太复杂，简化为只在词长>=4 时认
                 and len(w) >= 4]
         if len(hits) >= 1:
-            examples = ", ".join(hits[:3])
-            return f'prefix "{pre}" (= {meaning}, e.g. {examples})'
+            examples = ", ".join(hits[:2])
+            return f"prefix {pre} (= {meaning}): {examples}"
 
     return None
+
+
+def _concise_affix(text: str) -> str:
+    """构词法/自然拼读固定格式（用户拍板 2026-06-04）：
+
+      • 自然拼读：'short a (cat, hat, map)'  —— 音 + 例词括注
+      • 构词法：  'suffix -ous (= having/full of a quality): nervous, famous'
+                  —— 规则(含义) + 冒号分隔例词、**最多 2 例**、一行
+      • 多条规则保留，用 ' / ' 隔开，继续相同模式
+      • 一律去掉词缀/音素外层引号（"-ous" → -ous，"a" → a）
+    """
+    import re as _re
+    # 只在分号或"空格 / 空格"处断成多条规则；含义里的裸 "/"（having/full）不拆
+    rules = [r.strip() for r in _re.split(r"\s*[;；]\s*|\s+/\s+", (text or "").strip()) if r.strip()]
+    out: list[str] = []
+    for r in rules:
+        r = r.replace('"', "").replace("'", "").strip().rstrip("；;").strip()
+        if not r:
+            continue
+
+        # 构词法分支：含 "(= 含义)" → 规整成 'head (= 含义): ex1, ex2'（最多 2 例）
+        m_mean = _re.search(r"\(=\s*(.*?)\)", r)
+        if m_mean:
+            head = r[:m_mean.start()].strip()
+            meaning = m_mean.group(1).strip()
+            rest = r[m_mean.end():].strip()
+
+            examples: list[str] = []
+            # 含义里内嵌的 "..., e.g. ex" 抽出来
+            me = _re.search(r",?\s*e\.g\.\s*(.+)$", meaning)
+            if me:
+                examples += [e.strip() for e in _re.split(r"[,，]", me.group(1)) if e.strip()]
+                meaning = meaning[:me.start()].strip().rstrip(",").strip()
+            # 尾部例词：可能是 ": ex1, ex2" / "(ex1, ex2)" / ", e.g. ex"
+            rest = rest.lstrip(":：").strip().strip("()").strip()
+            rest = _re.sub(r"^e\.g\.\s*", "", rest)
+            examples += [e.strip() for e in _re.split(r"[,，]", rest) if e.strip()]
+            examples = [e for e in examples if e][:2]
+
+            res = f"{head} (= {meaning})" if meaning else head
+            if examples:
+                res += ": " + ", ".join(examples)
+            out.append(res)
+            continue
+
+        # 自然拼读分支：把 "音: 例词" 冒号写法转成括注： short a: cat, hat → short a (cat, hat)
+        m = _re.search(r"^(.*?\S)\s*[:：]\s*([A-Za-z][A-Za-z,\s/]*)$", r)
+        if m and "(" not in r:
+            r = f"{m.group(1).strip()} ({m.group(2).strip()})"
+        out.append(r)
+    return "  /  ".join(out)
 
 
 def _normalize_morphology(raw: str, outline) -> str:
@@ -1060,14 +1265,14 @@ def _set_tbl_grid(table, widths_dxa: list[int]) -> None:
         grid.append(gc)
 
 
-def _set_row_height(row, twips: int) -> None:
+def _set_row_height(row, twips: int, *, exact: bool = False) -> None:
     trPr = row._tr.get_or_add_trPr()
     h = trPr.find(qn("w:trHeight"))
     if h is None:
         h = OxmlElement("w:trHeight")
         trPr.append(h)
     h.set(qn("w:val"), str(twips))
-    h.set(qn("w:hRule"), "atLeast")
+    h.set(qn("w:hRule"), "exact" if exact else "atLeast")
 
 
 def _merge_row(row):

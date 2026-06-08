@@ -7,7 +7,7 @@ from pathlib import Path
 from pptx import Presentation
 from pptx.dml.color import RGBColor
 from pptx.enum.shapes import MSO_SHAPE
-from pptx.enum.text import PP_ALIGN
+from pptx.enum.text import PP_ALIGN, MSO_ANCHOR, MSO_AUTO_SIZE
 from pptx.util import Inches, Pt
 
 from config import (
@@ -16,8 +16,14 @@ from config import (
     FONT_SIZE_TITLE, LIGHT_GRAY_BORDER, ORANGE_BADGE,
     PAGE_NUM_DIAMETER_IN, PAGE_NUM_MARGIN_IN,
     SLIDE_HEIGHT_IN, SLIDE_WIDTH_IN, TEXT_BOX_PADDING_IN, TEXT_BOX_WIDTH_RATIO,
-    WHITE, text_box_position,
+    WHITE,
 )
+
+try:  # 图像分析用于智能避让主角；缺 PIL 时优雅回退到固定角位
+    from PIL import Image, ImageFilter, ImageStat
+    _PIL_OK = True
+except Exception:  # pragma: no cover
+    _PIL_OK = False
 from parser import BookOutline, PageSpec
 from text_format import capitalize_names
 
@@ -78,6 +84,73 @@ def _build_cover(slide, outline: BookOutline, image_path: Path) -> None:
     _add_badge(slide, badge_x, Inches(0.95), badge_w, badge_h, f"Book {_clean_num(outline.book_number)}")
 
 
+# ---------- 智能文字位置：分析图像，挑"最空 + 偏亮"的角位贴白底框，避开主角 ----------
+_BOX_H_IN = 1.6
+
+
+def _estimate_text_box_height(text: str, box_w_in: float, font_pt: float) -> int:
+    """按文字实际长度估算白底框需要的高度（英寸×100→整数，便于比较）。
+    白底要"贴合实际内容"：行数 = 文本宽度 / 每行可容字符数，高度 = 行数×行高 + 上下内边距。
+    """
+    inner_w = max(0.5, box_w_in - 2 * TEXT_BOX_PADDING_IN)
+    # Poppins 估算：每字符宽 ≈ font_pt/72 * 0.52 英寸
+    char_w = font_pt / 72.0 * 0.52
+    cpl = max(8, int(inner_w / char_w))
+    n_lines = max(1, -(-len(str(text or "").strip()) // cpl))  # 向上取整
+    line_h = font_pt / 72.0 * 1.22
+    return n_lines * line_h + 2 * TEXT_BOX_PADDING_IN
+
+
+def _corner_xy(corner: str, box_w_in: float, box_h_in: float) -> tuple[float, float]:
+    """按角位 + 实际框尺寸返回 (left_in, top_in)；底部角位用实际高度定位，不写死 1.6。"""
+    margin = 0.35
+    right = SLIDE_WIDTH_IN - box_w_in - margin
+    bottom = SLIDE_HEIGHT_IN - box_h_in - margin
+    return {
+        "top-left": (margin, margin),
+        "top-right": (right, margin),
+        "bottom-left": (margin, bottom),
+        "bottom-right": (right, bottom),
+    }.get(corner, (margin, margin))
+
+
+def _smart_text_corner(
+    image_path: Path, box_w_in: float, box_h_in: float, fallback: str
+) -> str:
+    """对整张图做轻量分析，在 4 个标准角位里选出主体最少（边缘能量最低）、
+    且较亮的区域来放白底文字框，从而尽量不挡住主角 / 关键事物。
+
+    评分：score = 边缘能量(越低=越空) - 0.08*亮度(越亮越优)；取最小者。
+    缺 PIL 或读图失败 → 回退到 fallback（page.text_corner）。
+    """
+    if not (_PIL_OK and Path(image_path).exists()):
+        return fallback
+    try:
+        gray = Image.open(image_path).convert("L")
+    except Exception:
+        return fallback
+    W, H = gray.size
+    if W < 4 or H < 4:
+        return fallback
+    edges = gray.filter(ImageFilter.FIND_EDGES)
+
+    best_corner, best_score = fallback, None
+    for corner in ("top-left", "top-right", "bottom-left", "bottom-right"):
+        left_in, top_in = _corner_xy(corner, box_w_in, box_h_in)
+        x0 = max(0, int(left_in / SLIDE_WIDTH_IN * W))
+        x1 = min(W, int((left_in + box_w_in) / SLIDE_WIDTH_IN * W))
+        y0 = max(0, int(top_in / SLIDE_HEIGHT_IN * H))
+        y1 = min(H, int((top_in + box_h_in) / SLIDE_HEIGHT_IN * H))
+        if x1 <= x0 or y1 <= y0:
+            continue
+        edge_energy = ImageStat.Stat(edges.crop((x0, y0, x1, y1))).mean[0]
+        brightness = ImageStat.Stat(gray.crop((x0, y0, x1, y1))).mean[0]
+        score = edge_energy - 0.08 * brightness
+        if best_score is None or score < best_score:
+            best_corner, best_score = corner, score
+    return best_corner
+
+
 # ---------- 故事页 ----------
 def _build_story(slide, page: PageSpec, image_path: Path, page_number: int) -> None:
     sw, sh = Inches(SLIDE_WIDTH_IN), Inches(SLIDE_HEIGHT_IN)
@@ -86,17 +159,27 @@ def _build_story(slide, page: PageSpec, image_path: Path, page_number: int) -> N
         pic = slide.shapes.add_picture(str(image_path), 0, 0, width=sw, height=sh)
         _send_to_back(slide, pic)
 
-    # 文字框（白底矩形 + 黑色 Poppins Bold）
-    corner = page.text_corner or "top-left"
-    left_in, top_in = text_box_position(corner)
+    # 文字框（白底圆角 + 黑色 Poppins Bold）
+    # 用户拍板（2026-06-05）：白底必须"贴合实际文字"——框高随文本长度自适应，不留大片空白；
+    #   并落在画面最空的角位（避开主角/关键事物）。
+    txt = capitalize_names(page.text)
     box_w_in = SLIDE_WIDTH_IN * TEXT_BOX_WIDTH_RATIO
-    box_h_in = 1.6
+    box_h_in = _estimate_text_box_height(txt, box_w_in, float(FONT_SIZE_BODY))
+    box_h_in = max(0.6, min(box_h_in, SLIDE_HEIGHT_IN - 1.2))   # 合理夹取，避免越界
+
+    fallback_corner = page.text_corner or "top-left"
+    corner = _smart_text_corner(image_path, box_w_in, box_h_in, fallback_corner)
+    left_in, top_in = _corner_xy(corner, box_w_in, box_h_in)
 
     box = slide.shapes.add_shape(
-        MSO_SHAPE.RECTANGLE,
+        MSO_SHAPE.ROUNDED_RECTANGLE,
         Inches(left_in), Inches(top_in),
         Inches(box_w_in), Inches(box_h_in),
     )
+    try:
+        box.adjustments[0] = 0.06   # 轻微圆角，更精致
+    except Exception:
+        pass
     box.fill.solid()
     box.fill.fore_color.rgb = RGBColor(*WHITE)
     box.line.color.rgb = RGBColor(*WHITE)
@@ -105,11 +188,14 @@ def _build_story(slide, page: PageSpec, image_path: Path, page_number: int) -> N
 
     tf = box.text_frame
     tf.word_wrap = True
+    # 白底随文字自适应高度：PowerPoint 里会精确贴合；预览(LibreOffice)用上面的估算高度。
+    tf.auto_size = MSO_AUTO_SIZE.SHAPE_TO_FIT_TEXT
+    tf.vertical_anchor = MSO_ANCHOR.MIDDLE
     tf.margin_left = tf.margin_right = Inches(TEXT_BOX_PADDING_IN)
-    tf.margin_top = tf.margin_bottom = Inches(TEXT_BOX_PADDING_IN)
+    tf.margin_top = tf.margin_bottom = Inches(TEXT_BOX_PADDING_IN * 0.7)
     p = tf.paragraphs[0]
     p.alignment = PP_ALIGN.LEFT
-    _set_run(_ensure_run(p), capitalize_names(page.text), Pt(FONT_SIZE_BODY), BLACK)
+    _set_run(_ensure_run(p), txt, Pt(FONT_SIZE_BODY), BLACK)
 
     # 页码：偶数页左下，奇数页右下
     _add_page_number(slide, page_number)

@@ -9,8 +9,10 @@
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import re
+import threading
 import time
 import traceback
 import zipfile
@@ -20,9 +22,9 @@ from pathlib import Path
 from typing import Callable, Optional
 
 from ai_extractor import apply_extracted_to_outline, extract_all
-from cn_prompt_builder import build_cn_page_prompt
+from cn_prompt_builder import build_cn_page_prompt, validate_page_ip_lock
 from config import OUTPUTS_DIR, resolve_ip_age
-from parser import BookOutline, PageSpec
+from parser import BookOutline, PageSpec, enrich_from_syllabus
 from ppt_builder import build_picturebook_pptx, safe_filename
 from reading_report_builder import attach_rr_questions, build_reading_report
 from seedream_client import generate_image
@@ -36,6 +38,34 @@ except Exception:  # pragma: no cover
 
 PER_BOOK_TIMEOUT_S = 30 * 60  # 单本超时 30 分钟
 
+# 出图前/后耗时估算（仅用于 Dry-run 预检展示，非精确）
+EST_SECS_PER_IMAGE = 16
+EST_SECS_TEXT = 30
+IMAGES_PER_BOOK = 8
+
+# ============================================================
+#  ① 图片全局并发池：限制「所有本子在途出图请求总数」≤ image_concurrency，
+#     与本级并发解耦（本并发 × 每本页并发 都受这一个信号量统一节流，贴 API RPM 上限）。
+# ============================================================
+_IMG_SEM: Optional[threading.BoundedSemaphore] = None
+
+
+def set_image_concurrency(n: int) -> None:
+    global _IMG_SEM
+    _IMG_SEM = threading.BoundedSemaphore(max(1, int(n)))
+
+
+@contextlib.contextmanager
+def _img_guard():
+    if _IMG_SEM is None:
+        yield
+        return
+    _IMG_SEM.acquire()
+    try:
+        yield
+    finally:
+        _IMG_SEM.release()
+
 
 @dataclass
 class BatchItem:
@@ -45,6 +75,8 @@ class BatchItem:
     story: str
     cefr: str = ""
     theme: str = ""
+    fiction_type: str = ""   # 可选强制体裁："fiction" / "non-fiction"（留空则交给 AI 抽取判定）
+    frame_mode: str = "B"    # 框架寓言呈现模式（已锁定默认 B）：仅对框架式寓言生效
 
     @property
     def name_prefix(self) -> str:
@@ -61,7 +93,11 @@ class BatchResult:
     zip_path: str = ""
     error: str = ""
     elapsed_s: float = 0.0
-    needs_human_review: bool = True  # 绘本图全自动出，标记待人工抽查
+    needs_human_review: bool = True  # 默认待抽查；跑完 evals 后按结果收紧
+    fact_notes: str = ""             # 科普非虚构：科学事实校验日志（非致命）
+    eval_level: str = ""             # ④ evals 体检结论：ok / warn / error（空=未跑）
+    eval_msgs: list[str] = field(default_factory=list)  # 红/黄项摘要（定向抽查用）
+    skipped_pages: int = 0           # ② 断点续跑：本次复用的已存在页数
 
 
 # ============================================================
@@ -106,8 +142,13 @@ def _story_lines(story: str) -> list[str]:
 
 
 def run_one(item: BatchItem, out_root: Path, *, mock: bool = False,
-            flat: bool = False) -> BatchResult:
-    """跑一本：抽取 → outline → 生图 → 4 件套 → zip。失败抛异常由上层捕获。"""
+            flat: bool = False, resume: bool = False,
+            image_workers: int = 4) -> BatchResult:
+    """跑一本：抽取 → outline → 生图 → 4 件套 → zip。失败抛异常由上层捕获。
+
+    resume=True：已存在且非空的 page_xx.png 直接复用（断点续跑/重跑失败本只补缺页）。
+    image_workers：本本内出图并发数；实际在途总数仍由全局 _IMG_SEM 统一节流。
+    """
     t0 = time.time()
     res = BatchResult(item=item)
     ip_age = resolve_ip_age(item.level)
@@ -135,6 +176,32 @@ def run_one(item: BatchItem, out_root: Path, *, mock: bool = False,
         cefr=cefr, ip_age=ip_age, theme=theme,
     )
     apply_extracted_to_outline(outline, ec)
+
+    # 可选：强制体裁（老师/调用方显式指定时覆盖 AI 抽取的判定）
+    if item.fiction_type:
+        outline.fiction_type = item.fiction_type
+
+    # 框架寓言呈现模式（A / B / A+）：仅对框架式寓言生效
+    outline.frame_mode = item.frame_mode or "A"
+
+    # 官方 S&S 大纲注入：命中则用权威 Strategy/Skill/GO 等真值（未命中维持启发式）
+    if enrich_from_syllabus(outline):
+        print(f"[{item.name_prefix}] 已命中官方 S&S 大纲，注入 Strategy/Skill/GO")
+
+    # 科普非虚构：科学事实正确性校验（核查文字+画面，自动应用修正；非致命）
+    if not mock:
+        try:
+            from cn_prompt_builder import _is_nonfiction
+            from fact_check import fact_check_outline, apply_fixes_to_outline, summarize_issues
+            if _is_nonfiction(outline):
+                issues = fact_check_outline(outline)
+                if issues:
+                    n = apply_fixes_to_outline(outline, issues)
+                    res.fact_notes = summarize_issues(issues) + f"\n（已自动应用 {n} 处修正）"
+                    print(f"[{item.name_prefix}] {res.fact_notes}")
+        except Exception as e:  # noqa: BLE001
+            print(f"[{item.name_prefix}] 科学事实校验跳过: {e}")
+
     attach_rr_questions(outline, ec.rr_questions)
     attach_worksheet_questions(outline, ec.worksheet_questions, reading_q_count=4)
 
@@ -144,35 +211,170 @@ def run_one(item: BatchItem, out_root: Path, *, mock: bool = False,
     img_dir.mkdir(parents=True, exist_ok=True)
 
     # 绘本全自动出图（不逐页停）
+    # IP 一致性（单锚策略）：gpt-image-2 只吃一张参考图。锁定「全书主角定妆裁切图」为最强单锚，
+    # 主角在本页出现时置顶为唯一参考（锁主角=锁全书一家人），本页无任何角色时用全书风格锚兜底。
+    from cn_prompt_builder import book_primary_anchor_ref, book_style_anchor_ref
+    from seedream_client import crop_character_portrait, build_reference_sheet
+    anchor_dir = img_dir / "_anchors"
+    prot_ref = book_primary_anchor_ref(outline, ip_age)
+    style_anchor = book_style_anchor_ref()
+
+    # 书内角色册（用户拍板 2026-06-07）：登记反复出场的一次性/非 IP 角色，
+    # 为它们生成【书内定妆锚图】并挂到 outline.book_cast → 出图时全书锁同一形象。
+    try:
+        from book_cast import build_book_cast, anchor_prompt
+        book_cast = build_book_cast(outline)
+        if book_cast:
+            role_dir = anchor_dir / "_roles"
+            for r in book_cast.values():
+                if not r.needs_anchor:
+                    continue
+                ap = role_dir / f"role_{r.rid.replace(' ', '_')}.png"
+                if resume and (not mock) and ap.exists() and ap.stat().st_size > 0:
+                    r.anchor_path = str(ap)
+                    continue
+                try:
+                    ap.parent.mkdir(parents=True, exist_ok=True)
+                    with _img_guard():
+                        generate_image(prompt=anchor_prompt(r), dest=ap,
+                                       references=[style_anchor] if style_anchor else [],
+                                       label=f"{item.name_prefix} 角色锚:{r.display}", mock=mock)
+                    r.anchor_path = str(ap)
+                except Exception as e:  # noqa: BLE001
+                    print(f"[{item.name_prefix}] 一次性角色锚图生成失败({r.display}): {e}")
+            outline.book_cast = book_cast
+            named = "、".join(f"{r.display}" for r in book_cast.values() if r.needs_anchor)
+            if named:
+                print(f"[{item.name_prefix}] 书内角色册：为反复出场角色锁定形象 → {named}")
+    except Exception as e:  # noqa: BLE001
+        print(f"[{item.name_prefix}] 书内角色册跳过: {e}")
+
+    def _ip_name(ref_path) -> str:
+        try:
+            from ip_library import load_library
+            rp = str(Path(ref_path)).lower()
+            for e in load_library():
+                if str(e.image_path).lower() == rp:
+                    return e.name_base
+        except Exception:
+            pass
+        return ""
+
+    # ---- 阶段 1：顺序构建每页 prompt + 参考锚（CPU/IO，确定性，便于断点续跑判断）----
+    jobs: list[tuple] = []          # (index, dest, page_prompt, page_refs, fallback_prompt)
     image_paths: list[Path] = []
+    ip_lock_issues: list[str] = []  # 出图前自检门累计的主角铁律违规
     for page in outline.pages:
         built = build_cn_page_prompt(page, outline, ip_age)
+        # 出图前自检门（用户拍板 2026-06-07）：校验主角铁律，违规累计 → 标记人工抽查
+        _viol = validate_page_ip_lock(built, outline, ip_age, page)
+        if _viol:
+            tag = "封面" if (page.page_type == "cover" or page.index == 0) else f"P{page.index}"
+            ip_lock_issues.append(f"[{tag}] " + "；".join(_viol))
         dest = img_dir / f"page_{page.index:02d}.png"
+        image_paths.append(dest)    # 顺序占位，保证组装时按页序
+        # 图生图 IP 锁定（用户拍板 2026-06-06）：本页每个出场 IP 都用官方定妆图驱动。
+        # 主角置顶 → 多角色拼「定妆表」、单角色裁单锚；并加“照表还原·只改姿势表情”强约束。
+        refs = [Path(r) for r in built.references if r]
+        if prot_ref and Path(prot_ref) in refs:
+            refs.remove(Path(prot_ref))
+            refs.insert(0, Path(prot_ref))
+        local = [r for r in refs if r.exists()]
+        names = [(_ip_name(r) or "") for r in local]
+        anchor, note = None, ""
+        if len(local) >= 2:
+            sheet = build_reference_sheet(
+                local, anchor_dir / "_refsheets" / f"sheet_p{page.index:02d}.png",
+                labels=names)
+            if sheet is not None:
+                anchor = sheet
+                disp = "、".join(n for n in names if n) or "本页角色"
+                note = (
+                    "【参考图＝角色定妆表（连续性绘本·形象永久锁定）】所附唯一参考图是白底"
+                    f"「角色定妆表」，并排展示本页所有出场角色（{disp}，面板上方有英文名标签）。"
+                    "请把每个角色的脸型、五官、发型、发色、肤色、服装款式与配色 1:1 精确还原，"
+                    "与定妆表完全一致、与往期绘本同一个人。【唯一允许改变：姿势/动作 与 面部表情】，"
+                    "形象其余一律不得改动；严禁照搬定妆表的白底/并排站姿/多视图排版。"
+                )
+        if anchor is None and local:
+            anchor = crop_character_portrait(
+                local[0], anchor_dir / f"anchor_p{page.index:02d}.png") or local[0]
+            nm = names[0] or "主角"
+            note = (
+                f"【参考图＝{nm} 官方定妆图（连续性绘本·形象永久锁定）】请把 {nm} 的脸型/五官/发型/"
+                "发色/肤色/服装款式与配色 1:1 精确还原，与往期绘本同一个人。"
+                "【唯一允许改变：该角色的姿势/动作与面部表情】，形象其余不得改动；不要照搬参考图背景或姿势。"
+            )
+        elif anchor is None and style_anchor:
+            anchor = style_anchor
+        page_refs = [anchor] if anchor else []
+        page_prompt = built.prompt + ("\n\n" + note if note else "")
+        jobs.append((page.index, dest, page_prompt, page_refs, built.prompt))
+
+    # ---- 阶段 2：并行出图（页间无先后依赖，各写各的 dest）----
+    #   断点续跑：已存在且非空的页直接复用；全局 _IMG_SEM 统一节流在途总数。
+    def _gen_page(job: tuple) -> tuple[int, str, bool]:
+        idx, dest, page_prompt, page_refs, fallback_prompt = job
+        if resume and (not mock) and dest.exists() and dest.stat().st_size > 0:
+            return idx, "", True
         try:
-            generate_image(prompt=built.prompt, dest=dest,
-                           references=list(built.references)[:3],
-                           label=f"{item.name_prefix} P{page.index}", mock=mock)
+            with _img_guard():
+                generate_image(prompt=page_prompt, dest=dest, references=page_refs,
+                               label=f"{item.name_prefix} P{idx}", mock=mock)
+            return idx, "", False
         except Exception as e:  # noqa: BLE001
             # 单页失败不致命：用占位让组装继续，标记待人工抽查
-            generate_image(prompt=built.prompt, dest=dest, mock=True,
-                           label=f"P{page.index} FALLBACK")
-            res.error += f"[P{page.index} img: {e}] "
-        image_paths.append(dest)
+            generate_image(prompt=fallback_prompt, dest=dest, mock=True,
+                           label=f"P{idx} FALLBACK")
+            return idx, f"[P{idx} img: {e}] ", False
+
+    workers = max(1, min(image_workers, len(jobs)))
+    with ThreadPoolExecutor(max_workers=workers) as iex:
+        for _idx, err, skipped in iex.map(_gen_page, jobs):
+            if err:
+                res.error += err
+            if skipped:
+                res.skipped_pages += 1
 
     pre = item.name_prefix
-    pb = book_dir / f"{pre}_绘本.pptx"
+    pb = book_dir / f"{pre}_Reader.pptx"
     build_picturebook_pptx(outline, image_paths, pb)
-    ws = book_dir / f"{pre}_练习册.pptx"
+    ws = book_dir / f"{pre}_Worksheet.pptx"
     build_worksheet(outline, ws, image_paths=image_paths)
-    rr = book_dir / f"{pre}_阅读报告.docx"
+    rr = book_dir / f"{pre}_Reading_Report.docx"
     build_reading_report(outline, rr)
-    tg = book_dir / f"{pre}_教师指南.docx"
+    tg = book_dir / f"{pre}_Teachers_Guide.docx"
     build_teacher_guide(outline, tg)
 
     res.outputs = [str(pb), str(ws), str(rr), str(tg)]
 
+    # ④ 自动体检（evals）：跑完即查，按结论收紧「待人工抽查」标记 → 定向抽查
+    try:
+        from evals import run_all, WARN, ERROR
+        rep = run_all(outline=outline,
+                      worksheet_questions=getattr(ec, "worksheet_questions", None),
+                      rr_items=getattr(ec, "rr_questions", None))
+        res.eval_level = "error" if not rep.passed else ("warn" if rep.n_warn else "ok")
+        res.eval_msgs = [f"[{i.category}] {i.msg}" for i in rep.issues
+                         if i.level in (ERROR, WARN)][:8]
+        # 出图占位失败 或 体检非全绿 → 需人工抽查；全绿且无出图失败 → 可直接放行
+        res.needs_human_review = bool(res.error) or (res.eval_level != "ok")
+    except Exception as e:  # noqa: BLE001
+        res.eval_level = ""
+        res.needs_human_review = True
+        print(f"[{item.name_prefix}] evals 跳过: {e}")
+
+    # 出图前自检门结果并入体检：主角铁律违规 → 至少 warn + 强制人工抽查（红线，优先展示）
+    if ip_lock_issues:
+        res.eval_msgs = [f"[IP锁] {m}" for m in ip_lock_issues][:8] + res.eval_msgs
+        res.eval_msgs = res.eval_msgs[:12]
+        res.needs_human_review = True
+        if res.eval_level not in ("error",):
+            res.eval_level = "warn"
+        print(f"[{item.name_prefix}] ⚠ 主角铁律自检命中 {len(ip_lock_issues)} 处，已标记人工抽查")
+
     # 单本 ZIP
-    zp = book_dir / f"{pre}_全套.zip"
+    zp = book_dir / f"{pre}_Full_Set.zip"
     with zipfile.ZipFile(zp, "w", zipfile.ZIP_DEFLATED) as z:
         for f in [pb, ws, rr, tg]:
             z.write(f, arcname=f.name)
@@ -193,15 +395,22 @@ def run_batch(
     *,
     out_root: Optional[Path] = None,
     concurrency: int = 2,
+    image_concurrency: int = 4,
     flat: bool = False,
     make_master_zip: bool = True,
     mock: bool = False,
+    resume: bool = False,
     retries: int = 1,
     progress_cb: Optional[Callable[[int, int, BatchResult], None]] = None,
 ) -> dict:
-    """跑一批。返回 summary dict（含每本结果 + 日志路径）。"""
+    """跑一批。返回 summary dict（含每本结果 + 日志路径）。
+
+    image_concurrency：① 全局出图并发上限（所有本子在途请求总数，贴 API RPM）。
+    resume：② 断点续跑——已存在的页/本不重复出图（重跑失败本时配合 out_root 复用）。
+    """
     out_root = out_root or (OUTPUTS_DIR / f"batch_{time.strftime('%Y%m%d_%H%M%S')}")
     out_root.mkdir(parents=True, exist_ok=True)
+    set_image_concurrency(image_concurrency)   # ① 启动全局出图节流
     results: list[BatchResult] = []
     total = len(items)
     done = 0
@@ -210,7 +419,8 @@ def run_batch(
         last_err = ""
         for attempt in range(retries + 1):
             try:
-                return run_one(it, out_root, mock=mock, flat=flat)
+                return run_one(it, out_root, mock=mock, flat=flat,
+                               resume=resume, image_workers=image_concurrency)
             except Exception as e:  # noqa: BLE001
                 last_err = f"{e}\n{traceback.format_exc()[:800]}"
                 time.sleep(2)
@@ -245,13 +455,18 @@ def run_batch(
         "total": total,
         "ok": sum(1 for r in results if r.status == "ok"),
         "failed": sum(1 for r in results if r.status == "failed"),
+        "need_review": sum(1 for r in results if r.status == "ok" and r.needs_human_review),
+        "clean_pass": sum(1 for r in results
+                          if r.status == "ok" and not r.needs_human_review),
         "master_zip": master_zip,
         "books": [
             {
                 "title": r.item.title, "level": r.item.level, "book": r.item.book_number,
                 "status": r.status, "elapsed_s": round(r.elapsed_s, 1),
                 "outputs": r.outputs, "zip": r.zip_path,
-                "needs_human_review": r.needs_human_review, "error": r.error[:500],
+                "needs_human_review": r.needs_human_review,
+                "eval_level": r.eval_level, "eval_msgs": r.eval_msgs,
+                "skipped_pages": r.skipped_pages, "error": r.error[:500],
             }
             for r in results
         ],
@@ -263,10 +478,125 @@ def run_batch(
 
 
 # ============================================================
+#  ③ Dry-run 预检：开跑前本地校验（不花 API），列出每本张数/命中/预估
+# ============================================================
+def preflight(items: list[BatchItem]) -> list[dict]:
+    """对解析出的每本做廉价本地预检：页数、官方大纲/出图Prompt 命中、预估张数/耗时。
+
+    全部走本地 JSON（syllabus.match / image_prompts.match），不调用任何 AI 接口。
+    """
+    try:
+        from image_prompts import match as _img_match
+    except Exception:  # pragma: no cover
+        _img_match = None  # type: ignore
+    try:
+        from syllabus import match as _syl_match
+    except Exception:  # pragma: no cover
+        _syl_match = None  # type: ignore
+
+    rows: list[dict] = []
+    seen: set[tuple[str, str]] = set()
+    for it in items:
+        n_story = len(_story_lines(it.story))
+        imgs = max(IMAGES_PER_BOOK, n_story + 1)
+        syl_hit = bool(_syl_match and _syl_match(it.level, it.title))
+        img_hit = bool(_img_match and _img_match(it.level, it.title))
+        key = (it.level, re.sub(r"\s+", "", it.title.lower()))
+        warns = []
+        if not it.title.strip():
+            warns.append("缺标题")
+        if n_story < 5:
+            warns.append(f"正文仅{n_story}句(建议≥7)")
+        if not syl_hit:
+            warns.append("未命中官方S&S(走启发式)")
+        if not img_hit:
+            warns.append("未命中官方出图Prompt")
+        if key in seen:
+            warns.append("疑似重复本")
+        seen.add(key)
+        rows.append({
+            "Level": it.level, "Book#": it.book_number, "Title": it.title,
+            "正文句数": n_story, "出图张数": imgs,
+            "官方S&S": "✅" if syl_hit else "—",
+            "官方出图Prompt": "✅" if img_hit else "—",
+            "预估耗时": f"{(EST_SECS_TEXT + imgs * EST_SECS_PER_IMAGE) // 60}分{(EST_SECS_TEXT + imgs * EST_SECS_PER_IMAGE) % 60}秒",
+            "提示": "；".join(warns) or "ok",
+        })
+    return rows
+
+
+def items_from_failed_log(log_path: str | Path) -> list[BatchItem]:
+    """从既往 batch_log.json 读取 failed / 待抽查的本，重建 BatchItem 供重跑。
+
+    注意：日志不含故事原文，重跑需调用方在 items 里带上原 story；此处仅用于
+    定位"哪些本要重跑"。配合 UI：从原始批量输入里按 (level,title,book#) 过滤。
+    """
+    p = Path(log_path)
+    if not p.exists():
+        return []
+    try:
+        log = json.loads(p.read_text(encoding="utf-8"))
+    except Exception:
+        return []
+    out: list[BatchItem] = []
+    for b in log.get("books", []):
+        out.append(BatchItem(title=b.get("title", ""), level=str(b.get("level", "")),
+                             book_number=str(b.get("book", "")), story=""))
+    return out
+
+
+def select_failed_items(all_items: list[BatchItem], log_path: str | Path) -> list[BatchItem]:
+    """用既往日志里 failed 或 needs_human_review 的 (level,title,book#) 过滤原始 items（保留 story）。"""
+    p = Path(log_path)
+    if not p.exists():
+        return []
+    try:
+        log = json.loads(p.read_text(encoding="utf-8"))
+    except Exception:
+        return []
+    keys = {
+        (str(b.get("level", "")), re.sub(r"\s+", "", str(b.get("title", "")).lower()),
+         str(b.get("book", "")))
+        for b in log.get("books", [])
+        if b.get("status") == "failed" or b.get("needs_human_review")
+    }
+    picked = []
+    for it in all_items:
+        k = (str(it.level), re.sub(r"\s+", "", it.title.lower()), str(it.book_number))
+        if k in keys:
+            picked.append(it)
+    return picked
+
+
+# ============================================================
 #  Streamlit 入口
 # ============================================================
+def preflight_from_ui() -> None:
+    """③ 从 UI 跑 Dry-run 预检并展示一张校验表（不花 API）。"""
+    import streamlit as st
+
+    items = parse_batch_outlines(st.session_state.get("batch_outlines_raw", ""))
+    if not items:
+        st.warning("没解析到任何大纲。请检查格式：每本第一行 `Title | Level | Book#`，多本用 `===` 分隔。")
+        return
+    rows = preflight(items)
+    total_imgs = sum(r["出图张数"] for r in rows)
+    total_secs = sum(EST_SECS_TEXT + r["出图张数"] * EST_SECS_PER_IMAGE for r in rows)
+    img_conc = max(1, int(st.session_state.get("batch_image_concurrency", 4)))
+    wall = total_secs / img_conc
+    n_warn = sum(1 for r in rows if r["提示"] != "ok")
+    st.info(
+        f"共 **{len(rows)} 本** · 预计出图 **{total_imgs} 张** · "
+        f"并发 {img_conc} 下预估总墙钟 **约 {wall/60:.0f} 分钟** · "
+        f"{'⚠️ ' + str(n_warn) + ' 本有提示' if n_warn else '✅ 全部就绪'}"
+    )
+    st.dataframe(rows, width="stretch", hide_index=True)
+    if n_warn:
+        st.caption("「提示」非阻断，可照常开跑；未命中官方大纲/出图Prompt 的本会走启发式，注意抽查。")
+
+
 def run_batch_from_ui() -> None:
-    """从 web_app 的 session_state 读取配置并跑批量，带进度展示。"""
+    """从 web_app 的 session_state 读取配置并跑批量，带实时进度表 + 定向抽查。"""
     import streamlit as st
 
     raw = st.session_state.get("batch_outlines_raw", "")
@@ -276,30 +606,91 @@ def run_batch_from_ui() -> None:
         return
 
     concurrency = int(st.session_state.get("batch_concurrency", 2))
+    image_conc = int(st.session_state.get("batch_image_concurrency", 4))
     flat = st.session_state.get("batch_output_mode") == "平铺 + 规范命名"
     make_zip = bool(st.session_state.get("batch_zip", True))
     mock = bool(st.session_state.get("batch_mock", False))
+    resume = bool(st.session_state.get("batch_resume", False))
 
-    st.info(f"共 {len(items)} 本，将产出 {len(items) * 4} 件交付物。并发 {concurrency}。")
+    # ② 重跑失败本：若勾选且填了既往日志，则只挑 failed/待抽查的本，复用其 out_root + 续跑
+    rerun_log = (st.session_state.get("batch_rerun_log") or "").strip()
+    out_root = None
+    if rerun_log:
+        picked = select_failed_items(items, rerun_log)
+        if picked:
+            items = picked
+            out_root = Path(rerun_log).parent
+            resume = True
+            st.warning(f"♻️ 重跑模式：仅跑 {len(items)} 本（failed/待抽查），复用目录 `{out_root}` 并续跑已出图。")
+        else:
+            st.info("既往日志里没有需要重跑的本（或标题对不上），按全量跑。")
+
+    st.info(f"共 {len(items)} 本 → {len(items) * 4} 件交付物 · 本并发 {concurrency} · 出图全局并发 {image_conc}"
+            + ("（续跑）" if resume else ""))
     bar = st.progress(0.0, "批量生产中...")
-    status_box = st.empty()
+
+    # ⑤ 每本一行的实时进度表：先全量预填「排队中」，每完成一本就地更新
+    table_box = st.empty()
+    rows = {
+        it.name_prefix: {"本": it.name_prefix, "状态": "⏳ 排队/进行中",
+                         "用时": "", "体检": "", "抽查": "", "备注": ""}
+        for it in items
+    }
+
+    def _render_table() -> None:
+        table_box.dataframe(list(rows.values()), width="stretch", hide_index=True)
+
+    _render_table()
 
     def _cb(done: int, total: int, r: BatchResult) -> None:
         bar.progress(done / total, f"已完成 {done}/{total} 本")
-        icon = "✅" if r.status == "ok" else "❌"
-        status_box.write(f"{icon} {r.item.name_prefix} · {r.status} · {r.elapsed_s:.0f}s {r.error[:120]}")
+        key = r.item.name_prefix
+        if key in rows:
+            eval_icon = {"ok": "🟢", "warn": "🟡", "error": "🔴", "": "—"}.get(r.eval_level, "—")
+            rows[key] = {
+                "本": key,
+                "状态": "✅ 完成" if r.status == "ok" else "❌ 失败",
+                "用时": f"{r.elapsed_s:.0f}s",
+                "体检": eval_icon,
+                "抽查": "需抽查" if r.needs_human_review else "可放行",
+                "备注": (r.error[:80] or (f"复用{r.skipped_pages}页" if r.skipped_pages else "")),
+            }
+            _render_table()
 
     summary = run_batch(
-        items, concurrency=concurrency, flat=flat,
-        make_master_zip=make_zip, mock=mock, progress_cb=_cb,
+        items, out_root=out_root, concurrency=concurrency, image_concurrency=image_conc,
+        flat=flat, make_master_zip=make_zip, mock=mock, resume=resume, progress_cb=_cb,
     )
     bar.progress(1.0, "完成")
-    st.success(f"完成：成功 {summary['ok']} / 失败 {summary['failed']}，输出目录 `{summary['out_root']}`")
-    st.caption("⚠️ 绘本图为全自动生成，建议回单本模式抽查关键页；失败本可单独重跑。")
+    st.success(
+        f"完成：成功 {summary['ok']} / 失败 {summary['failed']} · "
+        f"🟢 可直接放行 {summary.get('clean_pass', 0)} · 🟡🔴 需抽查 {summary.get('need_review', 0)}"
+        f" · 输出目录 `{summary['out_root']}`"
+    )
+
+    # ④ 定向抽查：只把「需人工抽查」的本 + 体检红/黄项列出来，把人力用在刀刃上
+    review = [b for b in summary["books"] if b.get("needs_human_review")]
+    if review:
+        with st.expander(f"🔎 需人工抽查（{len(review)} 本）— 其余已体检通过可直接放行", expanded=True):
+            for b in review:
+                tag = {"error": "🔴", "warn": "🟡"}.get(b.get("eval_level"), "⚪")
+                st.markdown(f"{tag} **{b['title']}** (L{b['level']} · Book{b['book']}) — "
+                            f"{b['status']}{' · ' + b['error'][:120] if b.get('error') else ''}")
+                for m in b.get("eval_msgs", []):
+                    st.caption(f"　• {m}")
+    else:
+        st.caption("🟢 全部体检通过，无需逐本抽查。")
+
+    failed = [b for b in summary["books"] if b["status"] == "failed"]
+    if failed:
+        st.error(f"❌ {len(failed)} 本失败。勾选「重跑失败本」并把下方日志路径填回即可只补跑这些本：")
+        st.code(summary.get("log_path", ""), language="text")
+
     if summary.get("master_zip"):
         mz = summary["master_zip"]
         if Path(mz).exists():
             with open(mz, "rb") as f:
                 st.download_button("⬇️ 下载全部（ALL_BOOKS.zip）", data=f.read(),
                                    file_name="ALL_BOOKS.zip", mime="application/zip")
-    st.json(summary)
+    with st.expander("📋 完整 JSON 日志", expanded=False):
+        st.json(summary)

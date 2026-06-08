@@ -15,12 +15,13 @@
 from __future__ import annotations
 
 import json
+import threading
 import time
 from pathlib import Path
 from typing import Iterable
 
 import requests
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFilter
 
 from config import (
     IMAGE_DELIVER_PRINT,
@@ -31,6 +32,13 @@ from config import (
     IMAGE_TARGET_PRINT,
     IMAGE_TARGET_RATIO,
     IMAGE_UPSCALE_METHOD,
+    IMAGE_PRINT_DPI,
+    IMAGE_PRINT_DELIVER_PX,
+    IMAGE_DELIVER_CMYK,
+    IMAGE_DELIVER_TIFF,
+    IMAGE_DELIVER_PDF,
+    IMAGE_CMYK_PROFILE,
+    IMAGE_PRINT_UNSHARP,
     JIMENG_API_KEY,
     JIMENG_BASE_URL,
     JIMENG_MODEL,
@@ -76,20 +84,29 @@ def _upscale_esrgan(img: "Image.Image", target: tuple[int, int]) -> "Image.Image
         return None
 
 
+def _upscale_to(im: "Image.Image", target: tuple[int, int]) -> "Image.Image":
+    """把图升到目标像素：优先 ESRGAN，否则 Lanczos + 轻度 USM 锐化（弥补插值发虚）。"""
+    out = None
+    if IMAGE_UPSCALE_METHOD.lower() == "esrgan":
+        out = _upscale_esrgan(im, target)
+    if out is None:
+        out = im.resize(target, Image.LANCZOS)
+        if IMAGE_PRINT_UNSHARP:
+            # 放大后轻锐化：恢复边缘清晰、不发虚（印刷无模糊）
+            out = out.filter(ImageFilter.UnsharpMask(radius=1.6, percent=80, threshold=2))
+    return out
+
+
 def postprocess_4k(path: Path) -> Path:
-    """对已落地的图做 方案A 后处理：居中裁 4:3 → 放大到精细印刷尺寸。原地覆盖 path。"""
+    """对已落地的图做 方案A 后处理：居中裁 4:3 → 放大到工作图尺寸（进 PPT），并写入 DPI。原地覆盖。"""
     if not IMAGE_DELIVER_PRINT:
         return path
     try:
         with Image.open(path) as im:
             im = im.convert("RGB")
             im = crop_to_ratio(im, IMAGE_TARGET_RATIO)
-            out = None
-            if IMAGE_UPSCALE_METHOD.lower() == "esrgan":
-                out = _upscale_esrgan(im, IMAGE_TARGET_PRINT)
-            if out is None:
-                out = im.resize(IMAGE_TARGET_PRINT, Image.LANCZOS)
-            out.save(path)
+            out = _upscale_to(im, IMAGE_TARGET_PRINT)
+            out.save(path, dpi=(IMAGE_PRINT_DPI, IMAGE_PRINT_DPI))
     except Exception as e:
         # 后处理失败不影响主流程：保留原图
         print(f"[postprocess_4k] 跳过放大（保留原图）: {e}")
@@ -97,17 +114,146 @@ def postprocess_4k(path: Path) -> Path:
 
 
 # ============================================================
+#  A5 印刷交付：高分辨率 + 300DPI + CMYK + TIFF / PDF
+# ============================================================
+_CMYK_PROFILES_CACHE: dict | None = None
+
+
+def _load_cmyk_transform():
+    """返回 (srgb_profile, cmyk_profile) ImageCms 句柄；无可用 CMYK ICC 时返回 None。"""
+    global _CMYK_PROFILES_CACHE
+    if _CMYK_PROFILES_CACHE is not None:
+        return _CMYK_PROFILES_CACHE
+    result = None
+    try:
+        from PIL import ImageCms  # type: ignore
+        cmyk_path = ""
+        # 1) 用户显式指定的 ICC
+        if IMAGE_CMYK_PROFILE and Path(IMAGE_CMYK_PROFILE).exists():
+            cmyk_path = IMAGE_CMYK_PROFILE
+        else:
+            # 2) 仓库内自带 / 常见系统位置
+            candidates = [
+                Path(__file__).resolve().parent.parent / "assets" / "icc" / "USWebCoatedSWOP.icc",
+                Path("C:/Windows/System32/spool/drivers/color/USWebCoatedSWOP.icc"),
+                Path("C:/Windows/System32/spool/drivers/color/JapanColor2001Coated.icc"),
+            ]
+            for c in candidates:
+                if c.exists():
+                    cmyk_path = str(c)
+                    break
+        if cmyk_path:
+            srgb = ImageCms.createProfile("sRGB")
+            cmyk = ImageCms.getOpenProfile(cmyk_path)
+            result = {"cms": ImageCms, "srgb": srgb, "cmyk": cmyk, "path": cmyk_path}
+    except Exception as e:
+        print(f"[cmyk] ICC 加载失败，改用 Pillow 内置转换: {e}")
+        result = None
+    _CMYK_PROFILES_CACHE = result or {}
+    return _CMYK_PROFILES_CACHE
+
+
+def _to_cmyk(im: "Image.Image") -> "Image.Image":
+    """RGB → CMYK：优先走 ICC 色彩转换（准确），否则用 Pillow 内置转换（近似）。"""
+    prof = _load_cmyk_transform()
+    if prof:
+        try:
+            cms = prof["cms"]
+            return cms.profileToProfile(
+                im.convert("RGB"), prof["srgb"], prof["cmyk"],
+                renderingIntent=0, outputMode="CMYK",
+            )
+        except Exception as e:
+            print(f"[cmyk] ICC 转换失败，回退内置: {e}")
+    return im.convert("CMYK")
+
+
+def deliver_print_assets(
+    src: Path,
+    out_dir: Path,
+    base_name: str,
+    *,
+    target_px: tuple[int, int] | None = None,
+    dpi: int | None = None,
+) -> dict[str, Path]:
+    """生成印刷交付件：高分辨率 + 300DPI + CMYK 的 TIFF / PDF。
+
+    Returns: {"tiff": Path, "pdf": Path}（按开关产出，失败项跳过）。
+    """
+    src = Path(src)
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    target_px = target_px or IMAGE_PRINT_DELIVER_PX
+    dpi = dpi or IMAGE_PRINT_DPI
+    produced: dict[str, Path] = {}
+    try:
+        with Image.open(src) as im:
+            im = im.convert("RGB")
+            im = crop_to_ratio(im, IMAGE_TARGET_RATIO)
+            hi = _upscale_to(im, target_px)
+            cmyk = _to_cmyk(hi) if IMAGE_DELIVER_CMYK else hi
+
+            if IMAGE_DELIVER_TIFF:
+                tiff_path = out_dir / f"{base_name}.tif"
+                # LZW 无损压缩；写入 300DPI；CMYK（或 RGB 回退）
+                cmyk.save(tiff_path, format="TIFF", dpi=(dpi, dpi), compression="tiff_lzw")
+                produced["tiff"] = tiff_path
+
+            if IMAGE_DELIVER_PDF:
+                pdf_path = out_dir / f"{base_name}.pdf"
+                # Pillow 可把 CMYK 图写进 PDF（CMYK 300DPI）；
+                # 严格 PDF/X-1a 需 Ghostscript，此处产出印刷可用的 CMYK PDF。
+                save_img = cmyk if cmyk.mode in ("CMYK", "RGB", "L") else cmyk.convert("CMYK")
+                save_img.save(pdf_path, format="PDF", resolution=float(dpi))
+                produced["pdf"] = pdf_path
+    except Exception as e:
+        print(f"[deliver_print_assets] 失败（跳过）{src.name}: {e}")
+    return produced
+
+
+# ============================================================
 #  图片托管：本地图 → 公网 URL（gpt-image-2 参考图只收 URL）
 # ============================================================
+# 参考图上传缓存：同一本书 8 张常用同一张定妆合集参考图，避免每张都重传图床。
+# key = (绝对路径, 文件大小, mtime_ns) → 公网直链；带锁防并发重复上传（并发生图时）。
+_REF_URL_CACHE: dict[str, str] = {}
+_REF_LOCK = threading.Lock()
+
+
 def host_image_to_url(path: Path) -> str | None:
     """把本地图片上传到临时图床，返回公网直链。失败返回 None。
 
     参考图只需在生成的几秒内可访问，临时图床（tmpfiles 24h）足够。
+    同一文件（按 路径+大小+mtime 判定）只上传一次，结果缓存复用。
     """
     path = Path(path)
     if not path.exists():
         return None
 
+    try:
+        stt = path.stat()
+        cache_key = f"{path.resolve()}|{stt.st_size}|{stt.st_mtime_ns}"
+    except OSError:
+        cache_key = str(path)
+
+    # 已缓存直接返回（命中即省去一次图床往返）
+    cached = _REF_URL_CACHE.get(cache_key)
+    if cached:
+        return cached
+
+    # 加锁：并发生图时，同一参考图只让一个线程真正上传，其余等待后命中缓存
+    with _REF_LOCK:
+        cached = _REF_URL_CACHE.get(cache_key)
+        if cached:
+            return cached
+        url = _do_host_upload(path)
+        if url:
+            _REF_URL_CACHE[cache_key] = url
+        return url
+
+
+def _do_host_upload(path: Path) -> str | None:
+    """真正执行图床上传（无缓存）。"""
     provider = IMAGE_HOST_PROVIDER.lower()
 
     if provider in ("tmpfiles", "auto"):
@@ -255,6 +401,66 @@ def build_reference_sheet(
 
 
 # ============================================================
+#  单角色「裁切定妆参考」（替代拼图）——降低配角崩形 + 提供最强单锚
+# ============================================================
+#  gpt-image-2 只吃 1 张参考图：与其拼一张多角色合集（模型会照搬白底并排排版、
+#  把注意力摊薄导致配角崩形），不如给一张「干净、贴身裁切」的单角色定妆图作为最强单锚，
+#  其余角色交给正向 prompt 的形象锁文字。本函数把定妆图去白边、贴身裁切、补一点留白，
+#  得到一张干净的单角色锚图。
+def crop_character_portrait(
+    src: Path | str,
+    dest: Path,
+    *,
+    pad_ratio: float = 0.06,
+    white_thresh: int = 245,
+) -> Path | None:
+    """把单张角色定妆图去白边、贴身裁切成干净的单角色锚图。
+
+    Args:
+        src: 角色定妆图（本地文件）。
+        dest: 输出路径。
+        pad_ratio: 裁切后四周补的留白比例（相对短边）。
+        white_thresh: 判定为"白底"的灰度阈值（>= 视为白）。
+    Returns:
+        裁好的图路径；失败（文件缺失/全白等）时返回 None，调用方应回退原图。
+    """
+    try:
+        from PIL import ImageChops
+        s = str(src)
+        if s.startswith("http://") or s.startswith("https://"):
+            return None
+        p = Path(s)
+        if not p.exists():
+            return None
+        im = Image.open(p).convert("RGBA")
+        bg = Image.new("RGBA", im.size, (255, 255, 255, 255))
+        im = Image.alpha_composite(bg, im).convert("RGB")
+
+        # 用"与纯白底的差异"求主体外接框
+        white = Image.new("RGB", im.size, (255, 255, 255))
+        diff = ImageChops.difference(im, white).convert("L")
+        mask = diff.point(lambda v: 255 if v > (255 - white_thresh) else 0)
+        bbox = mask.getbbox()
+        if not bbox:
+            return None  # 整张近白，无主体可裁
+        l, t, r, b = bbox
+        w, h = im.size
+        pad = int(min(w, h) * max(0.0, pad_ratio))
+        l = max(0, l - pad); t = max(0, t - pad)
+        r = min(w, r + pad); b = min(h, b + pad)
+        if r - l < 8 or b - t < 8:
+            return None
+        crop = im.crop((l, t, r, b))
+
+        dest = Path(dest)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        crop.save(dest, "PNG")
+        return dest
+    except Exception:
+        return None
+
+
+# ============================================================
 #  发送前敏感词清洗（避免 Azure 图像安全审核误判 safety_violations）
 # ============================================================
 #  说明：最终 prompt = 正向 + 负向 拼成一整段文本。Azure 的内容安全审核只看“词本身”，
@@ -317,6 +523,7 @@ def generate_image(
     seed: int | None = None,  # gpt-image-2 不支持 seed，签名保留兼容
     size: str | None = None,
     reference_url: str | None = None,
+    deliver_print: bool | None = None,  # None=按配置；False=审图阶段跳过4K放大（更快）
 ) -> Path:
     """生成单张图写入 dest。失败抛异常。
 
@@ -350,21 +557,30 @@ def generate_image(
     if ref_url:
         payload["image"] = ref_url
 
+    do_print = IMAGE_DELIVER_PRINT if deliver_print is None else deliver_print
+
+    # 退避重试：限流(429/rate limit)用更长退避 + 抖动，避免并发线程同步重试再次撞限流。
+    import random as _rnd
+    max_attempts = REQUEST_RETRIES + 2  # 比原来多 1 次，给限流更多机会
     last_err: Exception | None = None
-    for attempt in range(REQUEST_RETRIES + 1):
+    for attempt in range(max_attempts):
         try:
             task_id = _submit_task(url, headers, payload)
             img_url = _poll_task(task_id, headers)
             img_bytes = requests.get(img_url, timeout=REQUEST_TIMEOUT).content
             dest.write_bytes(img_bytes)
-            postprocess_4k(dest)   # 方案A：居中裁 4:3 → 升 4K
+            if do_print:
+                postprocess_4k(dest)   # 方案A：居中裁 4:3 → 升 4K（审图阶段会跳过）
             return dest
         except Exception as e:
             last_err = e
-            if attempt < REQUEST_RETRIES:
-                time.sleep(3 * (attempt + 1))
-            else:
+            if attempt >= max_attempts - 1:
                 break
+            msg = str(e).lower()
+            is_rate = ("429" in msg or "rate" in msg or "limit" in msg
+                       or "too many" in msg or "quota" in msg)
+            base = 12 if is_rate else 3       # 限流退避更久
+            time.sleep(base * (attempt + 1) + _rnd.uniform(0, 3))
 
     raise RuntimeError(f"gpt-image-2 生图失败（已重试）: {last_err}")
 

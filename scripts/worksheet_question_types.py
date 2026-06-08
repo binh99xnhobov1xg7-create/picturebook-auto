@@ -129,68 +129,68 @@ _VOCAB: list[QuestionType] = [
 
 
 # ============================================================
-# Sentences 9 个
+# Sentences 9 个（大标题统一复数 "Sentences"）
 # ============================================================
 _SENTENCE: list[QuestionType] = [
     QuestionType(
         id="sent_tick_sentence",
-        category="sentence", en_title="Sentence",
+        category="sentence", en_title="Sentences",
         en_instr="Look at the picture and tick the correct sentence.",
         stars=1, needs_image=True, format="tick_sentence",
         ai_items_schema='[{"image_hint":"<page idx>","options":["...","..."],"correct":0}, ...]',
     ),
     QuestionType(
         id="sent_match_picture",
-        category="sentence", en_title="Sentence",
+        category="sentence", en_title="Sentences",
         en_instr="Match the sentence with the picture.",
         stars=1, needs_image=True, format="connect_lines",
         ai_items_schema='[{"sentence":"...","image_hint":"<page idx>"}, ...]',
     ),
     QuestionType(
         id="sent_true_false",
-        category="sentence", en_title="Sentence",
+        category="sentence", en_title="Sentences",
         en_instr="Read the sentences and write T (True) or F (False).",
         stars=2, format="true_false",
         ai_items_schema='[{"statement":"Anna shared pencils.","answer":"T"}, ...]',
     ),
     QuestionType(
         id="sent_fill_blank",
-        category="sentence", en_title="Sentence",
+        category="sentence", en_title="Sentences",
         en_instr="Choose the correct words to complete the sentences.",
         stars=2, format="fill_blank",
         ai_items_schema='[{"sentence":"Anna ____ pencils with a boy.","answer":"shared"}, ...]',
     ),
     QuestionType(
         id="sent_put_in_order",
-        category="sentence", en_title="Sentence",
+        category="sentence", en_title="Sentences",
         en_instr="Put the sentences in the correct order.",
         stars=2, format="sequence",
         ai_items_schema='[{"text":"Anna sat down at a wooden desk.","order":1}, ...]',
     ),
     QuestionType(
         id="sent_q_a_match",
-        category="sentence", en_title="Sentence",
+        category="sentence", en_title="Sentences",
         en_instr="Match the questions with the correct answers.",
         stars=3, format="match_2col",
         ai_items_schema='[{"q":"How did Anna feel?","a":"Nervous."}, ...]',
     ),
     QuestionType(
         id="sent_write_from_picture",
-        category="sentence", en_title="Sentence",
+        category="sentence", en_title="Sentences",
         en_instr="Write a sentence about each picture.",
         stars=3, needs_image=True, format="write_open",
         ai_items_schema='[{"image_hint":"<page idx>","hint":"Anna feels ___."}, ...]',
     ),
     QuestionType(
         id="sent_rewrite",
-        category="sentence", en_title="Sentence",
+        category="sentence", en_title="Sentences",
         en_instr="Rewrite each sentence following the example.",
         stars=3, format="rewrite",
         ai_items_schema='{"example":{"from":"...","to":"..."},"items":[{"prompt":"...","answer":"..."}, ...]}',
     ),
     QuestionType(
         id="sent_correct_grammar",
-        category="sentence", en_title="Sentence",
+        category="sentence", en_title="Sentences",
         en_instr="Find and correct the grammar mistake in each sentence.",
         stars=3, format="rewrite",
         ai_items_schema='[{"wrong":"Anna feel nervous.","correct":"Anna feels nervous."}, ...]',

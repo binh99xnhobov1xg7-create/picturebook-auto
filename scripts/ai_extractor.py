@@ -15,12 +15,14 @@
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 from dataclasses import dataclass, field
 from typing import Any
 
 from config import (
+    EXTRACT_MODEL,
     MOCK_AI_EXTRACT,
     rr_question_distribution,
 )
@@ -61,6 +63,51 @@ QUESTION_POOL: dict[str, list[str]] = {
         "compare_contrast", "inference", "research_pbl",
     ],
 }
+
+# ---------- 题型轮换（同一渲染槽位内换题型，告别"每级雷同"；版式不变） ----------
+# 每个 level 给 6 个槽位，每个槽位列出"渲染到同一版式槽"的可互换题型；按种子在槽内轮换。
+# 关键：同一槽位的所有候选必须落到 attach_worksheet_questions 的同一 out 槽，保证版式恒定。
+QUESTION_POOL_ALTS: dict[str, list[list[str]]] = {
+    "smart": [["color_match", "circle_match", "word_to_pic"], ["circle_match", "color_match"],
+              ["fill_blank_simple"], ["word_to_pic", "circle_match"],
+              ["draw_favorite", "personal_simple"], ["personal_simple", "draw_favorite"]],
+    "0": [["color_match", "circle_match", "word_to_pic"], ["circle_match", "color_match"],
+          ["fill_blank_simple"], ["word_to_pic", "circle_match"],
+          ["draw_favorite", "personal_simple"], ["personal_simple", "draw_favorite"]],
+    "1": [["circle_match", "word_to_pic", "color_match"], ["fill_blank_simple"],
+          ["word_order_simple", "story_sequence"], ["true_false_simple"],
+          ["draw_favorite", "personal_simple"], ["personal_simple", "draw_favorite"]],
+    "2": [["fill_blank"], ["word_order", "story_sequence"], ["true_false"],
+          ["match_definition"], ["story_sequence", "word_order"], ["personal_write", "draw_favorite"]],
+    "3": [["unscramble", "fill_blank"], ["fill_blank", "unscramble"], ["match_definition"],
+          ["rewrite_tense"], ["true_false"], ["plot_chart", "compare_contrast"]],
+    "4": [["unscramble", "fill_blank"], ["fill_blank", "rewrite_tense"], ["rewrite_tense", "rewrite_voice"],
+          ["emotion_fill", "fill_blank"], ["true_false"], ["plot_chart_pbl", "compare_contrast"]],
+    "5": [["match_definition"], ["fill_blank_advanced", "unscramble"], ["rewrite_voice", "rewrite_tense"],
+          ["compare_contrast", "plot_chart_pbl"], ["inference"], ["open_ended_pbl", "essay_short"]],
+    "6": [["match_definition"], ["fill_blank_advanced", "unscramble"], ["essay_short", "open_ended_pbl"],
+          ["compare_contrast", "plot_chart_pbl"], ["inference"], ["research_pbl", "essay_short"]],
+}
+
+
+def _pool_seed(*parts) -> int:
+    """由书名等稳定信息派生一个轮换种子（同一本书结果稳定、不同书结果不同）。"""
+    s = "|".join(str(p) for p in parts if p)
+    if not s:
+        return 0
+    return int(hashlib.md5(s.encode("utf-8")).hexdigest()[:8], 16)
+
+
+def select_question_pool(level_key: str, seed: int = 0) -> list[str]:
+    """在每个槽位的可互换题型里按 seed 轮换，得到本书的 6 道题型（版式不变、内容多样）。"""
+    alts = QUESTION_POOL_ALTS.get(level_key)
+    if not alts:
+        return list(QUESTION_POOL.get(level_key, QUESTION_POOL["4"]))
+    out: list[str] = []
+    for i, opts in enumerate(alts):
+        out.append(opts[(seed + i) % len(opts)] if opts else "")
+    return out
+
 
 # 题型展示标题（worksheet 大标题）
 QUESTION_TITLES: dict[str, str] = {
@@ -158,11 +205,17 @@ def extract_all(
     use_mock = MOCK_AI_EXTRACT if mock is None else mock
     if use_mock:
         return _mock_extract(raw_story, title, level, cefr, theme)
-    try:
-        return _doubao_extract(raw_story, title, level, cefr, theme)
-    except Exception as e:
-        print(f"[ai_extractor] Doubao 调用失败 ({e})，回退 mock 模式")
-        return _mock_extract(raw_story, title, level, cefr, theme)
+    # 真实抽取：失败时重试（含 json_repair 兜底），最多 3 次，避免偶发 JSON/网络错误
+    # 直接静默回退 mock（mock 是占位假数据，会让交付物内容明显变差）。
+    last_err: Exception | None = None
+    for attempt in range(1, 4):
+        try:
+            return _doubao_extract(raw_story, title, level, cefr, theme)
+        except Exception as e:  # noqa: BLE001
+            last_err = e
+            print(f"[ai_extractor] 真实抽取第 {attempt}/3 次失败：{e}")
+    print(f"[ai_extractor] ⚠️ 真实抽取连续失败，回退 mock（内容为占位，质量下降）：{last_err}")
+    return _mock_extract(raw_story, title, level, cefr, theme)
 
 
 # ---------- 真实调用（2026-06-02 已切到 imarouter Claude/GPT，走 deepseek_chat 健壮封装）----------
@@ -174,7 +227,7 @@ def _doubao_extract(
     level_key = _level_key(level)
     is_dual = level_key in ("smart", "0", "1", "2")
     rr_dist = rr_question_distribution(level)
-    pool = QUESTION_POOL.get(level_key, QUESTION_POOL["4"])
+    pool = select_question_pool(level_key, _pool_seed(title, level))
 
     system_prompt = _build_system_prompt(level_key, is_dual, rr_dist, pool)
     user_prompt = _build_user_prompt(raw_story, title, level, cefr, theme)
@@ -184,12 +237,13 @@ def _doubao_extract(
     raw = deepseek_chat(
         system=system_prompt,
         user=user_prompt,
+        model=EXTRACT_MODEL,  # 抽取用更快的 Sonnet，速度比 Opus 快数倍
         max_tokens=16000,  # 抽取 JSON 较大（pages+scene_cn+题目），防截断
         json_mode=True,  # 不支持时 deepseek_chat 会自动剔除 response_format 重试
         timeout=240,
     )
-    data = json.loads(_extract_json_block(raw))
-    return _parse_doubao_payload(data, level_key, is_dual, rr_dist, raw_story)
+    data = _loads_robust(raw)
+    return _parse_doubao_payload(data, level_key, is_dual, rr_dist, raw_story, pool=pool)
 
 
 def generate_one_worksheet_question(
@@ -268,11 +322,12 @@ items JSON schema for this type: {schema or '[{...}]'}
     raw = deepseek_chat(
         system=system_prompt,
         user=user_prompt,
+        model=EXTRACT_MODEL,  # 单题重出也用更快的 Sonnet
         max_tokens=2000,
         json_mode=True,
         timeout=120,
     )
-    data = json.loads(_extract_json_block(raw))
+    data = _loads_robust(raw)
     items = data.get("items") if isinstance(data, dict) else None
     if not isinstance(items, list):
         items = []
@@ -312,6 +367,26 @@ def _mock_one_worksheet_question(qtype: str, raw_story: str, level_key: str) -> 
         "answer_key": None,
         "extra": "",
     }
+
+
+def _loads_robust(raw: str) -> dict:
+    """健壮解析模型返回的 JSON：先标准 json.loads，失败则用 json_repair 修复常见错误
+    （缺逗号、未转义引号/换行、尾逗号等），杜绝偶发 JSON 错误导致整本抽取失败/静默回退 mock。"""
+    block = _extract_json_block(raw)
+    try:
+        return json.loads(block)
+    except Exception:
+        pass
+    try:
+        from json_repair import repair_json
+        fixed = repair_json(block)
+        data = json.loads(fixed)
+        if isinstance(data, dict):
+            print("[ai_extractor] JSON 已用 json_repair 自动修复")
+            return data
+    except Exception as e:  # noqa: BLE001
+        raise ValueError(f"模型返回的 JSON 无法解析且修复失败: {e}") from e
+    raise ValueError("模型返回的 JSON 修复后不是对象")
 
 
 def _extract_json_block(raw: str) -> str:
@@ -363,9 +438,12 @@ def _build_system_prompt(level_key: str, is_dual: bool, rr_dist: list[int], pool
       "index": 1,
       "text": "<English page text 5-30 words>",
       "scene": "<2-3 sentence English visual scene description, no quoted text>",
-      "scene_cn": "<一段连贯中文画面描述，120-220字，包含：主体（人物+具体外观锁定）+ 动作 + 环境物品 + 光照氛围，写得越具体越好，不分段不列点>",
+      "scene_cn": "<一段连贯中文画面描述，120-220字，包含：主体（人物，只用名字）+ 动作 + 环境物品 + 本页 hook 趣味细节 + 光照氛围，写得越具体越好，不分段不列点>",
       "expression": "<one-word emotion>",
-      "shot": "medium"
+      "shot": "medium",
+      "camera_angle": "<eye | high | low | birdseye | over_shoulder，按本页剧情选最有表现力的机位，不要全用 eye>",
+      "focus": "<本页的'高潮/焦点动作'——本页最具视觉张力、最关键或最有趣的那一下，一句中文，必须是主角正在做的动作，将作为画面居中的主体动作（如'Tommy 俯身张开双手扑向桌下逃窜的小仓鼠'）>",
+      "hook": "<本页一个有趣的画面彩蛋/细节，一句中文，如'桌子下面卡着橡皮的小仓鼠探出半个身子'，没有就给一个能强化剧情趣味的小细节>"
     }},
     ... 7 entries total, indices 1..7
   ],
@@ -397,20 +475,51 @@ Write ONE continuous Chinese paragraph (120-220 字) describing ONLY action + en
   1. WHO — refer to each character BY NAME ONLY (Anna / Mia / Tommy / 一个男孩 ...).
      **NEVER describe any appearance** — no hair, hairstyle, clothes, colors, glasses, age-look, face/features.
      Appearance is 100% locked by the IP reference images downstream; if you write it here you create a WRONG/conflicting character. This is the #1 rule.
-     **Pronoun resolution (CRITICAL for correctness)**: resolve every "she/her/he/him/they/I" to its ACTUAL antecedent in THIS page + previous pages.
+     **Pronoun resolution (CRITICAL — read the context, do NOT blindly map to Tommy/Mia)**:
+     Resolve every "she/her/he/him/it/they/I" to its ACTUAL antecedent in THIS page + previous pages by READING the story.
+       - A pronoun may refer to a NON-CHILD subject: a talking object (e.g. the gingerbread man / a toy), an ANIMAL (the fox, the cow, the bear), or an ADULT (dad / mom / grandma / a mechanic). In "He runs past the cow ... says the gingerbread man", "He" = the GINGERBREAD MAN (a cookie), NOT a boy. In a family story "He fixed the car" may = Dad; "She cooked" may = Mom. Resolve to the TRUE subject — never auto-substitute Tommy/Mia.
+       - Map a pronoun to Mia/Tommy ONLY when its antecedent is genuinely an UNNAMED human CHILD (a girl→Mia, a boy→Tommy); keep that identity for later pronouns about them.
        - If the sentence is about Anna, then "she/her" = Anna — do NOT pull in Mia or Tommy.
-       - Only when the story introduces a brand-new UNNAMED child ("a girl"/"a boy" with no name) do you map that child to Mia (girl) / Tommy (boy); keep that same identity for later pronouns about them.
-       - Text with only "I" and no name → the speaker is the book's protagonist (default Tommy unless the book is clearly Mia's / a named character's), kept consistent for the whole book.
-       - Text with "We" (no names) → BOTH series protagonists Tommy AND Mia together, with balanced/equal presence.
-     Series principle: Tommy (boy) and Mia (girl) are the FIXED protagonists of this whole picture-book series; this is a SET of books, not one book.
+       - "I"/"We" with no name: only treat as Tommy/Mia if the speaker is clearly a child in the story; if the speaker is the gingerbread man/an animal/an adult, use that subject instead.
+     **Classic fairy tales** (The Gingerbread Man, Goldilocks, The Three Little Pigs, Little Red Riding Hood ...): the tale's own lead (the gingerbread man, Goldilocks, the pigs, the fox/wolf) is ITS OWN character — render it as itself, NOT as Tommy/Mia. Tommy & Mia appear only if the source frames them as readers/observers (e.g. on the cover). Such fable scenes may legitimately contain NO Tommy/Mia.
+     **Child-safe**: any animal or "villain" (fox, wolf, bear ...) must be friendly, cute, gentle-faced — never fangs, never fierce/menacing/scary/ugly.
+     Series principle: Tommy (boy) and Mia (girl) are the FIXED protagonists of this whole picture-book SERIES (a SET of books), but ONLY when the story actually features children — do not force them into a pure fable scene.
      Do NOT add any character who is not actually present in this page's sentence; supporting characters max 2, background only.
   2. WHAT (concrete action verb + body posture + interaction) — e.g. "蹲下伸手指" not just "看着"
   3. WHERE (environment objects you can SEE: desk shape/color, blackboard, books, light source) — cozy and tidy, NOT empty/blank
   4. ATMOSPHERE (warm soft light direction, soft watercolor mood)
 Do NOT just translate the English sentence — REWRITE it as a visual scene a painter could draw, but with ZERO appearance words.
 Example for "Anna felt nervous on her first day in the new class. Her hands shook as she sat down at a small wooden desk.":
-  scene_cn: "教室靠窗的一角，Anna 独自在一张浅棕色木质小课桌后坐下，双手紧握放在桌面、微微颤抖，肩膀微微缩起，眉头轻蹙，眼神紧张地望向前方；桌上摊开一本练习本和一支削好的铅笔；背景是浅米色墙面与一块淡绿色黑板、几张同样的木课桌，柔和的早晨阳光从右侧窗户斜射进来，温暖治愈的水彩氛围。"
+  scene_cn: "教室靠窗的一角，Anna 独自在一张浅色小课桌后坐下，双手紧握放在桌面、微微颤抖，肩膀微微缩起，眉头轻蹙，眼神紧张地望向前方；桌上摊开一本练习本和一支削好的铅笔；背景是干净的暖米白空墙面（无黑板）、亮光浅米瓷砖地面，柔和的早晨阳光从右侧单侧窗户斜射进来，背景极简留白，温暖治愈的薄透水彩氛围。"
   （注意：示例里只有动作、表情、环境、光线——没有任何发型/眼镜/衣服/颜色/长相词。这是必须遵守的写法。）
+
+## CRITICAL: camera_angle（机位角度 — 绝不能全本平视）
+- 这是绘本，画面要随剧情变化、有镜头语言。**禁止 7 页全部 eye（平视）**——至少 3-4 页换用非平视机位。
+- 按本页内容选最有表现力的机位：
+  - eye（平视）：人物对话、情感交流、面部表情为主的页。
+  - high（俯视）：展示桌面/地面物件、整体场景布局、人物渺小/孤独感。
+  - birdseye（鸟瞰/正俯视）：地图、地理、大场景全貌（科普绘本展示海洋/河流/地形尤其常用）。
+  - low（仰视）：高大物体（城堡、大树、高楼）、表现宏伟/敬畏/角色被仰望。
+  - over_shoulder（越肩/主角视角）：跟随主角看向某物，代入主角视角去观察发现。
+- 把机位与 scene_cn 的描述对应起来（如选 high 就写"从上方俯瞰…"）。
+
+## CRITICAL: focus（每页的"高潮/焦点动作" — 画面的主体，让孩子一翻就被抓住）
+- 每页先想清楚："如果只能画一个瞬间，最该画哪一下？" —— 找出本页**最具视觉张力、最关键或最有趣**的那个动作。
+- focus 必须是**主角正在做的一个具体动作**（动态、有张力），它将成为画面**居中的视觉主体**：
+  - 例："Tommy 俯身张开双手扑向桌下逃窜的小仓鼠"、"Anna 踮脚把书举高递给够不到的同学"、"Mia 猛地推开门、惊喜地张大嘴"。
+- focus 与 hook 的区别：focus 是**画面主角的核心动作（占据画面中心、最大）**；hook 是角落/远景的小彩蛋（次要、不抢焦点）。
+- focus 必须紧扣本页文字、符合剧情逻辑；scene_cn 要把这个 focus 动作写成画面的主体（居中、动态姿态、表情到位）。
+- 【图文必须高度贴合·用户硬要求 2026-06-06】每页画面必须忠实表达**本页文字的具体内容/动作**，
+  让读者一看画面就能对应到这页文字。**严禁用空泛、笼统、套路化的画面**（如"几个孩子站在一起把手叠在一起""大家微笑合影"）去敷衍任何一页——尤其是**结尾页**：
+  结尾若写"烤饼干带给全班""交到很多朋友并有了计划"，就要画出**这个具体场景/动作**（如 Anna 在厨房端着一盘饼干、或把饼干分给围拢的同学），而不是泛泛的合影/叠手。
+- 科普非虚构页：focus = "双主角小探索家正在观察/指认/探向本页科普对象的那一下"（如"Mia 蹲在岸边伸手指向跃出水面的小鱼"）。
+
+## CRITICAL: hook（每页一个趣味彩蛋 — 让绘本"好看、抓人"）
+- 每页提炼 1 个有趣的小细节/彩蛋，写一句中文放进 "hook" 字段，并自然融进 scene_cn。
+- hook 必须紧扣本页文字、符合剧情逻辑，是"会让小读者会心一笑或想多看一眼"的细节：
+  - 例：一只小仓鼠从桌下探头、窗台上打盹的猫、地上滚落的彩色铅笔、墙上歪掉的画、口袋里露出的小纸条。
+- hook 要可爱、温馨、安全，绝不喧宾夺主（远景/角落/小道具即可），不与主角抢视觉焦点。
+- 科普非虚构页：hook 可以是"双主角小探索家发现的有趣现象"（如水面跃起的小鱼、岸边的小螃蟹）。
 
 ## CRITICAL: worksheet content quality (NO placeholder text)
 - For match_definition: items=[{{"word": "nervous", "def": "feeling worried about something that will happen"}}, ...]
@@ -422,21 +531,34 @@ Example for "Anna felt nervous on her first day in the new class. Her hands shoo
 - For true_false: items=[{{"statement": "Anna shared pencils with a quiet boy.", "answer": "T"}}, ...] (statements from real story facts)
 - For all types: NEVER output literal "Option A", "Question N", "sentence N" — these are placeholders, write real content.
 
-## CRITICAL: pagination (split raw story into EXACTLY 7 story pages)
-- The teacher's raw input may be ONE paragraph, OR already split (e.g. "Page 1: ..."). EITHER WAY, re-segment by SCENE / VISUAL BEAT, NOT line-by-line and NOT one-sentence-per-page.
-- Goal: 7 pages that flow as a continuous story arc and TOGETHER cover the WHOLE input — beginning → events → ending. No content dropped, no scene crammed.
-- Each page = one coherent visual moment (a painter could draw it). It is fine for a page to contain 1-2 short sentences if they describe the SAME moment; split a long sentence across pages only if it spans two distinct scenes.
-- Keep narrative continuity: page N+1 must read as the next beat after page N. Rewrite into clean book sentences but KEEP meaning and KEEP every key event.
+## CRITICAL #0 — PAGINATION (LOCKED · non-negotiable · highest priority)
+- The book is ALWAYS 8 pages = 1 cover + EXACTLY 7 story pages (every story page has text). You output the 7 story pages, indices 1..7.
+- The 7 story pages TOGETHER MUST tell the WHOLE story, from the FIRST event to the ENDING. Page 1 = the very beginning; Page 7 = the ending (the LAST part of the input). NEVER drop the ending. NEVER cover only the first half of the story.
+- IF the teacher's input already has explicit page markers (e.g. "Page 1: ...", "P1", numbered lines) → FOLLOW that grouping exactly, one marked block = one page, in order. If they marked more/fewer than 7, merge or split adjacent blocks minimally to land on exactly 7 while respecting their boundaries.
+- IF the input is plain prose with NO markers → re-segment the ENTIRE story into 7 BALANCED pages by scene / visual beat. Distribute evenly: roughly (total sentences ÷ 7) sentences per page across the whole arc.
+- HARD BANS: do NOT go one-sentence-per-page; do NOT just take the first 7 sentences and ignore the rest; do NOT cram everything into the early pages leaving the later pages empty/thin; do NOT truncate the story.
+- Each page = one coherent visual moment a painter could draw. Rewrite into clean book sentences but KEEP the meaning and EVERY key event. Page N+1 must read as the next beat after page N. Whatever story the teacher gives, the 7 pages must finish telling it.
 
 ## CRITICAL: vocabulary selection (content words only — NEVER proper nouns)
 - Vocabulary = IMPORTANT content words from the story: common NOUNS / VERBS / ADJECTIVES / adverbs that carry meaning and are worth teaching.
 - NEVER pick proper nouns: character names (Anna, Mia, Tommy, ...), place names (Scotland, ...), brand names, days, titles. NEVER pick function words (the, a, on, her, was, first/second as ordinals, ...).
 - Prefer words that recur or are central to the theme. Each word must actually appear (or its lemma appears) in the story text.
 
+## CRITICAL: DIFFICULTY SPLIT by purpose (teacher-driven · applies to RR vs Worksheet)
+There are TWO assessments with DIFFERENT purposes — calibrate difficulty accordingly (keep counts/format unchanged):
+- rr_questions = READING REPORT = an ON-SITE quick check the child answers in class on the spot.
+  → Make these the SIMPLER set: mostly LITERAL recall the child can locate fast and answer in a few words.
+    Short, concrete, single-step; NO multi-step reasoning. The one ⭐⭐⭐ is a LIGHT personal/opinion reflection, not heavy analysis.
+    Goal: a child can answer quickly and confidently right after reading.
+- worksheet_questions + reading_questions = WORKSHEET = HOME practice homework.
+  → Make these a notch HARDER: more inference, cause/effect, application, sentence transformation, and short PRODUCTION/writing.
+    The child has time at home, so push one level up in cognitive demand vs the Reading Report — while still age/level appropriate and doable.
+
 ## CRITICAL: reading_questions (worksheet Reading page — comprehension tied to the FULL passage)
 - Produce EXACTLY {rd_count} questions that test understanding of the story passage (NOT vocabulary, NOT grammar).
 - "kind" must be one of: "mc" (3 options A/B/C + correct index 0/1/2), "tf" (a statement + answer "T"/"F"), "short" (open question + model "answer").
-- Level guidance: L0-2 → mostly "tf" and easy "mc"; L3-4 → mostly "mc"; L5-6 → "mc" + 2-3 "short" answer questions.
+- UNIFORM TYPE (HARD): the worksheet Reading page shows ONE single question type. So AT LEAST 4 of the {rd_count} questions MUST share the SAME "kind" (the dominant kind). Do NOT split evenly across kinds.
+- Level guidance for the dominant kind: L0-2 → "tf" (≥4 tf); L3-4 → "mc" (≥4 mc); L5-6 → "mc" (≥4 mc; any extra may be "short").
 - Cover different layers: literal detail, sequence, cause/effect, inference, main idea. Order easiest → hardest.
 - Every question MUST be answerable from the passage. Real content only — NEVER "Question 1?" / "Option A" placeholders.
 - "page" = story page the answer is on (2-8); P1 is the cover, never use P1.
@@ -477,13 +599,30 @@ Example for "Anna felt nervous on her first day in the new class. Her hands shoo
 
 
 def _build_user_prompt(raw_story: str, title: str, level: str, cefr: str, theme: str) -> str:
+    info = _analyze_pagination(raw_story)
+    if info["has_explicit"]:
+        page_rule = (
+            "PAGINATION (LOCKED): The teacher HAS explicitly marked pages (Page 1 / Page 2 ...). "
+            "Follow that exact grouping — one marked block = one page, in order — and output EXACTLY 7 story pages. "
+            "If they marked more/fewer than 7, merge or split adjacent blocks minimally to land on 7 while keeping their boundaries. "
+            "The 7 pages must still cover the WHOLE story through to the ending."
+        )
+    else:
+        page_rule = (
+            "PAGINATION (LOCKED): No explicit page markers. Divide the WHOLE story into EXACTLY 7 BALANCED story pages. "
+            f"The input has ~{info['n_sentences']} sentences → aim for about {info['per_page']} sentence(s) per page, spread evenly across the entire arc. "
+            "Page 1 = the very beginning; Page 7 = the ENDING (the last part of the input). "
+            "Do NOT go one-sentence-per-page, do NOT stop after the first few sentences — the 7 pages TOGETHER must tell the complete story from start to finish, dropping nothing."
+        )
     parts = [
         f"Title: {title}",
         f"Level: {level}",
         f"CEFR: {cefr or 'auto'}",
         f"Theme: {theme or 'auto'}",
         "",
-        "Raw story input from teacher (split into 7 pages, rewrite into clean book sentences keeping the meaning):",
+        page_rule,
+        "",
+        "Raw story input from teacher (rewrite into clean book sentences keeping the meaning; obey the PAGINATION rule above):",
         raw_story,
     ]
     return "\n".join(parts)
@@ -491,11 +630,13 @@ def _build_user_prompt(raw_story: str, title: str, level: str, cefr: str, theme:
 
 def _parse_doubao_payload(
     data: dict, level_key: str, is_dual: bool, rr_dist: list[int], raw_story: str,
+    *, pool: list[str] | None = None,
 ) -> ExtractedContent:
     pages = data.get("pages") or []
     pages = [_normalize_page(p, i + 1) for i, p in enumerate(pages[:7])]
     while len(pages) < 7:
-        pages.append({"index": len(pages) + 1, "text": "", "scene": "", "expression": "", "shot": "medium"})
+        pages.append({"index": len(pages) + 1, "text": "", "scene": "", "expression": "",
+                      "shot": "medium", "camera_angle": "", "focus": "", "hook": ""})
 
     proper = _proper_nouns_from_story(raw_story)
     mastery = _clean_words(data.get("mastery"), proper)
@@ -519,7 +660,7 @@ def _parse_doubao_payload(
                     break
 
     rr_questions = _normalize_rr(data.get("rr_questions"), rr_dist)
-    ws_questions = _normalize_ws(data.get("worksheet_questions"), level_key)
+    ws_questions = _normalize_ws(data.get("worksheet_questions"), level_key, pool=pool)
     reading_questions = _normalize_reading_questions(data.get("reading_questions"))
 
     return ExtractedContent(
@@ -545,6 +686,9 @@ def _normalize_page(p: dict, default_index: int) -> dict:
         "scene_cn": str(p.get("scene_cn") or "").strip(),
         "expression": str(p.get("expression") or "").strip(),
         "shot": (str(p.get("shot") or "medium").strip().lower() or "medium"),
+        "camera_angle": str(p.get("camera_angle") or "").strip().lower(),
+        "focus": str(p.get("focus") or "").strip(),
+        "hook": str(p.get("hook") or "").strip(),
     }
 
 
@@ -635,8 +779,8 @@ def _normalize_reading_questions(items: Any) -> list[dict]:
     return out
 
 
-def _normalize_ws(items: Any, level_key: str) -> list[dict]:
-    pool = QUESTION_POOL.get(level_key, QUESTION_POOL["4"])
+def _normalize_ws(items: Any, level_key: str, *, pool: list[str] | None = None) -> list[dict]:
+    pool = pool or QUESTION_POOL.get(level_key, QUESTION_POOL["4"])
     raw = items if isinstance(items, list) else []
     out: list[dict] = []
     for i in range(6):
@@ -764,6 +908,9 @@ def _mock_extract(
             "scene": _mock_scene(text, idx, theme),
             "expression": _mock_expression(text),
             "shot": "medium",
+            "camera_angle": "",
+            "focus": "",
+            "hook": "",
         })
 
     level_key = _level_key(level)
@@ -776,7 +923,7 @@ def _mock_extract(
 
     rr_dist = rr_question_distribution(level)
     rr_questions = _mock_rr(pages, rr_dist, words)
-    ws_questions = _mock_worksheet(pages, words, level_key)
+    ws_questions = _mock_worksheet(pages, words, level_key, pool=select_question_pool(level_key, _pool_seed(title, level)))
     reading_questions = _mock_reading_questions(pages, level_key)
 
     return ExtractedContent(
@@ -823,6 +970,22 @@ def _split_sentences(s: str) -> list[str]:
     s = s.replace("\n", " ")
     sents = re.split(r"(?<=[.!?])\s+", s.strip())
     return [x for x in sents if x]
+
+
+# 显式分页标记：Page 1 / P1 / 第1页 / 1. / 1)  等
+_PAGE_MARKER_RE = re.compile(
+    r"^\s*(?:page|p|第)\s*\d+\s*[页:：.、)\-]?|^\s*\d+\s*[.):、]\s+", re.IGNORECASE
+)
+
+
+def _analyze_pagination(raw_story: str) -> dict:
+    """判断老师的输入是否已显式分页 + 估算均分句数，供 user_prompt 注入锁定规则。"""
+    lines = [ln.strip() for ln in (raw_story or "").splitlines() if ln.strip()]
+    marked = [ln for ln in lines if _PAGE_MARKER_RE.match(ln)]
+    has_explicit = len(marked) >= 3  # 至少 3 处页标记才认定为“老师已显式分页”
+    n_sent = len(_split_sentences(raw_story))
+    per_page = max(1, round(n_sent / 7)) if n_sent else 1
+    return {"has_explicit": has_explicit, "n_sentences": n_sent, "per_page": per_page}
 
 
 def _mock_scene(text: str, idx: int, theme: str) -> str:
@@ -878,8 +1041,8 @@ def _mock_rr(pages: list[dict], dist: list[int], keywords: list[str]) -> list[di
     return out
 
 
-def _mock_worksheet(pages: list[dict], words: list[str], level_key: str) -> list[dict]:
-    pool = QUESTION_POOL.get(level_key, QUESTION_POOL["4"])
+def _mock_worksheet(pages: list[dict], words: list[str], level_key: str, *, pool: list[str] | None = None) -> list[dict]:
+    pool = pool or QUESTION_POOL.get(level_key, QUESTION_POOL["4"])
     out: list[dict] = []
     for qtype in pool:
         items: list[dict] = []
@@ -987,3 +1150,9 @@ def apply_extracted_to_outline(outline, ec: ExtractedContent) -> None:
                 page.expression = p["expression"]
             if p.get("shot"):
                 page.shot = p["shot"]
+            if p.get("camera_angle"):
+                page.camera_angle = p["camera_angle"]
+            if p.get("focus"):
+                page.focus = p["focus"]
+            if p.get("hook"):
+                page.hook = p["hook"]

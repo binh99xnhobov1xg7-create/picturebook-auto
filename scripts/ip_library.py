@@ -78,6 +78,7 @@ _NAME_ALIAS: dict[str, str] = {
     # 老师 / 宠物
     "teacher": "teacher", "ms. kim": "teacher", "mrs. kim": "teacher", "kim": "teacher",
     "cat": "cat", "kitty": "cat", "kitten": "cat",
+    "max": "max", "the dog": "max", "puppy": "max", "doggy": "max",
     "dino": "dino",
 }
 
@@ -131,6 +132,7 @@ def resolve_generic_role(role: str, age: int) -> IPEntry | None:
         "woman": "mom", "man": "dad",
         "old woman": "grandma", "old man": "grandpa",
         "cat": "cat", "kitty": "cat", "kitten": "cat",
+        "dog": "max", "puppy": "max", "doggy": "max",
     }
     base = default_map.get(r)
     if not base:

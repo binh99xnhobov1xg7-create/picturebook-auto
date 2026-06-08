@@ -12,11 +12,18 @@
 """
 from __future__ import annotations
 
+import base64
 import contextlib
 import io
+import os
 import re
 import sys
+import time
 import zipfile
+from concurrent.futures import (
+    ThreadPoolExecutor, FIRST_COMPLETED, wait,
+    TimeoutError as FuturesTimeoutError,
+)
 from datetime import datetime
 from pathlib import Path
 
@@ -33,11 +40,12 @@ from auto_fill import auto_summary
 from config import (
     DOUBAO_API_KEY, JIMENG_API_KEY, MOCK_AI_EXTRACT, MOCK_IMAGES,
     OUTPUTS_DIR, brand_color_hex, resolve_ip_age, rr_question_distribution,
-    COMPOSITION_POLICY,
+    COMPOSITION_POLICY, BRAND_DIR,
     render_global_standards_md, render_deliverable_spec_md, DELIVERABLE_SPECS,
 )
 from cn_prompt_builder import build_cn_page_prompt, page_display_name
-from parser import BookOutline, PageSpec
+from doc_preview import render_to_images, extract_text, has_visual_preview
+from parser import BookOutline, PageSpec, enrich_from_syllabus
 from ppt_builder import build_picturebook_pptx, safe_filename
 from prompt_builder import build_page_prompt  # legacy: fallback only
 from reading_report_builder import attach_rr_questions, build_reading_report
@@ -46,8 +54,48 @@ from teacher_guide_builder import build_teacher_guide
 from worksheet_builder import attach_worksheet_questions, build_worksheet
 
 
+def run_with_live_timer(label: str, fn, *args, tick: float = 0.4, done_note: str = "", **kwargs):
+    """在子线程执行 fn，主线程每 tick 秒刷新「⏱ 已用 Xs」，完成后显示总用时。
+
+    用于让所有耗时操作（AI 抽取 / 单图重生 / 文档组装等）都能实时看到用时。
+    注意：fn 必须是纯计算（不要在里面调用 st.*），st 写入请留在主线程。
+    """
+    holder = st.empty()
+    start = time.time()
+    result = None
+    with ThreadPoolExecutor(max_workers=1) as ex:
+        fut = ex.submit(fn, *args, **kwargs)
+        while True:
+            try:
+                result = fut.result(timeout=tick)
+                break
+            except FuturesTimeoutError:
+                el = time.time() - start
+                holder.markdown(
+                    f"<div class='timer-pill'><span class='timer-spin'></span>"
+                    f"{label} · 已用 <b>{el:.1f}s</b></div>",
+                    unsafe_allow_html=True,
+                )
+    el = time.time() - start
+    note = f" · {done_note}" if done_note else ""
+    holder.markdown(
+        f"<div class='timer-pill done'>✅ {label} · 用时 <b>{el:.1f}s</b>{note}</div>",
+        unsafe_allow_html=True,
+    )
+    return result
+
+
 LEVEL_OPTIONS = ["Smart", "1", "2", "3", "4", "5", "6"]
 SHOT_OPTIONS = ["close", "medium", "full", "wide"]
+# v5 机位角度（俯视/仰视/平视/越肩…），eye=平视为默认
+ANGLE_OPTIONS = ["eye", "high", "low", "birdseye", "over_shoulder"]
+ANGLE_LABELS = {
+    "eye": "平视 eye",
+    "high": "俯视 high",
+    "low": "仰视 low",
+    "birdseye": "鸟瞰 birdseye",
+    "over_shoulder": "越肩/主角视角 over_shoulder",
+}
 
 
 # =============================== v2.0 严格解锁框架 ===============================
@@ -152,6 +200,8 @@ def _confirm_next_step(step_num: int, label: str = "", help_text: str = "") -> N
     ):
         cur = st.session_state.get("book_unlocked_step", 1)
         st.session_state["book_unlocked_step"] = max(cur, step_num + 1)
+        # 向导式：确认后自动把视图前进到刚解锁的下一步
+        st.session_state["book_view_step"] = step_num + 1
         st.rerun()
 
 
@@ -159,7 +209,84 @@ def _reset_workflow_button() -> None:
     """顶部重置按钮 — 回到 Step 1。"""
     if st.button("🔄 重置工作流（回到 Step 1）", key="reset_workflow"):
         st.session_state["book_unlocked_step"] = 1
+        st.session_state["book_view_step"] = 3
         st.rerun()
+
+
+def _stage_shell(step_num: int, title: str, wizard: bool):
+    """阶段内容容器：向导模式用卡片容器（始终展开）；旧模式用带锁 expander。"""
+    if wizard:
+        return st.container(border=True)
+    return _locked_step_expander(step_num, title)
+
+
+# 绘本内层「向导」三阶段（内部步骤号 3/4/5 → 展示 1/2/3）
+BOOK_WIZARD_STAGES: list[tuple[int, str, str, str]] = [
+    (3, "🎭", "锁人物 + 定画风", "选故事角色形象、定全本画风背景"),
+    (4, "🖼️", "生成插图", "一键出图、逐页重生 / 锁定满意的图"),
+    (5, "📦", "打包交付", "一键产出绘本 + 练习册 + RR + 教师指南"),
+]
+
+
+def _render_book_wizard() -> None:
+    """向导式绘本工作流：顶部可点击步骤条 + 一次只显示一个阶段（最易上手）。"""
+    unlocked = max(3, st.session_state.get("book_unlocked_step", 3))
+    nums = [s[0] for s in BOOK_WIZARD_STAGES]
+    view = st.session_state.get("book_view_step", unlocked)
+    if view not in nums:
+        view = unlocked if unlocked in nums else 3
+    if view > unlocked:
+        view = unlocked
+    st.session_state["book_view_step"] = view
+
+    # —— 顶部进度条（按已解锁进度，Element Plus 风格细条）——
+    _total = len(BOOK_WIZARD_STAGES)
+    _done = sum(1 for (num, *_r) in BOOK_WIZARD_STAGES if num < unlocked)
+    _pct = int(min(_done, _total) / _total * 100)
+    st.markdown(
+        f"<div class='wiz-track'><div class='wiz-fill' style='width:{_pct}%'></div></div>",
+        unsafe_allow_html=True,
+    )
+
+    # —— 顶部步骤条（可点击导航；未解锁的禁用）——
+    cols = st.columns(len(BOOK_WIZARD_STAGES))
+    for i, (num, icon, title, sub) in enumerate(BOOK_WIZARD_STAGES):
+        status = "done" if num < unlocked else ("active" if num == unlocked else "locked")
+        badge = "✅" if status == "done" else ("🔒" if status == "locked" else icon)
+        is_cur = (num == view)
+        prefix = "● " if is_cur else ""
+        if cols[i].button(
+            f"{prefix}{badge}  {i + 1}. {title}",
+            key=f"bookwiz_nav_{num}",
+            type=("primary" if is_cur else "secondary"),
+            width="stretch",
+            disabled=(status == "locked"),
+            help=sub,
+        ):
+            st.session_state["book_view_step"] = num
+            st.rerun()
+
+    cur_meta = next(s for s in BOOK_WIZARD_STAGES if s[0] == view)
+    pos = nums.index(view) + 1
+    st.caption(f"第 {pos} / {len(BOOK_WIZARD_STAGES)} 步 — **{cur_meta[2]}**：{cur_meta[3]}")
+
+    # —— 只渲染当前阶段（卡片容器）——
+    if view == 3:
+        _render_step_ip_style(step_num=3, wizard=True)
+    elif view == 4:
+        _render_step_workbench(step_num=4, wizard=True)
+    elif view == 5:
+        _render_step7_assemble(step_num=5, wizard=True)
+
+    # —— 底部上一步 / 重置 ——
+    st.markdown("<div style='height:0.4rem'></div>", unsafe_allow_html=True)
+    bcol1, bcol2, _ = st.columns([1, 1, 4])
+    with bcol1:
+        if pos > 1 and st.button("← 上一步", key="bookwiz_prev", width="stretch"):
+            st.session_state["book_view_step"] = nums[pos - 2]
+            st.rerun()
+    with bcol2:
+        _reset_workflow_button()
 
 
 # ============================================================================
@@ -505,6 +632,28 @@ def _render_step4_combined(step_num: int, embed: bool = False) -> None:
             ):
                 _deepseek_rewrite_all_scenes()
                 st.rerun()
+
+        # 科普非虚构：科学事实校验（核查文字+画面正确性/比例/图文一致）
+        outline = st.session_state.get("outline")
+        is_nf = False
+        if outline is not None:
+            try:
+                from cn_prompt_builder import _is_nonfiction
+                is_nf = _is_nonfiction(outline)
+            except Exception:
+                is_nf = False
+        if is_nf:
+            if st.button(
+                "🔬 科学事实校验（科普必做）",
+                type="secondary",
+                key="s4_factcheck",
+                width="stretch",
+                disabled=not deepseek_ok,
+                help="核查每页文字+画面的科学事实正确性、真实比例、图文一致；可一键应用修正",
+            ):
+                _run_fact_check()
+                st.rerun()
+            _render_fact_check_results()
 
         st.divider()
 
@@ -865,6 +1014,57 @@ def _deepseek_rewrite_all_scenes() -> None:
     st.success(f"🎉 Claude 已重写全部 {total} 页 scene_cn。建议下一步点 🔄 重建全部 prompt 让新 scene_cn 注入到 prompt。")
 
 
+def _run_fact_check() -> None:
+    """科普非虚构：对 ec.pages 的 text+scene_cn 跑科学事实校验，结果存入 session。"""
+    ec = st.session_state.extracted
+    outline = st.session_state.get("outline")
+    if not ec or not ec.pages:
+        return
+    try:
+        from fact_check import fact_check_pages
+        with st.spinner("Claude 正在核查每页的科学事实、比例与图文一致..."):
+            issues = fact_check_pages(
+                ec.pages,
+                title=getattr(outline, "title", "") if outline else "",
+                level=getattr(outline, "level", "") if outline else "",
+                fiction_type=(getattr(outline, "fiction_type", "") or getattr(outline, "reader_type", "")) if outline else "",
+            )
+        st.session_state["fact_issues"] = issues
+        if not issues:
+            st.success("✅ 科学事实校验：未发现问题。")
+        else:
+            st.warning(f"⚠️ 发现 {len(issues)} 处需要确认的问题，见下方。")
+    except Exception as e:
+        st.error(f"❌ 科学事实校验失败：{e}")
+
+
+def _render_fact_check_results() -> None:
+    """展示上次科学事实校验结果，并提供一键应用修正。"""
+    issues = st.session_state.get("fact_issues")
+    if not issues:
+        return
+    ec = st.session_state.extracted
+    sev_icon = {"high": "🔴", "medium": "🟠", "low": "🟡"}
+    with st.expander(f"🔬 科学事实校验结果（{len(issues)} 处）", expanded=True):
+        for it in issues:
+            loc = "Cover" if it["index"] == 0 else page_display_name(it["index"])
+            st.markdown(
+                f"{sev_icon.get(it['severity'], '🟠')} **{loc}**（{it['field']}）：{it['problem']}"
+            )
+            if it.get("suggestion"):
+                st.caption(f"建议：{it['suggestion']}")
+            if it.get("fixed_text"):
+                st.caption(f"修正后文字：{it['fixed_text']}")
+            if it.get("fixed_scene_cn"):
+                st.caption(f"修正后画面：{it['fixed_scene_cn']}")
+        if st.button("✅ 一键应用全部修正（写回文字/画面）", key="s4_apply_factfix", type="primary"):
+            from fact_check import apply_fixes_to_ec_pages
+            n = apply_fixes_to_ec_pages(ec.pages, issues)
+            st.session_state["fact_issues"] = None
+            st.success(f"已应用 {n} 处修正。建议重写/重建 prompt 让修正生效。")
+            st.rerun()
+
+
 def _deepseek_polish_one_prompt(page_idx: int) -> None:
     """让 DeepSeek 润色单页的正向 prompt。"""
     from scene_cn_writer import polish_image_prompt, DeepSeekError
@@ -994,7 +1194,7 @@ def _render_step4_page_facts(step_num: int) -> None:
                     height=100,
                     key=f"s4_must_{idx}",
                     label_visibility="collapsed",
-                    placeholder="Anna 头戴白色发箍、穿绿色毛衣\nAnna 黑色齐下巴bob短发\n桌上 5 本课本\n教室背景：绿色黑板",
+                    placeholder="Anna 头戴白色发箍、穿绿色毛衣\nAnna 黑色齐下巴bob短发\n桌上 5 本课本\n教室背景：暖米白空墙、单侧窗柔光",
                 )
             with c4:
                 st.caption("④ 必避免（每行一条，会追加到反向提示词）")
@@ -1156,11 +1356,16 @@ def _render_step6_image_gen(step_num: int, embed: bool = False) -> None:
         col_a, col_b = st.columns([4, 1])
         with col_a:
             n_pages = len(st.session_state.outline.pages) if st.session_state.outline else 8
-            est_seconds = n_pages * 15
+            _conc = max(1, int(os.getenv("IMAGE_CONCURRENCY", "2")))
+            # 真实耗时：单张 gpt-image-2 约 30-60 秒（模型固有），并发 _conc 张同时跑。
+            _batches = -(-n_pages // _conc)  # 向上取整的批次数
+            est_lo = _batches * 30
+            est_hi = _batches * 60
             if not mock_imgs:
                 st.info(
-                    f"🎨 将调用 gpt-image-2 出 {n_pages} 张水彩绘本插画，"
-                    f"约需 {est_seconds//60} 分 {est_seconds%60} 秒。"
+                    f"🎨 将调用 gpt-image-2 出 {n_pages} 张水彩绘本插画"
+                    f"（{_conc} 张并发），约需 {est_lo//60}–{est_hi//60} 分钟。"
+                    f"单张模型生成本身就要 30–60 秒，属正常。"
                 )
         with col_b:
             if st.button("🎨 生成 / 重新生成所有图", type="primary",
@@ -1189,8 +1394,8 @@ def _render_step6_image_gen(step_num: int, embed: bool = False) -> None:
 # Step 7：📦 组装 4 件套
 # ============================================================================
 
-def _render_step7_assemble(step_num: int) -> None:
-    exp = _locked_step_expander(step_num, "📦 组装 4 件套（PPT / Worksheet / RR / TG）")
+def _render_step7_assemble(step_num: int, wizard: bool = False) -> None:
+    exp = _stage_shell(step_num, "📦 组装 4 件套（PPT / Worksheet / RR / TG）", wizard)
     if exp is None:
         return
     with exp:
@@ -1296,9 +1501,9 @@ def _format_style_config_preview(cfg: dict) -> dict:
 # v3.3：5 步工作流（合并 IP+画风、新增只读底层逻辑、合并提示词+生图为工作台）
 # ============================================================================
 
-def _render_step_ip_style(step_num: int) -> None:
+def _render_step_ip_style(step_num: int, wizard: bool = False) -> None:
     """Step 2（合并旧 IP 锁定 + 画风设定）：先锁人，再定调。"""
-    exp = _locked_step_expander(step_num, "🎭 人物 IP + 🎨 画风背景（先锁人，再定调）")
+    exp = _stage_shell(step_num, "🎭 人物 IP + 🎨 画风背景（先锁人，再定调）", wizard)
     if exp is None:
         return
     with exp:
@@ -1389,10 +1594,10 @@ def _render_step_rules(step_num: int) -> None:
         )
 
 
-def _render_step_workbench(step_num: int) -> None:
+def _render_step_workbench(step_num: int, wizard: bool = False) -> None:
     """Step 4（合并旧 分页提示词 + 单页生图）：生图工作台。"""
-    exp = _locked_step_expander(
-        step_num, "🖼️ 生图工作台（一键出 8 图 → 图旁看故事 → 逐页重生/锁定）"
+    exp = _stage_shell(
+        step_num, "🖼️ 生图工作台（一键出 8 图 → 图旁看故事 → 逐页重生/锁定）", wizard
     )
     if exp is None:
         return
@@ -1441,19 +1646,41 @@ def _render_batch_mode() -> None:
             "Anna felt nervous ...\n"
         ),
     )
-    c1, c2, c3 = st.columns(3)
+    c1, c2, c3, c4 = st.columns(4)
     with c1:
-        st.number_input("并发上限", min_value=1, max_value=8, value=2, key="batch_concurrency")
+        st.number_input("本级并发", min_value=1, max_value=8, value=2, key="batch_concurrency",
+                        help="同时跑几本（本与本之间隔离）。")
     with c2:
-        st.selectbox("输出方式", ["每本子文件夹", "平铺 + 规范命名"], key="batch_output_mode")
+        st.number_input("出图全局并发", min_value=1, max_value=8, value=4,
+                        key="batch_image_concurrency",
+                        help="① 所有本子在途出图请求的总上限，贴 API RPM 设置——提速的关键钮。")
     with c3:
+        st.selectbox("输出方式", ["每本子文件夹", "平铺 + 规范命名"], key="batch_output_mode")
+    with c4:
         st.checkbox("打包 ZIP", value=True, key="batch_zip")
-    if st.button("🚀 开始批量生产", type="primary"):
-        try:
-            from batch_runner import run_batch_from_ui
-            run_batch_from_ui()
-        except Exception as e:
-            st.error(f"批量生产启动失败：{e}")
+
+    c5, c6 = st.columns([1, 2])
+    with c5:
+        st.checkbox("② 断点续跑（已出图的页不重做）", value=False, key="batch_resume")
+    with c6:
+        st.text_input("♻️ 重跑失败本：填上次 batch_log.json 路径（留空=全量新跑）",
+                      key="batch_rerun_log", placeholder=r"outputs\batch_YYYYmmdd_HHMMSS\batch_log.json")
+
+    b1, b2 = st.columns([1, 1])
+    with b1:
+        if st.button("🔍 预检 Dry-run（不花 API）", width="stretch"):
+            try:
+                from batch_runner import preflight_from_ui
+                preflight_from_ui()
+            except Exception as e:
+                st.error(f"预检失败：{e}")
+    with b2:
+        if st.button("🚀 开始批量生产", type="primary", width="stretch"):
+            try:
+                from batch_runner import run_batch_from_ui
+                run_batch_from_ui()
+            except Exception as e:
+                st.error(f"批量生产启动失败：{e}")
 
 
 def _render_global_standards_panel() -> None:
@@ -1474,6 +1701,36 @@ def _render_global_standards_panel() -> None:
             with cols[i]:
                 with st.popover(f"{spec['icon']} {spec['name']}"):
                     st.markdown(render_deliverable_spec_md(key, level))
+
+
+_DELIVERABLES = [
+    ("book", "📖 绘本 PPT"),
+    ("ws", "📝 练习册 Worksheet"),
+    ("rr", "📄 阅读报告 RR"),
+    ("tg", "👩‍🏫 教师指南 TG"),
+]
+
+
+def _render_deliverable_nav() -> str:
+    """侧边栏顶部：4 交付物左侧竖向导航（Element Plus tab-position=left 效果）。
+
+    点哪个交付物只渲染哪个 → 主区不再一页拉很长。抽取完成前不显示，默认返回 'book'。
+    """
+    if st.session_state.get("extracted") is None:
+        return "book"
+    labels = [lbl for _, lbl in _DELIVERABLES]
+    with st.sidebar:
+        st.markdown("<div class='nav-title'>🗂️ 交付物</div>", unsafe_allow_html=True)
+        sel = st.radio(
+            "交付物导航", labels,
+            label_visibility="collapsed",
+            key="deliverable_nav",
+        )
+        st.divider()
+    for k, lbl in _DELIVERABLES:
+        if lbl == sel:
+            return k
+    return "book"
 
 
 def _render_evals_sidebar() -> None:
@@ -1518,19 +1775,199 @@ def _render_evals_sidebar() -> None:
             st.warning(f"体检执行出错：{e}")
 
 
+_DINO_ICON = BRAND_DIR / "dino_head_icon.png"
+
+
+def _icon_b64() -> str:
+    """读取 Dino 头像并转 base64（嵌入 HTML，可在 markdown 里显示）。"""
+    try:
+        return base64.b64encode(_DINO_ICON.read_bytes()).decode("ascii")
+    except Exception:
+        return ""
+
+
+def _render_hero() -> None:
+    """顶部品牌横幅：Dino 吉祥物 + 标题「VIPKID Dino · 线下绘本教学」+ 一句话流程。"""
+    b64 = _icon_b64()
+    img = (f"<img src='data:image/png;base64,{b64}' class='hero-dino' alt='Dino'/>"
+           if b64 else "<span style='font-size:46px'>🦖</span>")
+    st.markdown(
+        f"""
+        <div class='hero'>
+          <div class='hero-icon'>{img}</div>
+          <div class='hero-text'>
+            <div class='hero-title'>VIPKID Dino · 线下绘本教学</div>
+            <div class='hero-sub'>输入故事 → AI 抽取 → 老师微调 → 一键产出绘本 PPT / Worksheet / Reading Report / Teacher Guide</div>
+          </div>
+          <div class='hero-badge'>4 件套自动化</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+_FRAMEWORK_DIR = OUTPUTS_DIR / "_framework"
+_CMAP_PDF = _FRAMEWORK_DIR / "课程地图_L0-L6.pdf"
+_CMAP_HTML = _FRAMEWORK_DIR / "课程地图_L0-L6.html"
+_CMAP_XLSX = _FRAMEWORK_DIR / "课程对标总表_L0-L6.xlsx"
+_CMAP_LONGIMG = _FRAMEWORK_DIR / "课程级别长图_L0-L6.png"
+_CMAP_PREVIEW = _FRAMEWORK_DIR / "_preview_onepager.png"
+_READING_LOGO = BRAND_DIR / "dino_reading_logo.png"
+
+
+# 迷你梯度地图（网页常驻）：级别配色 = 练习册同款（config.BRAND_COLORS）。
+# 每级别只放最直观字段：阅读阶段 / 学生年龄·学校年级 / CEFR / RAZ / 剑桥考试 / 核心目标。
+# (level_key, 阅读阶段, 学生年龄, 学校年级, CEFR, RAZ, 剑桥考试, 核心目标, 难度高度px)
+_MINI_MAP = [
+    ("0", "夯实基础", "4–5岁", "幼儿园", "Pre-A1", "aa–A", "Starters", "听懂·会指认", 32),
+    ("1", "夯实基础", "5–6岁", "学前", "Pre-A1→A1", "A–B", "Starters", "拼读·敢开口", 42),
+    ("2", "夯实基础", "6–7岁", "一年级", "A1", "C–D", "Starters–Movers", "读懂小故事", 53),
+    ("3", "进阶提升", "7–8岁", "二年级", "A1+", "E–G", "Movers", "自主读·会提取", 66),
+    ("4", "进阶提升", "8–9岁", "三年级", "A2", "H–J", "Flyers", "抓细节·会归纳", 80),
+    ("5", "流利阅读", "9–10岁", "四年级", "A2+", "K–M", "Flyers–KET", "会推理·会比较", 95),
+    ("6", "自主阅读", "10–11岁", "五年级", "B1", "N–P", "KET–PET", "能思辨·会评价", 110),
+]
+
+
+def _render_curriculum_map() -> None:
+    """顶部「0–6 课程地图」：网页常驻迷你梯度图（直观）+ 可展开下载对外 PDF / Excel。
+
+    迷你图为纯内联 HTML（不依赖任何文件，永远显示）；级别配色取自练习册同款品牌色。
+    详细对标总表与可打印一页纸放在下方展开区下载（同源）。
+    """
+    logo_b64 = ""
+    try:
+        logo_b64 = base64.b64encode(_READING_LOGO.read_bytes()).decode("ascii")
+    except Exception:
+        pass
+    logo_html = (f"<img src='data:image/png;base64,{logo_b64}' style='height:30px'/>"
+                 if logo_b64 else "<span style='font-size:22px'>🦖</span>")
+
+    # —— 迷你梯度地图：7 个台阶，高度随难度递增，按级别配色（练习册同款）——
+    cells = []
+    for key, stage, age, grade, cefr, raz, exam, goal, h in _MINI_MAP:
+        color = brand_color_hex(key)
+        cells.append(
+            f"<div class='cm-col'>"
+            f"<div class='cm-stage' style='color:{color};border-color:{color}55'>{stage}</div>"
+            f"<div class='cm-goal'>{goal}</div>"
+            f"<div class='cm-bar' style='height:{h}px;background:linear-gradient(180deg,{color},{color}cc)'>"
+            f"<span class='cm-lv'>L{key}</span></div>"
+            f"<div class='cm-cefr' style='color:{color}'>{cefr}</div>"
+            f"<div class='cm-raz'>RAZ {raz}</div>"
+            f"<div class='cm-exam'>{exam}</div>"
+            f"<div class='cm-age'>{age} · {grade}</div>"
+            f"</div>"
+        )
+    mini = f"""
+    <style>
+      .cm-wrap{{border:1px solid #f0e3da;border-radius:14px;padding:12px 16px 10px;
+        background:linear-gradient(135deg,#fff,#fff8f3);margin:2px 0 8px;}}
+      .cm-head{{display:flex;align-items:center;gap:10px;margin-bottom:10px;}}
+      .cm-head .t{{font-weight:800;font-size:15px;color:#1f2937;}}
+      .cm-head .s{{font-size:11.5px;color:#9aa1ab;}}
+      .cm-row{{display:flex;align-items:flex-end;gap:8px;}}
+      .cm-col{{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;}}
+      .cm-stage{{font-size:9.5px;font-weight:800;border:1px solid;border-radius:999px;
+        padding:1px 7px;margin-bottom:4px;white-space:nowrap;background:#fff;}}
+      .cm-goal{{font-size:10.5px;font-weight:700;color:#374151;margin-bottom:5px;height:15px;white-space:nowrap;}}
+      .cm-bar{{width:100%;border-radius:9px 9px 4px 4px;display:flex;align-items:flex-start;
+        justify-content:center;padding-top:6px;box-shadow:0 3px 8px rgba(0,0,0,.08);}}
+      .cm-lv{{color:#fff;font-weight:900;font-size:16px;letter-spacing:.5px;text-shadow:0 1px 2px rgba(0,0,0,.2);}}
+      .cm-cefr{{font-size:11.5px;font-weight:800;margin-top:5px;}}
+      .cm-raz{{font-size:9.5px;color:#6b7280;font-weight:700;margin-top:1px;}}
+      .cm-exam{{font-size:10px;color:#6b7280;font-weight:600;}}
+      .cm-age{{font-size:10px;color:#9aa1ab;margin-top:1px;}}
+      .cm-foot{{font-size:10.5px;color:#9aa1ab;margin-top:9px;text-align:center;}}
+    </style>
+    <div class='cm-wrap'>
+      <div class='cm-head'>{logo_html}
+        <span class='t'>0–6 课程地图</span>
+        <span class='s'>· 一眼看清每级别：阅读阶段 / 年龄学龄 / 欧标 / RAZ / 剑桥 / 核心目标（详细对标见下方下载）</span>
+      </div>
+      <div class='cm-row'>{''.join(cells)}</div>
+      <div class='cm-foot'>颜色 = 练习册级别色 · 欧标 CEFR 权威；阅读阶段 / RAZ / 剑桥考试 / 年龄年级为对标参考</div>
+    </div>
+    """
+    st.markdown(mini, unsafe_allow_html=True)
+
+    with st.expander("🗺️ 详细课程级别介绍（竖版长图分享 · 对外 PDF · 教研 Excel 对标总表）", expanded=False):
+        if _CMAP_LONGIMG.exists():
+            st.image(str(_CMAP_LONGIMG), use_container_width=True,
+                     caption="竖版长图：级别为列、维度为行的完整对比（适合微信 / 朋友圈分享）")
+        elif _CMAP_PREVIEW.exists():
+            st.image(str(_CMAP_PREVIEW), use_container_width=True,
+                     caption="对外一页纸预览（A4 横向 · 可打印 / 另存 PDF）")
+        else:
+            st.caption("预览图未生成，可直接下载下方文件查看。")
+        c0, c1, c2, c3 = st.columns(4)
+        with c0:
+            if _CMAP_LONGIMG.exists():
+                st.download_button("⬇️ 竖版长图 PNG（分享）", _CMAP_LONGIMG.read_bytes(),
+                                   file_name="VIPKID_Dino_课程级别长图_L0-L6.png",
+                                   mime="image/png", width="stretch")
+        with c1:
+            if _CMAP_PDF.exists():
+                st.download_button("⬇️ 一页纸 PDF（对外）", _CMAP_PDF.read_bytes(),
+                                   file_name="VIPKID_Dino_课程地图_L0-L6.pdf",
+                                   mime="application/pdf", width="stretch")
+        with c2:
+            if _CMAP_XLSX.exists():
+                st.download_button("⬇️ Excel 对标总表（教研/销售）", _CMAP_XLSX.read_bytes(),
+                                   file_name="VIPKID_Dino_课程对标总表_L0-L6.xlsx",
+                                   mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                   width="stretch")
+        with c3:
+            if _CMAP_HTML.exists():
+                st.download_button("⬇️ 网页版 HTML（自带打印按钮）", _CMAP_HTML.read_bytes(),
+                                   file_name="VIPKID_Dino_课程地图_L0-L6.html",
+                                   mime="text/html", width="stretch")
+        st.caption("长图 / PDF / Excel / HTML 四份内容同源。长图直接发图；HTML 用浏览器打开点「打印」即可另存 A4 横向 PDF。")
+
+
+def _sec_head(icon: str, title: str) -> None:
+    """统一区块标题：图标徽标 + 标题 + 渐隐细线（字体层级清晰、对齐有序）。"""
+    st.markdown(
+        f"<div class='sec-head'><span class='ic'>{icon}</span>{title}<span class='line'></span></div>",
+        unsafe_allow_html=True,
+    )
+
+
+def _chips(items, kind: str = "") -> None:
+    """关键词标签行（chip/战格）。kind ∈ {'', 'gray', 'ok'}。"""
+    cls = ("chip " + kind).strip()
+    spans = "".join(f"<span class='{cls}'>{x}</span>" for x in items if x)
+    st.markdown(f"<div class='chip-row'>{spans}</div>", unsafe_allow_html=True)
+
+
+def _render_sidebar_brand() -> None:
+    """侧边栏顶部品牌标，让左栏一眼可识别。"""
+    b64 = _icon_b64()
+    img = (f"<img src='data:image/png;base64,{b64}' class='side-dino'/>"
+           if b64 else "🦖")
+    st.sidebar.markdown(
+        f"<div class='side-brand'>{img}<span>VIPKID Dino<br><small>绘本教学工作台</small></span></div>",
+        unsafe_allow_html=True,
+    )
+
+
 def main() -> None:
+    _icon_arg = str(_DINO_ICON) if _DINO_ICON.exists() else "📘"
     st.set_page_config(
-        page_title="VIPKID Dino 绘本工作流",
-        page_icon="📘",
+        page_title="VIPKID Dino 线下绘本教学",
+        page_icon=_icon_arg,
         layout="wide",
     )
     _inject_css()
 
-    st.title("📘 VIPKID Dino 绘本工作流 v3.3")
-    st.caption(
-        "输入故事原文 → AI 抽取词汇/分页/语法/题目 → 老师微调 → 一键产出 4 件套（绘本 PPT / Worksheet / Reading Report / Teacher Guide）  \n"
-        "**v3.3 更新**：文本走 Claude（claude-opus-4-7）· 生图走 gpt-image-2（主角恒首位参考，全本不跳帧）· 中文 prompt（主体+行为+环境结构）· 5 步工作流"
-    )
+    _render_sidebar_brand()
+    _render_hero()
+    _render_curriculum_map()
+    with st.expander("ℹ️ 使用说明 / 版本信息", expanded=False):
+        st.markdown(
+            "**流程**：填 ① 书名 ② Level ③ 故事原文 → 点「AI 抽取」→ 在左侧 4 交付物里逐个微调 → 各自产出。  \n"
+            "**v3.3**：文本走 Claude · 生图走 gpt-image-2（主角恒首位参考，全本不跳帧）· 中文 prompt（主体+行为+环境）。"
+        )
 
     _key_status_banner()
 
@@ -1540,6 +1977,8 @@ def main() -> None:
     if "outline" not in st.session_state:
         st.session_state.outline = None
 
+    # 左侧竖向导航（4 交付物）放在侧边栏最上方，再渲染体检
+    nav_sel = _render_deliverable_nav()
     _render_evals_sidebar()
 
     # ---------- Section 0：全局底层逻辑（只读·一眼看清今天要做什么）----------
@@ -1567,7 +2006,8 @@ def main() -> None:
 
     with st.form("input_form"):
         # === 必填区 ===
-        st.subheader("1️⃣  必填基础信息")
+        _sec_head("1", "必填基础信息")
+        _chips(["① Book Title", "② Level", "③ 故事原文"], kind="ok")
         col1, col2 = st.columns([3, 1])
         with col1:
             title = st.text_input(
@@ -1581,7 +2021,14 @@ def main() -> None:
                 help="必填。Smart / 0-2 = 双行词表，3-6 = 单行词表。决定 CEFR / Reader Type / 题数。",
             )
 
-        st.markdown("**📝 故事原文 \\* —— 7 句以内，每句一行 = 一页绘本**")
+        st.markdown(
+            "**📝 故事原文 \\* —— 整篇故事直接粘进来,系统会自动把它"
+            "「完整地」均分成 7 页讲完(封面另算,共 8 页)**"
+        )
+        st.caption(
+            "🔒 分页规则(已焊死)：①给整篇故事 → 自动按剧情把整个故事均分到 7 页,从开头讲到结尾,不丢内容、不一句一页；"
+            "②若你自己标了 `Page 1` / `Page 2`… → 严格按你的分页走。"
+        )
         raw_story = st.text_area(
             "Raw story",
             label_visibility="collapsed",
@@ -1689,46 +2136,49 @@ def main() -> None:
         )
 
     if submitted:
-        with st.spinner("Claude 正在抽词、拆段、出题..."):
-            # 先做 AI 自动推断（角色识别 + CEFR/Lexile/Theme/Fiction-NF）
-            auto = auto_summary(level, raw_story, title)
-            # 用户没填 cefr / theme / fiction_type 时，用自动值兜底
-            cefr_final = cefr.strip() or auto["cefr"]
-            theme_final = theme.strip() or auto["theme"]
-            # Reader Type：默认「（AI 自动判断）」→ 用 AI 判定值；否则用老师手选值
-            _ft = (fiction_type or "").strip()
-            fiction_final = auto["fiction_type"] if _ft.startswith("（AI") else (_ft or auto["fiction_type"])
+        # 先做 AI 自动推断（角色识别 + CEFR/Lexile/Theme/Fiction-NF）—— 实时计时
+        auto = run_with_live_timer(
+            "AI 推断（角色 / CEFR / 主题）", auto_summary, level, raw_story, title,
+        )
+        # 用户没填 cefr / theme / fiction_type 时，用自动值兜底
+        cefr_final = cefr.strip() or auto["cefr"]
+        theme_final = theme.strip() or auto["theme"]
+        # Reader Type：默认「（AI 自动判断）」→ 用 AI 判定值；否则用老师手选值
+        _ft = (fiction_type or "").strip()
+        fiction_final = auto["fiction_type"] if _ft.startswith("（AI") else (_ft or auto["fiction_type"])
 
-            ec = extract_all(
-                raw_story=raw_story,
-                title=title,
-                level=level,
-                cefr=cefr_final,
-                theme=theme_final,
-            )
-            outline = _build_outline(
-                title=title, level=level, book_number=book_number,
-                cefr=cefr_final, theme=theme_final, ip_age=int(ip_age),
-                raw_story=raw_story, custom_chars_text=custom_chars_text,
-                fiction_type=fiction_final,
-            )
-            apply_extracted_to_outline(outline, ec)
-            st.session_state.extracted = ec
-            st.session_state.outline = outline
-            st.session_state.auto = auto
-            st.session_state.auto["_lexile"] = auto["lexile"]  # 留作生成阶段元信息
+        ec = run_with_live_timer(
+            "AI 抽取（抽词 · 拆段 · 出题）", extract_all,
+            raw_story=raw_story, title=title, level=level,
+            cefr=cefr_final, theme=theme_final,
+        )
+        outline = _build_outline(
+            title=title, level=level, book_number=book_number,
+            cefr=cefr_final, theme=theme_final, ip_age=int(ip_age),
+            raw_story=raw_story, custom_chars_text=custom_chars_text,
+            fiction_type=fiction_final,
+        )
+        apply_extracted_to_outline(outline, ec)
+        if enrich_from_syllabus(outline):
+            st.session_state["_syllabus_hit"] = True
+        st.session_state.extracted = ec
+        st.session_state.outline = outline
+        st.session_state.auto = auto
+        st.session_state.auto["_lexile"] = auto["lexile"]  # 留作生成阶段元信息
 
-            # v1.9：预生成每页中文 prompt（按 Seedream 4.5 官方指南），存 session 供用户编辑
-            ip_age_val = int(ip_age)
-            page_prompts: dict[int, dict] = {}
-            cast_pool = st.session_state.get("story_cast_pool") or None
-            generic_overrides = st.session_state.get("generic_overrides") or None
+        # v1.9：预生成每页中文 prompt（按 Seedream 4.5 官方指南），存 session 供用户编辑
+        ip_age_val = int(ip_age)
+        cast_pool = st.session_state.get("story_cast_pool") or None
+        generic_overrides = st.session_state.get("generic_overrides") or None
+
+        def _gen_page_prompts() -> dict[int, dict]:
+            pp: dict[int, dict] = {}
             for page in outline.pages:
                 built = build_cn_page_prompt(
                     page, outline, ip_age_val,
                     cast_pool=cast_pool, generic_overrides=generic_overrides,
                 )
-                page_prompts[page.index] = {
+                pp[page.index] = {
                     "positive": built.positive,
                     "negative": built.negative,
                     "prompt": built.prompt,
@@ -1737,7 +2187,13 @@ def main() -> None:
                     "label": page.label,
                     "display_name": page_display_name(page.index),
                 }
-            st.session_state.page_prompts = page_prompts
+            return pp
+
+        page_prompts = run_with_live_timer(
+            "生成每页画面提示词", _gen_page_prompts,
+            done_note=f"{len(outline.pages)} 页",
+        )
+        st.session_state.page_prompts = page_prompts
 
         st.success(
             "✅ 抽取完成。请审核下方「AI 推断 + 主角识别 + 每页卡片（文本+场景+prompt+必须出现）」，"
@@ -1756,36 +2212,22 @@ def main() -> None:
         # 共享抽取数据（词表/语法/拼读/读者类型）— 4 件套都用，放在角标上方
         _render_shared_extract_panel()
 
-        tab_book, tab_ws, tab_rr, tab_tg = st.tabs([
-            "📖 绘本 PPT", "📝 练习册 Worksheet",
-            "📄 阅读报告 RR", "👩‍🏫 教师指南 TG",
-        ])
+        # 左侧侧边栏导航选中哪个交付物 → 主区只渲染那一个（不再用顶部 tabs，避免一页超长）
+        _sel_label = dict(_DELIVERABLES).get(nav_sel, "")
+        st.markdown(f"#### {_sel_label}")
 
-        with tab_book:
-            st.markdown(render_deliverable_spec_md("book", st.session_state.outline.level))
-            st.caption("先按 IP/场景锁定 → 生图工作台逐页出图/图生图 → 底部一键产出 4 件套。")
-            _render_progress_bar()
-
-            col_reset, _ = st.columns([1, 5])
-            with col_reset:
-                _reset_workflow_button()
-
-            # Step 2：🎭 人物 IP + 🎨 画风（底层逻辑已前置为全局只读面板）
-            _render_step_ip_style(step_num=3)
-            # Step 3：🖼️ 生图工作台（提示词编辑 + 生成 + 审核重生 + 图生图）
-            _render_step_workbench(step_num=4)
-            # Step 4：📦 一键产出 4 件套
-            _render_step7_assemble(step_num=5)
-
-        with tab_ws:
+        if nav_sel == "book":
+            with st.expander("📋 绘本规格（点开查看）", expanded=False):
+                st.markdown(render_deliverable_spec_md("book", st.session_state.outline.level))
+            # 向导式：顶部步骤条 + 一次只显示一个阶段（最易上手）
+            _render_book_wizard()
+        elif nav_sel == "ws":
             st.caption("逐题打磨：①换题型/难度 ②🤖 AI 重出 ③手动改 ④配图来源。改完点「👀 生成初稿」预览。")
             _render_worksheet_editor()
-
-        with tab_rr:
+        elif nav_sel == "rr":
             st.caption("阅读报告字段与阅读表达题预览/单题改；空白版/示例版双模式在组装时选。")
             _render_rr_editor()
-
-        with tab_tg:
+        elif nav_sel == "tg":
             _render_tg_panel()
 
 
@@ -1841,7 +2283,9 @@ def _render_auto_summary_panel() -> None:
                 )
                 if ch["reference_exists"] and ch["reference_path"]:
                     try:
-                        st.image(ch["reference_path"], width="stretch")
+                        _zoom_image(ch["reference_path"],
+                                    key=f"match{ch['matched_key']}",
+                                    caption=ch["name_in_story"])
                     except Exception:
                         pass
                 with st.expander(f"形象描述（生图 prompt 用）"):
@@ -1890,7 +2334,10 @@ def _render_ip_cast_panel(detected_chars: list[dict], detected_generic: list[dic
         # ch["matched_key"] 可能是 base（"anna"），我们要带 age 后缀的（"anna_12"）
         from ip_library import resolve_name_to_ip
         ip = resolve_name_to_ip(ch["matched_key"], target_age)
-        if ip:
+        # 用户拍板（2026-06-04 / 06-06）：不自动拉「只有 8/10 岁档的支持角色」（在 12 岁书里会偏小）；
+        # 但故事里【点名出现】且【正好有本级年龄档】的角色（如 Anna 12y）必须自动带上——
+        # 它就是这本书的真实角色。其余无名 girl/boy 仍走 girl/boy→Mia/Tommy 映射，不新创造别人。
+        if ip and (ip.kind != "supporting" or ip.age == target_age):
             auto_keys.add(ip.key)
     for g in detected_generic:
         from ip_library import resolve_generic_role
@@ -1904,31 +2351,30 @@ def _render_ip_cast_panel(detected_chars: list[dict], detected_generic: list[dic
 
     selected: set[str] = set(st.session_state.get("story_cast_pool", []))
 
-    # 按 kind 分组渲染（每个 kind 一个 expander）
-    kind_label = {
-        "protagonist": "⭐ 主角",
-        "supporting":  "👥 朋友/同学",
-        "family":      "👨‍👩‍👧 家人",
-        "adult":       "👩‍🏫 老师/成人",
-        "pet":         "🐱 宠物",
-        "brand":       "🦖 品牌（Dino 等）",
-    }
+    # 分组渲染（用户拍板 2026-06-06：精简为 4 段，固定顺序）：
+    #   ① 主角（只 Mia/Tommy 三档）② 家人（爸妈·爷奶）
+    #   ③ 同学·朋友·老师（含 Anna，supporting+adult+pet 合并）④ Dino
+    sections = [
+        ("⭐ 主角（Mia · Tommy）",        ["protagonist"],          True),
+        ("👨‍👩‍👧 家人（爸妈 · 爷奶 · 宠物）", ["family", "pet"],        False),
+        ("👥 同学 · 朋友 · 老师",          ["supporting", "adult"],  True),
+        ("🦖 Dino",                        ["brand"],                False),
+    ]
     grouped = list_by_kind()
 
     new_selected: set[str] = set()
-    for kind in ["protagonist", "supporting", "family", "adult", "pet", "brand"]:
-        if kind not in grouped:
+    for label, kinds, expanded in sections:
+        entries = [e for k in kinds for e in grouped.get(k, [])]
+        if not entries:
             continue
-        entries = grouped[kind]
-        expanded = (kind in ("protagonist", "supporting"))  # 主角/朋友默认展开
-        with st.expander(f"{kind_label.get(kind, kind)} ({len(entries)})", expanded=expanded):
+        with st.expander(f"{label} ({len(entries)})", expanded=expanded):
             ncols = 4
             for row_start in range(0, len(entries), ncols):
                 cols = st.columns(ncols)
                 for j, e in enumerate(entries[row_start:row_start + ncols]):
                     with cols[j]:
                         try:
-                            st.image(str(e.image_path), width="stretch")
+                            _zoom_image(e.image_path, key=f"ip{e.key}", caption=e.name)
                         except Exception:
                             pass
                         is_checked = st.checkbox(
@@ -2045,6 +2491,37 @@ def _generate_worksheet_preview() -> None:
         return
     st.session_state.ws_draft_path = str(draft_path)
     st.toast("✅ Worksheet 初稿已生成，下方可下载", icon="✅")
+
+
+def _generate_rr_preview() -> None:
+    """基于当前编辑过的阅读表达题，立即生成一份 Reading Report 初稿供老师可视化预览。
+
+    严格 1 页 A4（builder 内部实测页数 + 降档重排硬保证）。版本（空白/示例）跟随
+    rr_answer_mode 选择。
+    """
+    ec = st.session_state.extracted
+    outline: BookOutline = st.session_state.outline
+    if not ec or not outline:
+        st.error("请先点 AI 抽取按钮。")
+        return
+    apply_extracted_to_outline(outline, ec)
+    attach_rr_questions(outline, ec.rr_questions)
+
+    with_answers = str(st.session_state.get("rr_answer_mode", "")).startswith("示例")
+    run_dir, _img_dir, name_prefix = _ensure_run_dir()
+    draft_path = run_dir / f"{name_prefix}_Reading_Report_DRAFT.docx"
+    try:
+        run_with_live_timer(
+            "生成 Reading Report 初稿（严格 1 页）",
+            build_reading_report, outline, draft_path,
+            done_note="含实测页数校验，确保单页",
+            with_answers=with_answers,
+        )
+    except Exception as e:
+        st.error(f"Reading Report 初稿生成失败：{e}")
+        return
+    st.session_state.rr_draft_path = str(draft_path)
+    st.toast("✅ Reading Report 初稿已生成（严格 1 页），下方可预览/下载", icon="✅")
 
 
 def _rebuild_all_cn_prompts() -> None:
@@ -2188,11 +2665,11 @@ def _render_unified_page_panel() -> None:
                         "（可选）写明必须画上的元素，例如：\n"
                         "Anna 头戴白色发箍\n"
                         "桌上有一摞 5 本课本\n"
-                        "教室背景：绿色黑板 + 几张课桌"
+                        "教室背景：暖米白空墙 + 单侧窗柔光 + 浅米瓷砖地"
                     ),
                 )
-                # Shot + 参考图
-                bc1, bc2 = st.columns([1, 1])
+                # Shot + 机位角度 + 表情
+                bc1, bc2, bc3 = st.columns([1, 1, 1])
                 with bc1:
                     cur_shot = ec_page.get("shot", "medium") or "medium"
                     new_shot = st.selectbox(
@@ -2204,6 +2681,17 @@ def _render_unified_page_panel() -> None:
                     if new_shot != cur_shot:
                         ec_page["shot"] = new_shot
                 with bc2:
+                    cur_angle = ec_page.get("camera_angle", "") or "eye"
+                    new_angle = st.selectbox(
+                        "机位角度",
+                        ANGLE_OPTIONS,
+                        index=max(0, ANGLE_OPTIONS.index(cur_angle) if cur_angle in ANGLE_OPTIONS else 0),
+                        format_func=lambda a: ANGLE_LABELS.get(a, a),
+                        key=f"uni_angle_{idx}",
+                    )
+                    if new_angle != cur_angle:
+                        ec_page["camera_angle"] = new_angle
+                with bc3:
                     st.text_input(
                         "表情",
                         value=ec_page.get("expression", ""),
@@ -2302,6 +2790,31 @@ def _render_rr_editor() -> None:
                         help="P1 = 封面，故事页是 P2-P8",
                     )
 
+    # 即时预览：当前题目立刻生成一份 RR（严格 1 页 A4）并在网页内可视化预览
+    st.markdown("---")
+    col_pv1, col_pv2 = st.columns([3, 2])
+    with col_pv1:
+        st.caption(
+            "👀 **生成前先看效果**：点右边按钮立即用当前阅读表达题生成一份 Reading Report，"
+            "**严格锁定 1 张 A4**（系统会实测渲染页数，超一页自动降档重排）。"
+        )
+    with col_pv2:
+        if st.button("👀 生成 Reading Report 预览", key="rr_preview_btn", width="stretch"):
+            _generate_rr_preview()
+
+    rr_draft = st.session_state.get("rr_draft_path")
+    if rr_draft and Path(rr_draft).exists():
+        st.success(f"✅ 初稿已生成：`{Path(rr_draft).name}`（约 {Path(rr_draft).stat().st_size//1024} KB）")
+        _render_doc_preview(Path(rr_draft), "Reading Report", key="rr_draft", cols=1)
+        with open(rr_draft, "rb") as f:
+            st.download_button(
+                "⬇️ 下载 Reading Report DOCX",
+                data=f.read(),
+                file_name=Path(rr_draft).name,
+                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                key="rr_draft_dl",
+            )
+
 
 def _ws_sentence_mode() -> str:
     """读取 Sentence 页配图来源选择 → builder 参数。"""
@@ -2312,7 +2825,8 @@ def _ws_sentence_mode() -> str:
 _SECOND_READING_LABELS: dict[str, str] = {
     "自动（L0-2 思维导图 / L3-6 写作）": "auto",
     "思维导图 SWBST 复述": "mindmap",
-    "写作脚手架": "writing",
+    "写作脚手架（标题 Reading）": "writing",
+    "写作 Writing（官方风格，标题 Writing）": "writing_official",
     "PBL 迷你项目": "pbl",
     "阅读理解延伸（再来一页阅读题）": "reading",
 }
@@ -2457,7 +2971,7 @@ def _render_tg_panel() -> None:
     if st.button("👀 生成 Teacher's Guide 预览（DOCX）", key="tg_preview_btn"):
         try:
             run_dir, _, name_prefix = _ensure_run_dir()
-            tg_path = run_dir / f"{name_prefix}_教师指南.docx"
+            tg_path = run_dir / f"{name_prefix}_Teachers_Guide.docx"
             build_teacher_guide(outline, tg_path)
             st.session_state["tg_draft_path"] = str(tg_path)
         except Exception as e:
@@ -2880,28 +3394,60 @@ def _ip_name_for_ref(ref_path: Path) -> str:
 
 
 def _maybe_build_reference_sheet(refs: list[Path], page):
-    """≥2 张本地参考图时合成一张定妆合集，返回 ([sheet], prompt_note)。
-    否则原样返回 refs（不带 note）。
+    """v6 图生图 IP 锁定（用户拍板 2026-06-06：连续性绘本，形象永久锁定，用图不用文字）：
+    本页出场的【每一个 IP】都必须由其官方定妆图驱动，绝不靠文字瞎编。
+
+      · 单角色页 → 把那张定妆图贴身裁切成干净单锚图作唯一参考；
+      · 多角色页 → 把本页所有角色的官方定妆图横向拼成一张「角色定妆表」作唯一参考，
+        一张图同时锁住每个人的脸型/发型/发色/服装/配色。
+
+    并配套强约束 note：照定妆表 1:1 还原每个人的形象，【只允许改变姿势与表情】，
+    严禁改动形象，严禁照搬定妆表的白底/并排排版/站姿/多视图。
+
+    返回 ([anchor_or_sheet], prompt_note)；无可用本地图时原样返回 refs（不带 note）。
     """
     local = [Path(r) for r in refs if r and not str(r).startswith(("http://", "https://")) and Path(r).exists()]
-    if len(local) < 2:
+    if not local:
         return refs
     try:
-        from seedream_client import build_reference_sheet
+        from seedream_client import crop_character_portrait, build_reference_sheet
         _, img_dir, _ = _ensure_run_dir()
-        sheet_dir = img_dir / "_refsheets"
-        dest = sheet_dir / f"sheet_p{page.index:02d}.png"
-        labels = [_ip_name_for_ref(r) for r in local]
-        sheet = build_reference_sheet(local, dest, labels)
-        if sheet is None:
-            return refs
-        names = "、".join(n for n in labels if n) or "本页角色"
+        anchor_dir = img_dir / "_anchors"
+        names = [(_ip_name_for_ref(r) or "") for r in local]
+
+        if len(local) >= 2:
+            # 多角色：拼定妆表（用图锁住每个人）
+            dest = anchor_dir / f"_refsheets" / f"sheet_p{page.index:02d}.png"
+            sheet = build_reference_sheet(local, dest, labels=names)
+            if sheet is not None:
+                disp = "、".join(n for n in names if n) or "本页角色"
+                note = (
+                    "【参考图＝角色定妆表（连续性绘本·形象永久锁定）】所附唯一参考图是一张白底"
+                    f"「角色定妆表」，并排展示本页所有出场角色（{disp}，每个面板上方有英文名标签）。"
+                    "这是一套【已出版的连续性绘本】的官方既定形象，必须严格沿用：请把定妆表里每个角色的"
+                    "脸型、五官、发型、发色、肤色、服装款式与配色、鞋子等形象细节，1:1 精确还原到画面中，"
+                    "做到与定妆表完全一致、与往期绘本同一个人。"
+                    "【唯一允许改变的是：每个角色的姿势/动作 与 面部表情】，用来贴合本页剧情；"
+                    "其余形象一律不得改动、不得重新设计、不得换装换发型换配色。"
+                    "严禁照搬定妆表的白色背景、并排站姿、正/侧/背多视图排版——只取‘谁长什么样’，"
+                    "把他们自然放进本页描述的真实场景里。"
+                )
+                return ([sheet], note)
+
+        # 单角色（或拼图失败兜底）：贴身裁切单锚
+        primary = local[0]
+        dest = anchor_dir / f"anchor_p{page.index:02d}.png"
+        anchor = crop_character_portrait(primary, dest) or primary
+        primary_name = names[0] or "主角"
         note = (
-            "【参考图说明】所提供的参考图是本页所有角色的「定妆合集」（白底并排，附名字标签："
-            f"{names}）。请严格按合集中每个对应角色的长相、发型、发色、服装、配饰来绘制该角色，"
-            "做到与定妆图完全一致；但**不要照搬合集的并排排版/白底**，要把各角色自然地放进本页的真实场景与动作中。"
+            f"【参考图＝{primary_name} 官方定妆图（连续性绘本·形象永久锁定）】所附唯一参考图是 "
+            f"{primary_name} 的单人定妆图（贴身裁切、干净背景），来自一套已出版的连续性绘本。"
+            f"请把 {primary_name} 的脸型、五官、发型、发色、肤色、服装款式与配色 1:1 精确还原，"
+            "做到与定妆图完全一致、与往期绘本同一个人。"
+            "【唯一允许改变的是该角色的姿势/动作与面部表情】以贴合本页剧情，"
+            "形象其余部分一律不得改动；不要照搬参考图的背景或姿势。"
         )
-        return ([sheet], note)
+        return ([anchor], note)
     except Exception:
         return refs
 
@@ -2955,37 +3501,123 @@ def _run_image_generation_only(mock_images: bool) -> None:
     n = len(outline.pages)
     image_results: dict[int, dict] = st.session_state.get("image_results") or {}
 
-    for i, page in enumerate(outline.pages):
-        display_name = page_display_name(page.index)
-        progress.progress(i / n, f"绘图 {display_name} ({page.label})...")
-        status.text(f"图 {i + 1}/{n}: {display_name} · {page.label}")
+    # 并发生图：模型单张 20-60 秒去不掉，但多张同时跑可整体缩短到 ~原时间/并发数。
+    # 主线程先算好每页 prompt/refs/dest（子线程不碰 st/session_state），再丢线程池并发。
+    concurrency = max(1, int(os.getenv("IMAGE_CONCURRENCY", "2")))
+    tasks = []
+    for page in outline.pages:
         final_prompt, refs = _build_final_prompt_for_page(page, outline, ip_age)
         prev = image_results.get(page.index, {})
         version = int(prev.get("version", 0)) + 1
         dest = img_dir / f"page_{page.index:02d}_v{version}.png"
-        try:
-            generate_image(
-                prompt=final_prompt, dest=dest,
-                references=refs, mock=mock_images, label=page.label,
+        tasks.append((page, final_prompt, refs, version, dest))
+
+    def _work(t):
+        page, final_prompt, refs, version, dest = t
+        generate_image(
+            prompt=final_prompt, dest=dest,
+            references=refs, mock=mock_images, label=page.label,
+            deliver_print=False,  # 审图阶段不放大；定稿组装时只对锁定图放大
+        )
+        return t
+
+    workers = min(concurrency, max(1, n))
+    errors: dict[int, str] = {}
+    done = 0
+    start_ts = time.time()
+    progress.progress(0.0, f"并发生图中（{workers} 张同时）... 0/{n}")
+    status.text(f"⏳ 已提交 {n} 张，{workers} 张并发生成中…（单张约 30–60 秒）")
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        fut_map = {ex.submit(_work, t): t for t in tasks}
+        pending = set(fut_map)
+        # 用带超时的 wait 轮询：即使还没有图完成，也每 ~3 秒刷新一次"已用时"，避免看起来卡死
+        while pending:
+            finished, pending = wait(pending, timeout=3, return_when=FIRST_COMPLETED)
+            for fut in finished:
+                page, final_prompt, refs, version, dest = fut_map[fut]
+                done += 1
+                display_name = page_display_name(page.index)
+                try:
+                    fut.result()
+                except Exception as e:
+                    errors[page.index] = str(e)
+                    try:
+                        with (run_dir / "image_errors.log").open("a", encoding="utf-8") as _lf:
+                            _lf.write(f"[{display_name} / {page.label}] {type(e).__name__}: {e}\n")
+                    except Exception:
+                        pass
+                    continue
+                prev = image_results.get(page.index, {})
+                image_results[page.index] = {
+                    "path": str(dest),
+                    "prompt": final_prompt,
+                    "label": page.label,
+                    "version": version,
+                    "locked": prev.get("locked", False),  # 重生时保留锁定状态
+                }
+            elapsed = int(time.time() - start_ts)
+            progress.progress(done / n, f"已完成 {done}/{n}")
+            n_fail = len(errors)
+            status.text(
+                f"⏳ 已用 {elapsed}s · 完成 {done}/{n}"
+                + (f"（{n_fail} 张失败）" if n_fail else "")
+                + f" · {len(pending)} 张进行中…"
             )
-        except Exception as e:
-            st.error(f"{display_name} 生图失败：{e}")
-            return
-        image_results[page.index] = {
-            "path": str(dest),
-            "prompt": final_prompt,
-            "label": page.label,
-            "version": version,
-            "locked": prev.get("locked", False),  # 重生时保留锁定状态
-        }
+
+    # ★ 失败页自动补跑：并发突发常因限流/图床抖动丢几张，这里串行（单张、退避）重试，
+    #   尽量保证 8 张全成（质量优先 → 不能丢图）。每页最多再补跑 2 轮。
+    task_by_idx = {t[0].index: t for t in tasks}
+    for _retry_round in range(2):
+        if not errors:
+            break
+        failed_idx = list(errors.keys())
+        for ri, page_index in enumerate(failed_idx):
+            t = task_by_idx.get(page_index)
+            if not t:
+                continue
+            page, final_prompt, refs, version, dest = t
+            display_name = page_display_name(page.index)
+            status.text(
+                f"🔁 补跑失败页（第 {_retry_round + 1} 轮）：{display_name} "
+                f"· 剩 {len(failed_idx) - ri}"
+            )
+            try:
+                generate_image(
+                    prompt=final_prompt, dest=dest,
+                    references=refs, mock=mock_images, label=page.label,
+                    deliver_print=False,
+                )
+            except Exception as e:
+                try:
+                    with (run_dir / "image_errors.log").open("a", encoding="utf-8") as _lf:
+                        _lf.write(f"[RETRY{_retry_round+1} {display_name}] {type(e).__name__}: {e}\n")
+                except Exception:
+                    pass
+                continue
+            prev = image_results.get(page.index, {})
+            image_results[page.index] = {
+                "path": str(dest), "prompt": final_prompt, "label": page.label,
+                "version": version, "locked": prev.get("locked", False),
+            }
+            errors.pop(page_index, None)
+            done += 1
+            progress.progress(min(done, n) / n, f"已完成 {min(done, n)}/{n}")
 
     st.session_state.image_results = image_results
-    progress.progress(1.0, "✅ 8 张图全部生成")
     status.empty()
-    st.success(
-        f"✅ 已生成 {n} 张图到 `{img_dir}`。"
-        f"下方按页审核 —— 不满意的可点 🔁 单张重生；满意的勾 ✅ 锁定。"
-    )
+    if errors:
+        msg = "；".join(f"{page_display_name(k)}: {v}" for k, v in errors.items())
+        progress.progress(1.0, f"完成 {n - len(errors)}/{n}（{len(errors)} 张失败）")
+        st.error(
+            f"已自动补跑仍有 {len(errors)} 张失败（可单张 🔁 重生）：{msg}。"
+            f"若反复失败多为接口限流，可把并发调小：环境变量 IMAGE_CONCURRENCY=2。"
+        )
+    else:
+        progress.progress(1.0, f"✅ {n} 张图全部生成")
+        st.success(
+            f"✅ 已生成 {n} 张图到 `{img_dir}`。"
+            f"下方按页审核 —— 不满意的可点 🔁 单张重生；满意的勾 ✅ 锁定。"
+        )
 
 
 def _regenerate_single_image(page_index: int, mock_images: bool) -> None:
@@ -3005,15 +3637,15 @@ def _regenerate_single_image(page_index: int, mock_images: bool) -> None:
     prev = image_results.get(page_index, {})
     version = int(prev.get("version", 0)) + 1
     dest = img_dir / f"page_{page_index:02d}_v{version}.png"
-    with st.spinner(f"重新生成 {display_name} (v{version})..."):
-        try:
-            generate_image(
-                prompt=final_prompt, dest=dest,
-                references=refs, mock=mock_images, label=page.label,
-            )
-        except Exception as e:
-            st.error(f"{display_name} 重生失败：{e}")
-            return
+    try:
+        run_with_live_timer(
+            f"重新生成 {display_name} (v{version})", generate_image,
+            prompt=final_prompt, dest=dest,
+            references=refs, mock=mock_images, label=page.label,
+        )
+    except Exception as e:
+        st.error(f"{display_name} 重生失败：{e}")
+        return
     image_results[page_index] = {
         "path": str(dest),
         "prompt": final_prompt,
@@ -3053,10 +3685,11 @@ def _render_image_review_panel(mock_imgs: bool) -> None:
         with c_img:
             img_path = entry.get("path")
             if img_path and Path(img_path).exists():
-                try:
-                    st.image(img_path, width="stretch")
-                except Exception as e:
-                    st.warning(f"图片无法显示：{e}")
+                _zoom_image(
+                    img_path,
+                    key=f"pg{idx}v{entry.get('version', 1)}",
+                    caption=f"{display_name} · v{entry.get('version', 1)}",
+                )
             else:
                 st.caption("⚠️ 图片不存在")
 
@@ -3210,6 +3843,7 @@ def _render_image_feedback_panel(idx: int, mock_imgs: bool) -> None:
 
 def _run_docs_assembly() -> None:
     """v1.8.3 步骤 C：用 session 里的图组装 4 件套 + 打包 ZIP。"""
+    _assemble_t0 = time.time()
     ec = st.session_state.extracted
     outline: BookOutline = st.session_state.outline
     apply_extracted_to_outline(outline, ec)
@@ -3233,43 +3867,56 @@ def _run_docs_assembly() -> None:
             return
         image_paths.append(Path(entry["path"]))
 
+    # ★ 定稿放大（质量优先）：审图阶段为了快没做 4K 放大，这里只对最终选用的图
+    #   统一做「居中裁 4:3 → 升印刷分辨率」。放大不改画面内容，质量无损、专供印刷 DPI。
+    from seedream_client import postprocess_4k
+    up = st.progress(0, "印刷放大（4K）...")
+    for _k, _p in enumerate(image_paths):
+        up.progress(_k / max(1, len(image_paths)), f"印刷放大 {_k + 1}/{len(image_paths)}...")
+        try:
+            postprocess_4k(_p)
+        except Exception:
+            pass
+    up.progress(1.0, "✅ 印刷放大完成")
+
     progress = st.progress(0, "组装文档中...")
 
     # 1. Picture Book PPT
     progress.progress(1 / 5, "组装 Picture Book PPT...")
-    pb_path = run_dir / f"{name_prefix}_绘本.pptx"
+    pb_path = run_dir / f"{name_prefix}_Reader.pptx"
     build_picturebook_pptx(outline, image_paths, pb_path)
 
     # 2. Worksheet
     progress.progress(2 / 5, "生成 Worksheet PPTX...")
-    ws_path = run_dir / f"{name_prefix}_练习册.pptx"
+    ws_path = run_dir / f"{name_prefix}_Worksheet.pptx"
     build_worksheet(outline, ws_path, image_paths=image_paths,
                     sentence_image_mode=_ws_sentence_mode(),
                     second_reading_mode=_ws_second_reading_mode())
 
     # 3. Reading Report
     progress.progress(3 / 5, "生成 Reading Report DOCX...")
-    rr_path = run_dir / f"{name_prefix}_阅读报告.docx"
+    rr_path = run_dir / f"{name_prefix}_Reading_Report.docx"
     rr_with_answers = st.session_state.get("rr_answer_mode", "").startswith("示例")
     build_reading_report(outline, rr_path, with_answers=rr_with_answers)
 
     # 4. Teacher's Guide
     progress.progress(4 / 5, "生成 Teacher's Guide DOCX...")
-    tg_path = run_dir / f"{name_prefix}_教师指南.docx"
+    tg_path = run_dir / f"{name_prefix}_Teachers_Guide.docx"
     build_teacher_guide(outline, tg_path)
 
     # 5. ZIP
-    zip_path = run_dir / f"{name_prefix}_全套.zip"
+    zip_path = run_dir / f"{name_prefix}_Full_Set.zip"
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as z:
         for path in [pb_path, ws_path, rr_path, tg_path]:
             z.write(path, arcname=path.name)
-        # 也带上图片
+        # 也带上图片（屏幕用 PNG）
         for img in image_paths:
             z.write(img, arcname=f"images/{img.name}")
 
     progress.progress(1.0, "完成 ✅")
 
-    st.success("4 件套已生成。点击下面按钮下载：")
+    _elapsed = time.time() - _assemble_t0
+    st.success(f"4 件套已生成（组装用时 {_elapsed:.1f}s）。点击下面按钮下载：")
     col1, col2, col3, col4, col5 = st.columns(5)
     with col1:
         _download_button(pb_path, "📘 绘本 PPT")
@@ -3282,10 +3929,75 @@ def _run_docs_assembly() -> None:
     with col5:
         _download_button(zip_path, "📦 全套 ZIP", primary=True)
 
-    # 预览图片
+    # 4 交付物视觉预览（文档→PDF→PNG，按需渲染，带缓存）
+    _render_deliverable_previews(pb_path, ws_path, rr_path, tg_path)
+
+    # 预览图片（瀑布流 / Masonry 图片墙，错落铺满无大块空白）
     with st.expander("🖼️ 预览生成的图片", expanded=False):
-        for img in image_paths:
-            st.image(str(img), caption=img.name, width="stretch")
+        _masonry_gallery(
+            [str(img) for img in image_paths],
+            captions=[f"第 {i} 页" if i else "封面" for i in range(len(image_paths))],
+        )
+
+
+def _render_doc_preview(path: Path, label: str, *, key: str, cols: int = 2) -> None:
+    """交付物视觉预览：首次点按钮渲染（文档→PDF→PNG），之后走缓存秒开。
+
+    soffice/fitz 不可用时退回文字预览。
+    """
+    path = Path(path)
+    if not path.exists():
+        st.error(f"{label}: 文件不存在")
+        return
+    sk = f"_docprev::{key}::{path.name}"
+    if st.button(f"🔍 预览 {label}", key=f"btn_{sk}", width="stretch"):
+        if has_visual_preview():
+            try:
+                imgs = run_with_live_timer(
+                    f"渲染预览 · {label}", render_to_images, path,
+                    done_note="首次约 10 秒，之后秒开",
+                )
+            except Exception as e:
+                imgs = []
+                st.warning(f"视觉预览失败：{e}")
+            st.session_state[sk] = [str(p) for p in imgs]
+        else:
+            st.session_state[sk] = []  # 标记“已尝试”，走文字兜底
+
+    if sk not in st.session_state:
+        st.caption("👆 点按钮生成预览（首次约 10 秒渲染，之后秒开）。")
+        return
+
+    imgs = st.session_state.get(sk) or []
+    if not imgs:
+        st.info("未生成视觉预览，改用文字预览：")
+        st.text(extract_text(path))
+        return
+    _masonry_gallery(
+        imgs,
+        captions=[f"{label} · 第 {i + 1} 页" for i in range(len(imgs))],
+        cols=cols,
+    )
+
+
+def _render_deliverable_previews(
+    pb_path: Path, ws_path: Path, rr_path: Path, tg_path: Path,
+) -> None:
+    """组装完成后：4 交付物视觉预览（分页签，按需渲染）。"""
+    with st.expander("👁️ 预览 4 交付物（绘本 / Worksheet / RR / TG）", expanded=False):
+        if not has_visual_preview():
+            st.caption("⚠️ 未检测到 LibreOffice，预览将以文字形式呈现。")
+        t1, t2, t3, t4 = st.tabs(
+            ["📘 绘本 Reader", "📋 Worksheet", "📝 Reading Report", "📖 Teacher Guide"]
+        )
+        with t1:
+            _render_doc_preview(pb_path, "绘本 Reader", key="pb", cols=2)
+        with t2:
+            _render_doc_preview(ws_path, "Worksheet", key="ws", cols=2)
+        with t3:
+            _render_doc_preview(rr_path, "Reading Report", key="rr", cols=1)
+        with t4:
+            _render_doc_preview(tg_path, "Teacher Guide", key="tg", cols=2)
 
 
 def _download_button(path: Path, label: str, *, primary: bool = False) -> None:
@@ -3352,12 +4064,521 @@ def _key_status_banner() -> None:
     st.caption("&nbsp;&nbsp;|&nbsp;&nbsp;".join(msgs), unsafe_allow_html=True)
 
 
+def _masonry_gallery(paths, captions=None, cols: int | None = None) -> None:
+    """瀑布流（Masonry）图片墙：图片按列流式排布、按内容高度自适应、列间无大块空白。
+
+    用 base64 内联 <img>，包进 .masonry 容器（CSS column 多列）→ Pinterest 式错落瀑布。
+    每张图悬浮有 3D 抬升 + 标题浮层（微交互反馈）。
+    cols：固定列数（不传则用 CSS 响应式 3/2/1 列）。"""
+    paths = [str(p) for p in (paths or [])]
+    if not paths:
+        return
+    cards, boxes = [], []
+    for i, p in enumerate(paths):
+        uri = _img_data_uri(p)
+        if not uri:
+            continue
+        zid = "zi-" + re.sub(r"[^a-zA-Z0-9_-]", "", f"{i}-{Path(p).stem}")
+        cap_txt = captions[i] if (captions and i < len(captions) and captions[i]) else ""
+        cap = f'<figcaption class="mz-cap">{cap_txt}</figcaption>' if cap_txt else ""
+        # 卡片本体即放大触发器（点击 → 全屏灯箱）
+        cards.append(
+            f'<a class="mz-card" href="#{zid}"><img loading="lazy" src="{uri}"/>{cap}</a>'
+        )
+        lbcap = f'<div class="lb-cap">{cap_txt}</div>' if cap_txt else ""
+        boxes.append(
+            f'<a class="lightbox" id="{zid}" href="#_close"><img src="{uri}"/>{lbcap}</a>'
+        )
+    if not cards:
+        return
+    style = f' style="column-count:{cols}"' if cols else ""
+    st.markdown(f'<div class="masonry"{style}>{"".join(cards)}</div>{"".join(boxes)}',
+                unsafe_allow_html=True)
+
+
+def _img_data_uri(path) -> str | None:
+    """读图 → base64 data URI（失败返回 None）。"""
+    ext_mime = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+                ".webp": "image/webp", ".gif": "image/gif"}
+    try:
+        data = Path(path).read_bytes()
+    except Exception:
+        return None
+    mime = ext_mime.get(Path(path).suffix.lower(), "image/png")
+    return f"data:{mime};base64,{base64.b64encode(data).decode('ascii')}"
+
+
+def _zoom_image(path, key: str, caption: str = "") -> None:
+    """单图点击放大（纯 CSS 灯箱）：点缩略图 → 全屏看大图；点任意处关闭。无需任何按钮。"""
+    uri = _img_data_uri(path)
+    if not uri:
+        st.caption("⚠️ 图片不存在")
+        return
+    zid = "zi-" + re.sub(r"[^a-zA-Z0-9_-]", "", str(key))
+    cap = f'<div class="lb-cap">{caption}</div>' if caption else ""
+    st.markdown(
+        f'<a class="zoomable" href="#{zid}"><img loading="lazy" src="{uri}"/></a>'
+        f'<a class="lightbox" id="{zid}" href="#_close"><img src="{uri}"/>{cap}</a>',
+        unsafe_allow_html=True,
+    )
+
+
 def _inject_css() -> None:
     st.markdown(
         """<style>
-        .stButton button { font-weight: 600; }
-        .block-container { max-width: 1280px; padding-top: 1.2rem; }
-        textarea { font-family: 'Poppins', 'Segoe UI', sans-serif !important; }
+        @import url('https://fonts.googleapis.com/css2?family=Poppins:wght@500;600;700;800&family=Inter:wght@400;500;600;700&display=swap');
+        :root{
+          --brand:#F47332; --brand-dark:#e0601f; --brand-tint:#fff5ef;
+          --brand-2:#ff9a4d;
+          --ink:#121826; --muted:#697586; --faint:#9aa4b2;
+          --line:#eceef2; --line-soft:#f2f4f7; --card:#ffffff;
+          --bg:#f7f8fb;
+          --radius:14px; --radius-lg:20px;
+          --shadow-sm:0 1px 2px rgba(16,24,40,.04),0 1px 3px rgba(16,24,40,.05);
+          --shadow-md:0 4px 12px rgba(16,24,40,.06),0 2px 4px rgba(16,24,40,.04);
+          --shadow-lg:0 18px 40px -12px rgba(16,24,40,.18);
+          --ring:0 0 0 3px rgba(244,115,50,.16);
+        }
+        html, body, [class*="css"]{ -webkit-font-smoothing:antialiased; text-rendering:optimizeLegibility; }
+        .stApp{
+          background:
+            radial-gradient(900px 480px at 88% -8%, rgba(244,115,50,.10), transparent 60%),
+            radial-gradient(820px 460px at -6% 4%, rgba(120,120,255,.06), transparent 55%),
+            var(--bg);
+        }
+        .block-container { max-width: 1340px; padding-top: 2.4rem; }
+        body, p, span, div, label, textarea, input, button, select{ font-family:'Inter','Poppins','Segoe UI',sans-serif; }
+
+        /* ---------- 顶部品牌横幅 hero（玻璃 + 网格渐变 高级感） ---------- */
+        .hero{
+          position:relative; display:flex; align-items:center; gap:20px;
+          background:linear-gradient(120deg, rgba(255,255,255,.86), rgba(255,247,241,.78));
+          backdrop-filter:blur(14px) saturate(1.2); -webkit-backdrop-filter:blur(14px) saturate(1.2);
+          border:1px solid rgba(255,255,255,.7); border-radius:var(--radius-lg);
+          padding:22px 26px; margin:4px 0 20px;
+          box-shadow:var(--shadow-lg);
+          overflow:hidden;
+        }
+        .hero::before{
+          content:""; position:absolute; inset:0; z-index:0; pointer-events:none;
+          background:
+            radial-gradient(420px 220px at 90% -40%, rgba(244,115,50,.22), transparent 60%),
+            radial-gradient(360px 200px at 8% 130%, rgba(255,154,77,.18), transparent 60%);
+        }
+        .hero::after{
+          content:""; position:absolute; left:0; right:0; bottom:0; height:3px; z-index:1;
+          background:linear-gradient(90deg, transparent, var(--brand), var(--brand-2), transparent);
+          opacity:.8;
+        }
+        .hero > *{ position:relative; z-index:2; }
+        .hero-icon{ flex:0 0 auto; display:flex; }
+        .hero-dino{
+          width:64px; height:64px; object-fit:contain;
+          filter:drop-shadow(0 6px 14px rgba(244,115,50,.34));
+        }
+        .hero-text{ flex:1 1 auto; min-width:0; }
+        .hero-title{
+          font-family:'Poppins','Inter',sans-serif;
+          font-size:28px; font-weight:800; letter-spacing:.2px;
+          background:linear-gradient(92deg,var(--ink) 0%, var(--ink) 38%, var(--brand) 100%);
+          -webkit-background-clip:text; background-clip:text; color:transparent;
+          line-height:1.18;
+        }
+        .hero-sub{ color:var(--muted); font-size:13.5px; margin-top:5px; font-weight:500; }
+        .hero-badge{
+          flex:0 0 auto; align-self:flex-start;
+          background:linear-gradient(135deg,var(--brand),var(--brand-2)); color:#fff;
+          font-weight:700; font-size:12px; letter-spacing:.3px;
+          padding:6px 14px; border-radius:999px;
+          box-shadow:0 6px 16px rgba(244,115,50,.32); border:1px solid rgba(255,255,255,.35);
+        }
+
+        /* ---------- 侧边栏（玻璃质感 + 细描边） ---------- */
+        [data-testid="stSidebar"]{
+          background:linear-gradient(180deg,#ffffff, #fbfcfe);
+          border-right:1px solid var(--line);
+        }
+        .side-brand{
+          display:flex; align-items:center; gap:11px;
+          padding:8px 6px 14px; margin-bottom:8px; border-bottom:1px solid var(--line);
+        }
+        .side-brand .side-dino{
+          width:42px; height:42px; object-fit:contain;
+          filter:drop-shadow(0 3px 7px rgba(244,115,50,.28));
+        }
+        .side-brand span{ font-weight:800; color:var(--ink); font-size:16px; line-height:1.15; }
+        .side-brand small{ font-weight:600; color:var(--muted); font-size:11px; }
+
+        /* ---------- 标题层级 ---------- */
+        h1,h2,h3,h4{ color:var(--ink); font-weight:700; letter-spacing:.1px; font-family:'Poppins','Inter',sans-serif; }
+
+        /* ---------- 按钮（高级实心 + 柔和描边 + 微动效） ---------- */
+        .stButton > button{
+          border-radius:11px; font-weight:600; transition:transform .16s ease, box-shadow .16s ease, background .16s ease, border-color .16s ease;
+          border:1px solid var(--line); box-shadow:var(--shadow-sm);
+        }
+        .stButton > button:hover{ transform:translateY(-1px); box-shadow:var(--shadow-md); }
+        .stButton > button:active{ transform:translateY(0); }
+        .stButton > button:focus-visible{ box-shadow:var(--ring) !important; }
+        /* primary = 品牌橙渐变实心 */
+        .stButton > button[kind="primary"],
+        [data-testid="stBaseButton-primary"]{
+          background:linear-gradient(135deg,var(--brand),var(--brand-2)) !important;
+          border:1px solid rgba(244,115,50,.4) !important;
+          color:#fff !important; box-shadow:0 8px 20px -6px rgba(244,115,50,.5);
+        }
+        .stButton > button[kind="primary"]:hover,
+        [data-testid="stBaseButton-primary"]:hover{
+          filter:brightness(1.03);
+          box-shadow:0 12px 26px -6px rgba(244,115,50,.58) !important;
+        }
+        /* secondary = 描边，hover 染橙 */
+        .stButton > button[kind="secondary"]:hover,
+        [data-testid="stBaseButton-secondary"]:hover{
+          color:var(--brand) !important; border-color:var(--brand) !important;
+          background:var(--brand-tint) !important;
+        }
+
+        /* ---------- 输入控件（聚焦发光环，更通透） ---------- */
+        textarea, input, [data-baseweb="select"] > div, [data-baseweb="input"] > div{
+          border-radius:11px !important;
+        }
+        textarea:focus, input:focus,
+        [data-baseweb="input"]:focus-within, [data-baseweb="select"]:focus-within{
+          box-shadow:var(--ring) !important; border-color:var(--brand) !important;
+        }
+
+        /* ---------- Tabs（卡片 + 橙色高亮条） ---------- */
+        .stTabs [data-baseweb="tab-list"]{
+          gap:6px; border-bottom:2px solid var(--line); padding-bottom:0;
+        }
+        .stTabs [data-baseweb="tab"]{
+          border-radius:11px 11px 0 0; padding:9px 20px; font-weight:600;
+          color:var(--muted); background:transparent; transition:all .16s ease;
+        }
+        .stTabs [data-baseweb="tab"]:hover{ color:var(--brand); background:var(--brand-tint); }
+        .stTabs [aria-selected="true"]{
+          color:var(--brand) !important; background:var(--brand-tint) !important;
+        }
+        .stTabs [data-baseweb="tab-highlight"]{ background:linear-gradient(90deg,var(--brand),var(--brand-2)) !important; height:3px !important; border-radius:3px; }
+        .stTabs [data-baseweb="tab-border"]{ display:none; }
+
+        /* ---------- 卡片容器（st.container(border=True)）：玻璃白 + 悬浮抬升 ---------- */
+        [data-testid="stVerticalBlockBorderWrapper"]{
+          border-radius:var(--radius) !important; border:1px solid var(--line) !important;
+          box-shadow:var(--shadow-sm); background:var(--card);
+          transition:box-shadow .2s ease, transform .2s ease, border-color .2s ease;
+        }
+        [data-testid="stVerticalBlockBorderWrapper"]:hover{
+          box-shadow:var(--shadow-md); border-color:#e6e8ee !important;
+        }
+
+        /* ---------- expander 卡片化 ---------- */
+        [data-testid="stExpander"]{
+          border-radius:var(--radius); border:1px solid var(--line);
+          box-shadow:var(--shadow-sm); background:var(--card);
+        }
+        [data-testid="stExpander"] summary:hover{ color:var(--brand); }
+
+        /* ---------- 指标 / 提示框圆角统一 ---------- */
+        [data-testid="stMetric"]{
+          background:var(--card); border:1px solid var(--line); border-radius:var(--radius);
+          padding:14px 16px; box-shadow:var(--shadow-sm);
+        }
+        [data-testid="stAlert"]{ border-radius:var(--radius); }
+
+        /* ---------- 向导顶部进度条 ---------- */
+        .wiz-track{
+          position:relative; height:7px; border-radius:7px; background:var(--line-soft);
+          margin:2px 0 14px; overflow:hidden;
+        }
+        .wiz-fill{
+          position:absolute; left:0; top:0; height:100%; border-radius:7px;
+          background:linear-gradient(90deg,var(--brand),var(--brand-2));
+          box-shadow:0 0 12px rgba(244,115,50,.45);
+          transition:width .4s cubic-bezier(.4,0,.2,1);
+        }
+
+        /* ---------- 侧边栏交付物导航（左侧竖向 tabs） ---------- */
+        [data-testid="stSidebar"] .nav-title{
+          font-weight:700; font-size:13px; letter-spacing:.6px; text-transform:uppercase;
+          color:var(--faint); margin:.2rem 0 .6rem;
+        }
+        [data-testid="stSidebar"] [role="radiogroup"]{ gap:6px; }
+        [data-testid="stSidebar"] [role="radiogroup"] label{
+          display:flex; align-items:center; width:100%;
+          padding:11px 14px; border-radius:11px; border:1px solid transparent;
+          font-weight:600; color:var(--muted); cursor:pointer; transition:all .16s ease;
+        }
+        [data-testid="stSidebar"] [role="radiogroup"] label:hover{
+          background:var(--brand-tint); color:var(--brand); transform:translateX(2px);
+        }
+        [data-testid="stSidebar"] [role="radiogroup"] label:has(input:checked){
+          background:linear-gradient(90deg,var(--brand-tint),rgba(255,245,239,.4));
+          color:var(--brand); border-color:rgba(244,115,50,.28);
+          box-shadow:inset 3px 0 0 var(--brand);
+        }
+        [data-testid="stSidebar"] [role="radiogroup"] label > div:first-child{ display:none; }
+
+        /* ---------- 实时计时药丸 ---------- */
+        .timer-pill{
+          display:inline-flex; align-items:center; gap:9px;
+          padding:7px 15px; border-radius:999px; font-size:13.5px; font-weight:600;
+          color:var(--brand-dark); background:var(--brand-tint);
+          border:1px solid rgba(244,115,50,.28); box-shadow:var(--shadow-sm);
+          margin:4px 0;
+        }
+        .timer-pill.done{
+          color:#0a7d4d; background:#eafaf2; border-color:rgba(16,185,129,.3);
+        }
+        .timer-pill b{ font-variant-numeric:tabular-nums; }
+        .timer-spin{
+          width:13px; height:13px; border-radius:50%;
+          border:2px solid rgba(244,115,50,.3); border-top-color:var(--brand);
+          animation:tmr-spin .7s linear infinite;
+        }
+        @keyframes tmr-spin{ to{ transform:rotate(360deg); } }
+
+        /* ---------- 分隔线更轻 ---------- */
+        hr{ margin:.8rem 0; border:none; border-top:1px solid var(--line); }
+
+        /* ============================================================
+           v2 精修层（2026-06-06）：字体层级 / 呼吸感 / 立体分层 /
+           状态反馈 / 关键词标签 / 区块标题 / 瀑布流 / 微动效
+           ============================================================ */
+
+        /* —— 1) 字体层级（清晰的标题阶梯 + 行高呼吸）—— */
+        .block-container h1{ font-size:30px; line-height:1.2; margin:.2rem 0 .6rem; }
+        .block-container h2{ font-size:23px; line-height:1.25; margin:1.3rem 0 .55rem; }
+        .block-container h3{ font-size:18.5px; line-height:1.3; margin:1.05rem 0 .45rem; }
+        .block-container h4{ font-size:15.5px; line-height:1.35; margin:.85rem 0 .35rem; color:var(--muted); letter-spacing:.2px; }
+        .block-container p, .block-container li{ line-height:1.62; }
+        [data-testid="stCaptionContainer"], .stCaption, small{ color:var(--faint) !important; }
+        [data-testid="stWidgetLabel"] label p{ font-weight:600 !important; color:var(--ink) !important; letter-spacing:.1px; }
+
+        /* —— 2) 呼吸感（统一竖向节奏 + 更宽松留白）—— */
+        .block-container{ padding-bottom:4rem; }
+        [data-testid="stVerticalBlock"]{ gap:.85rem; }
+        [data-testid="stHorizontalBlock"]{ gap:1rem; }
+        [data-testid="stVerticalBlockBorderWrapper"] > div{ padding:2px; }
+
+        /* —— 3) 立体分层（卡片更有层次的悬浮抬升 = 三维实用感）—— */
+        [data-testid="stVerticalBlockBorderWrapper"]:hover{ transform:translateY(-2px); }
+        [data-testid="stMetric"]{ transition:transform .18s ease, box-shadow .18s ease; }
+        [data-testid="stMetric"]:hover{ transform:translateY(-2px); box-shadow:var(--shadow-md); }
+        [data-testid="stMetricValue"]{ font-weight:800; color:var(--ink); }
+        [data-testid="stMetricLabel"]{ color:var(--muted); font-weight:600; }
+
+        /* —— 4) 状态反馈（提示框左侧强调条 + 语义色，反馈更明确）—— */
+        [data-testid="stAlert"]{ border:1px solid var(--line); box-shadow:var(--shadow-sm); position:relative; overflow:hidden; }
+        [data-testid="stAlert"]::before{ content:""; position:absolute; left:0; top:0; bottom:0; width:4px; }
+        [data-testid="stAlert"]:has([data-testid="stAlertContentSuccess"])::before{ background:#16a34a; }
+        [data-testid="stAlert"]:has([data-testid="stAlertContentInfo"])::before{ background:#2563eb; }
+        [data-testid="stAlert"]:has([data-testid="stAlertContentWarning"])::before{ background:#f59e0b; }
+        [data-testid="stAlert"]:has([data-testid="stAlertContentError"])::before{ background:#ef4444; }
+
+        /* —— 5) 关键词标签 chip（“战格/标签”可复用组件）—— */
+        .chip-row{ display:flex; flex-wrap:wrap; gap:8px; margin:6px 0 4px; }
+        .chip{
+          display:inline-flex; align-items:center; gap:6px;
+          padding:5px 12px; border-radius:999px; font-size:12.5px; font-weight:600;
+          color:var(--brand-dark); background:var(--brand-tint);
+          border:1px solid rgba(244,115,50,.22); line-height:1;
+          transition:all .14s ease;
+        }
+        .chip:hover{ box-shadow:var(--shadow-sm); transform:translateY(-1px); }
+        .chip.gray{ color:var(--muted); background:var(--line-soft); border-color:var(--line); }
+        .chip.ok{ color:#0a7d4d; background:#eafaf2; border-color:rgba(16,185,129,.28); }
+
+        /* —— 6) 统一区块标题（图标 + 标题 + 渐隐细线，对齐有序）—— */
+        .sec-head{
+          display:flex; align-items:center; gap:10px; margin:.4rem 0 .7rem;
+          font-family:'Poppins','Inter',sans-serif; font-weight:700; color:var(--ink); font-size:16px;
+        }
+        .sec-head .ic{
+          display:inline-flex; align-items:center; justify-content:center;
+          width:30px; height:30px; border-radius:9px;
+          background:linear-gradient(135deg,var(--brand),var(--brand-2)); color:#fff;
+          box-shadow:0 5px 12px -3px rgba(244,115,50,.5); font-size:15px;
+        }
+        .sec-head .line{ flex:1 1 auto; height:1px; background:linear-gradient(90deg,var(--line),transparent); }
+
+        /* —— 7) 状态药丸 badge（运行中 / 完成 / 待办）—— */
+        .badge{ display:inline-flex; align-items:center; gap:6px; padding:4px 11px; border-radius:999px;
+          font-size:12px; font-weight:700; letter-spacing:.2px; border:1px solid transparent; }
+        .badge.run{ color:#b45309; background:#fff7ed; border-color:#fed7aa; }
+        .badge.ok{ color:#0a7d4d; background:#eafaf2; border-color:rgba(16,185,129,.3); }
+        .badge.todo{ color:var(--muted); background:var(--line-soft); border-color:var(--line); }
+
+        /* —— 8) 瀑布流图片容器（HTML 画廊用 .masonry 包裹 <img>）—— */
+        .masonry{ column-count:3; column-gap:14px; }
+        .masonry > *{ break-inside:avoid; margin:0 0 14px; border-radius:var(--radius);
+          overflow:hidden; box-shadow:var(--shadow-sm); display:block; }
+        @media (max-width:1100px){ .masonry{ column-count:2; } }
+        @media (max-width:680px){ .masonry{ column-count:1; } }
+
+        /* —— 9) 图片圆角 + 轻边框（统一观感，立体）—— */
+        [data-testid="stImage"] img{ border-radius:12px; box-shadow:var(--shadow-sm); }
+
+        /* —— 10) 滚动条 / 选区 / 入场微动效（视觉呼吸）—— */
+        ::-webkit-scrollbar{ width:11px; height:11px; }
+        ::-webkit-scrollbar-thumb{ background:#d7dbe3; border-radius:8px; border:3px solid var(--bg); }
+        ::-webkit-scrollbar-thumb:hover{ background:#c2c8d2; }
+        ::selection{ background:rgba(244,115,50,.22); }
+        .hero, [data-testid="stVerticalBlockBorderWrapper"]{ animation:rise .42s cubic-bezier(.2,.7,.2,1) both; }
+        @keyframes rise{ from{ opacity:0; transform:translateY(8px); } to{ opacity:1; transform:translateY(0); } }
+        @media (prefers-reduced-motion: reduce){ *{ animation:none !important; } }
+
+        /* ============================================================
+           v3 沉浸层（2026-06-06）：瀑布流 / 玻璃拟态 / 粘性顶栏+侧栏 /
+           分层视差 / 3D 空间 / Logo·标题环绕动效 / 微交互反馈 / 慢滚顺滑
+           ============================================================ */
+
+        /* —— 0) 屏宽与定位：拉宽内容、居中、慢滚顺滑、铺满不留大块空白 —— */
+        html{ scroll-behavior:smooth; }
+        .block-container{ max-width:1480px; padding-left:2.4rem; padding-right:2.4rem; margin:0 auto; }
+
+        /* —— 1) 分层视差背景：背景固定（慢）、前景内容滚动（快）→ 纵深分层感 —— */
+        .stApp{ background-attachment:fixed; }
+        .stApp::before{
+          content:""; position:fixed; inset:0; z-index:0; pointer-events:none;
+          background:
+            radial-gradient(1100px 560px at 84% -12%, rgba(244,115,50,.10), transparent 62%),
+            radial-gradient(900px 520px at -10% 8%, rgba(120,120,255,.07), transparent 58%),
+            radial-gradient(700px 700px at 50% 120%, rgba(255,154,77,.06), transparent 60%);
+          animation:bgdrift 26s ease-in-out infinite alternate;
+        }
+        @keyframes bgdrift{
+          from{ transform:translate3d(0,0,0) scale(1); }
+          to{ transform:translate3d(0,-18px,0) scale(1.04); }
+        }
+        [data-testid="stAppViewContainer"] > .main{ position:relative; z-index:1; }
+
+        /* —— 2) 粘性顶栏：hero 吸顶 + 玻璃半透明（滚动时悬浮在内容之上）—— */
+        .hero{
+          position:sticky; top:.5rem; z-index:50;
+          background:linear-gradient(120deg, rgba(255,255,255,.72), rgba(255,247,241,.6));
+          backdrop-filter:blur(18px) saturate(1.35); -webkit-backdrop-filter:blur(18px) saturate(1.35);
+          border:1px solid rgba(255,255,255,.55);
+        }
+
+        /* —— 3) 粘性侧栏（窗口内）：品牌头吸顶 + 内容随窗滚动 + 玻璃质感 —— */
+        [data-testid="stSidebar"]{
+          background:linear-gradient(180deg, rgba(255,255,255,.78), rgba(251,252,254,.7));
+          backdrop-filter:blur(16px) saturate(1.2); -webkit-backdrop-filter:blur(16px) saturate(1.2);
+        }
+        [data-testid="stSidebar"] [data-testid="stSidebarUserContent"]{
+          position:sticky; top:0; max-height:100vh; overflow-y:auto;
+        }
+        .side-brand{
+          position:sticky; top:0; z-index:5;
+          background:linear-gradient(180deg, rgba(255,255,255,.92), rgba(255,255,255,.7));
+          backdrop-filter:blur(10px); -webkit-backdrop-filter:blur(10px);
+        }
+
+        /* —— 4) Logo · 标题环绕动效：恐龙做轻盈环绕浮游，标题流光扫过 —— */
+        .hero-dino{ animation:orbit 6.5s ease-in-out infinite; transform-origin:center; }
+        @keyframes orbit{
+          0%{ transform:translate(0,0) rotate(-4deg); }
+          25%{ transform:translate(3px,-5px) rotate(2deg); }
+          50%{ transform:translate(0,-8px) rotate(4deg); }
+          75%{ transform:translate(-3px,-5px) rotate(2deg); }
+          100%{ transform:translate(0,0) rotate(-4deg); }
+        }
+        .hero-icon{ position:relative; }
+        .hero-icon::after{   /* 环绕光环 */
+          content:""; position:absolute; inset:-8px; border-radius:50%;
+          border:1.5px dashed rgba(244,115,50,.35); animation:ring-spin 14s linear infinite;
+        }
+        @keyframes ring-spin{ to{ transform:rotate(360deg); } }
+        .hero-title{
+          background:linear-gradient(92deg,var(--ink) 0%, var(--ink) 30%, var(--brand) 50%, var(--ink) 70%, var(--ink) 100%);
+          background-size:220% 100%;
+          -webkit-background-clip:text; background-clip:text; color:transparent;
+          animation:sheen 7s ease-in-out infinite;
+        }
+        @keyframes sheen{ 0%,100%{ background-position:140% 0; } 50%{ background-position:-40% 0; } }
+
+        /* —— 5) 3D 空间：卡片悬浮抬升（轻量，不裁剪内容、不产生内部滚动条）—— */
+        [data-testid="stVerticalBlockBorderWrapper"]:hover{
+          transform:translateY(-3px); box-shadow:var(--shadow-lg);
+        }
+        /* 图片容器绝不内部滚动：自然高度铺满，不出现小框 + 滚动轴 */
+        [data-testid="stImage"]{ overflow:visible !important; }
+        [data-testid="stImage"] img{ height:auto !important; max-height:none !important; }
+
+        /* —— 6) 扁平边框：去厚重、统一 1px 干净描边（flat frame）—— */
+        [data-testid="stExpander"], [data-testid="stMetric"], [data-testid="stAlert"]{
+          box-shadow:none !important; border:1px solid var(--line) !important;
+        }
+        [data-testid="stExpander"]:hover, [data-testid="stMetric"]:hover{
+          box-shadow:var(--shadow-sm) !important;
+        }
+
+        /* —— 7) 瀑布流图片墙 Masonry：错落铺满 + 悬浮抬升 + 标题浮层（点击放大）—— */
+        .masonry .mz-card{
+          position:relative; display:block; margin:0 0 14px; border-radius:var(--radius);
+          overflow:hidden; box-shadow:var(--shadow-sm); break-inside:avoid; cursor:zoom-in;
+          text-decoration:none;
+          transition:transform .28s cubic-bezier(.2,.7,.2,1), box-shadow .28s ease;
+        }
+        .masonry .mz-card img{ display:block; width:100%; height:auto; border-radius:var(--radius); }
+        .masonry .mz-card:hover{
+          transform:translateY(-4px) scale(1.015);
+          box-shadow:var(--shadow-lg); z-index:2;
+        }
+        .masonry .mz-cap{
+          position:absolute; left:0; right:0; bottom:0;
+          padding:18px 12px 9px; font-size:12.5px; font-weight:600; color:#fff;
+          background:linear-gradient(transparent, rgba(16,24,40,.62));
+          opacity:0; transform:translateY(6px); transition:all .26s ease;
+        }
+        .masonry .mz-card:hover .mz-cap{ opacity:1; transform:translateY(0); }
+
+        /* —— 7b) 点击放大灯箱（纯 CSS :target，无需 JS / 按钮）—— */
+        .zoomable{ display:block; cursor:zoom-in; text-decoration:none; }
+        .zoomable img{
+          display:block; width:100%; height:auto; border-radius:12px;
+          box-shadow:var(--shadow-sm); transition:transform .25s ease, box-shadow .25s ease;
+        }
+        .zoomable:hover img{ transform:scale(1.012); box-shadow:var(--shadow-md); }
+        .lightbox{ display:none; }
+        .lightbox:target{
+          display:flex; position:fixed; inset:0; z-index:9999; cursor:zoom-out;
+          align-items:center; justify-content:center; padding:3vh 3vw;
+          background:rgba(16,24,40,.84);
+          backdrop-filter:blur(8px); -webkit-backdrop-filter:blur(8px);
+          animation:lb-in .22s ease;
+        }
+        .lightbox:target img{
+          max-width:96vw; max-height:92vh; width:auto; height:auto;
+          border-radius:14px; box-shadow:0 32px 90px rgba(0,0,0,.55);
+        }
+        .lightbox .lb-cap{
+          position:fixed; left:0; right:0; bottom:18px; text-align:center;
+          color:#fff; font-size:14px; font-weight:600; letter-spacing:.2px;
+          text-shadow:0 2px 8px rgba(0,0,0,.6);
+        }
+        @keyframes lb-in{ from{ opacity:0; } to{ opacity:1; } }
+
+        /* —— 8) 微交互反馈：按钮按压涟漪、图片/控件即时反馈 —— */
+        .stButton > button{ position:relative; overflow:hidden; }
+        .stButton > button::after{
+          content:""; position:absolute; left:50%; top:50%; width:0; height:0;
+          border-radius:50%; background:rgba(255,255,255,.5);
+          transform:translate(-50%,-50%); transition:width .45s ease, height .45s ease, opacity .6s ease;
+          opacity:0;
+        }
+        .stButton > button:active::after{ width:240px; height:240px; opacity:1; transition:0s; }
+        [data-testid="stImage"] img{ transition:transform .25s ease, box-shadow .25s ease; }
+        [data-testid="stImage"] img:hover{ transform:scale(1.012); box-shadow:var(--shadow-md); }
+        [data-baseweb="select"] > div:hover, [data-baseweb="input"] > div:hover{ border-color:var(--brand-2) !important; }
+        [data-testid="stSlider"] [role="slider"]{ transition:transform .14s ease; }
+        [data-testid="stSlider"] [role="slider"]:hover{ transform:scale(1.18); }
+
+        @media (prefers-reduced-motion: reduce){
+          .hero-dino, .hero-icon::after, .hero-title, .stApp::before{ animation:none !important; }
+        }
         </style>""",
         unsafe_allow_html=True,
     )

@@ -31,7 +31,10 @@ _hydrate_from_streamlit_secrets()
 
 # ---------- 路径 ----------
 INPUTS_DIR = ROOT / "inputs"
-OUTPUTS_DIR = ROOT / "outputs"
+# 输出目录：可用环境变量 PB_OUTPUTS_DIR 覆盖（本机指向 D 盘，避免塞满 C 盘）。
+# 未设置时回落到项目内 outputs（部署服务器/云端无此变量，默认行为不变）。
+OUTPUTS_DIR = Path(os.getenv("PB_OUTPUTS_DIR") or (ROOT / "outputs"))
+OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
 ASSETS_DIR = ROOT / "assets"
 CHARACTERS_DIR = ASSETS_DIR / "characters"
 STYLE_DIR = ASSETS_DIR / "style"
@@ -54,6 +57,9 @@ IMAROUTER_API_KEY = (
 )
 IMAROUTER_BASE = os.getenv("IMAROUTER_BASE", "https://api.imarouter.com/v1").rstrip("/")
 TEXT_MODEL = os.getenv("TEXT_MODEL", "claude-opus-4-7")
+# 抽取/出题等结构化任务专用模型：默认用更快的 Sonnet（比 Opus 快数倍，质量足够），
+# 把 Opus 留给画面描述润色 / 科学校验等更吃质量的环节。可用 EXTRACT_MODEL 覆盖。
+EXTRACT_MODEL = os.getenv("EXTRACT_MODEL", "claude-sonnet-4-6")
 IMAGE_MODEL = os.getenv("IMAGE_MODEL", "gpt-image-2")
 
 REQUEST_TIMEOUT = int(os.getenv("REQUEST_TIMEOUT", "240"))
@@ -69,16 +75,32 @@ IMAGE_SIZE = os.getenv("IMAGE_SIZE", "1536x1024")
 # 目标交付比例与分辨率（绘本幻灯片 10x7.5 = 4:3）
 # 美工口径（2026-06-03）：精细印刷 2000×1500（正好 4:3）。出图后居中裁 4:3 → 放大到此尺寸。
 IMAGE_TARGET_RATIO = (4, 3)
-IMAGE_TARGET_PRINT = (2000, 1500)         # 居中裁 4:3 后放大到此尺寸（精细印刷）
+IMAGE_TARGET_PRINT = (2000, 1500)         # 工作图（进 PPT）尺寸：居中裁 4:3 后放大到此尺寸
 IMAGE_UPSCALE_METHOD = os.getenv("IMAGE_UPSCALE_METHOD", "lanczos")  # lanczos | esrgan
 IMAGE_DELIVER_PRINT = os.getenv("IMAGE_DELIVER_PRINT", "true").lower() in ("1", "true", "yes")
 # 向后兼容别名（旧代码引用名）
 IMAGE_TARGET_4K = IMAGE_TARGET_PRINT
 IMAGE_DELIVER_4K = IMAGE_DELIVER_PRINT
+
+# ---------- A5 印刷交付：300DPI + CMYK + TIFF/PDF（用户拍板 2026-06-04）----------
+# 印刷专用高分辨率（4:3）：3000×2250 ≈ 10"×7.5" @300DPI（比工作图更大，专供印刷）
+IMAGE_PRINT_DPI = int(os.getenv("IMAGE_PRINT_DPI", "300"))
+IMAGE_PRINT_DELIVER_PX = (
+    int(os.getenv("IMAGE_PRINT_W", "3000")),
+    int(os.getenv("IMAGE_PRINT_H", "2250")),
+)
+IMAGE_DELIVER_CMYK = os.getenv("IMAGE_DELIVER_CMYK", "true").lower() in ("1", "true", "yes")
+IMAGE_DELIVER_TIFF = os.getenv("IMAGE_DELIVER_TIFF", "true").lower() in ("1", "true", "yes")
+IMAGE_DELIVER_PDF = os.getenv("IMAGE_DELIVER_PDF", "true").lower() in ("1", "true", "yes")
+# 可选 CMYK ICC 描述文件路径（如 USWebCoatedSWOP.icc）；留空则用 Pillow 内置转换
+IMAGE_CMYK_PROFILE = os.getenv("IMAGE_CMYK_PROFILE", "")
+# 放大后做轻度 USM 锐化，弥补插值发虚（印刷无模糊）
+IMAGE_PRINT_UNSHARP = os.getenv("IMAGE_PRINT_UNSHARP", "true").lower() in ("1", "true", "yes")
 IMAGE_WATERMARK = os.getenv("IMAGE_WATERMARK", "false").lower() in ("1", "true", "yes")
 # gpt-image-2 异步轮询参数
 IMAGE_POLL_INTERVAL = float(os.getenv("IMAGE_POLL_INTERVAL", "5"))
-IMAGE_POLL_MAX_TRIES = int(os.getenv("IMAGE_POLL_MAX_TRIES", "60"))
+# 轮询更耐心：慢任务给到 ~7.5 分钟再判失败（接口慢时减少误判），失败后还会自动补跑
+IMAGE_POLL_MAX_TRIES = int(os.getenv("IMAGE_POLL_MAX_TRIES", "90"))
 # 参考图托管（gpt-image-2 只收 URL，本地图需先托管；临时图床即可，生成时拉取一次）
 IMAGE_HOST_PROVIDER = os.getenv("IMAGE_HOST_PROVIDER", "tmpfiles")
 
@@ -219,15 +241,21 @@ def composition_negative_cn() -> str:
 #   gpt-image-2 容易出细碎噪点/高频纹理，强制走大色块叙事、干净平滑。
 # ============================================================
 SMOOTHNESS_PROMPT_CN = (
-    "平滑控制要求：整体画面必须干净、平滑、统一，强调大色块叙事与整体轮廓，"
-    "不要细碎噪点，不要高频纹理，不要脏污颗粒，不要密集小装饰，"
-    "边缘清晰利落，表面干净，画面呼吸感强，一目了然。"
+    # 平滑控制要求（用户拍板提示词 2026-06-06，原样并入）：
+    "平滑控制要求：整体画面必须干净平滑统一，强调大色块叙事与整体轮廓，"
+    "不要细碎槽点，不要高频脏纹理，不要脏污颗粒立体感，不要密集小装饰，"
+    "边缘清晰利落，表面干净，画面呼吸感强、主次分明、一目了然；"
+    "同时要求细节丰富、质感细腻、干净高级、画面干净通透，材质完整自然、纹理平滑统一，"
+    "主体清晰、背景层次分明（前后景拉开）；"
+    "清晰的整体轮廓 + 柔和的水彩层次过渡（细腻而不细碎），可高分辨率印刷。"
 )
 SMOOTHNESS_NEGATIVE_CN = (
     "细碎噪点；高频纹理；脏污颗粒；密集小装饰；杂乱碎点；颗粒感；"
-    "噪声；划痕；过度细节堆砌；脏乱表面；模糊脏污；"
+    "噪声；划痕；过度细节堆砌；脏乱表面；模糊脏污；细碎槽点；"
     "斑驳破碎的色块；割裂的色斑/碎块；拼贴补丁感；色彩割裂不连贯；"
     "断裂破碎的轮廓；形体破碎；马赛克/碎片化质感；"
+    # 用户拍板 2026-06-06：过锐化 / 色斑 / 崩坏 / 畸变
+    "过度锐化；色斑；噪点细碎；崩坏；畸变；结构崩坏；肢体畸变；"
     "AI 杂线、乱纹、无逻辑多余背景"
 )
 
@@ -245,6 +273,10 @@ CHILD_SAFETY_POSITIVE_CN = (
 CHILD_SAFETY_NEGATIVE_CN = (
     # 画风/色彩规范（不含任何敏感词，避免触发图像安全审核）
     "阴郁、压抑、灰暗的画风；荧光色、超高对比度色块、暗沉黑底画面；"
+    # 儿童向柔化（用户拍板 2026-06-07）：去恐怖/凶相/丑陋——动物与反派都要可爱友善
+    "动物或角色露出尖牙、獠牙、利齿；张着大口作势扑咬；面露凶光、怒目圆睁、眉头紧锁的凶恶表情；"
+    "狰狞、吓人、阴森、惊悚的氛围；动物显得凶猛具攻击性、龇牙咧嘴、扑扯撕咬的紧张姿态；"
+    "丑陋、怪诞、扭曲变形的造型；尖锐獠牙的特写大口；"
     # IP 唯一性
     "非已选 IP 角色、却拥有清晰五官/发型/眼镜的陌生路人或同学；画面里人物过多杂乱"
 )
