@@ -2640,13 +2640,17 @@ def _init_main_nav() -> None:
         st.session_state["main_nav_radio"] = _MAIN_NAV[nav_key]
 
 
-def _go_to_nav(key: str) -> None:
+def _set_main_nav(key: str) -> None:
+    """Set nav target only — never assign main_nav_radio after widgets render."""
     if key not in _MAIN_NAV:
         return
     st.session_state["main_nav"] = key
-    st.session_state["main_nav_radio"] = _MAIN_NAV[key]
     st.query_params["tab"] = key
     _persist_storage(_NAV_COOKIE, key)
+
+
+def _go_to_nav(key: str) -> None:
+    _set_main_nav(key)
     st.rerun()
 
 
@@ -2699,16 +2703,19 @@ def _render_app_header_compact() -> None:
                     _clear_storage(_AUTH_COOKIE)
                     st.rerun()
             elif nav != "work":
-                if st.button("开始制作 →", key="hdr_start", type="primary", use_container_width=True):
-                    _go_to_nav("work")
+                st.button(
+                    "开始制作 →",
+                    key="hdr_start",
+                    type="primary",
+                    use_container_width=True,
+                    on_click=_set_main_nav,
+                    args=("work",),
+                )
             st.markdown("</div>", unsafe_allow_html=True)
 
     selected_key = keys[labels.index(selected)]
     if selected_key != nav:
-        st.session_state["main_nav"] = selected_key
-        st.session_state["main_nav_radio"] = _MAIN_NAV[selected_key]
-        st.query_params["tab"] = selected_key
-        _persist_storage(_NAV_COOKIE, selected_key)
+        _set_main_nav(selected_key)
         st.rerun()
 
 
@@ -2729,8 +2736,14 @@ def _render_overview_section() -> None:
     st.markdown("---")
     c1, c2 = st.columns([1, 3])
     with c1:
-        if st.button("👉 开始制作", type="primary", use_container_width=True, key="cta_work"):
-            _go_to_nav("work")
+        st.button(
+            "👉 开始制作",
+            type="primary",
+            use_container_width=True,
+            key="cta_work",
+            on_click=_set_main_nav,
+            args=("work",),
+        )
     with c2:
         st.caption("第一次使用？建议先看 **新手引导** 走查一遍流程。")
     with st.expander("版本信息", expanded=False):
@@ -2879,8 +2892,13 @@ def _render_onboarding_section() -> None:
     for i, (title, desc) in enumerate(steps, 1):
         st.markdown(f"**第 {i} 步 · {title}**  \n{desc}")
     st.divider()
-    if st.button("去开始制作 →", type="primary", key="onboard_go_work"):
-        _go_to_nav("work")
+    st.button(
+        "去开始制作 →",
+        type="primary",
+        key="onboard_go_work",
+        on_click=_set_main_nav,
+        args=("work",),
+    )
     _render_faq_accordion(open_first=False)
 
 
