@@ -168,7 +168,11 @@ def build() -> Path:
     OUT_HTML.parent.mkdir(parents=True, exist_ok=True)
     OUT_HTML.write_text(_build_html(), encoding="utf-8")
 
-    from playwright.sync_api import sync_playwright
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        print("SKIP PNG（未装 playwright；Streamlit Cloud 使用 assets/curriculum 内置长图）")
+        return OUT_HTML
 
     with sync_playwright() as p:
         browser = p.chromium.launch(headless=True)

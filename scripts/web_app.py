@@ -19,6 +19,7 @@ import hmac
 import io
 import os
 import re
+import shutil
 import sys
 import time
 import zipfile
@@ -2272,6 +2273,23 @@ _CMAP_XLSX = _FRAMEWORK_DIR / "课程对标总表_L0-L6.xlsx"
 _CMAP_LONGIMG = _FRAMEWORK_DIR / "课程级别长图_L0-L6.png"
 _CMAP_PREVIEW = _FRAMEWORK_DIR / "_preview_onepager.png"
 _READING_LOGO = BRAND_DIR / "dino_reading_logo.png"
+_BUNDLED_CURRICULUM = Path(__file__).resolve().parent.parent / "assets" / "curriculum"
+
+
+def _seed_curriculum_bundle(*, force: bool = False) -> None:
+    """从仓库内置资料复制到 outputs（Streamlit Cloud 无 Playwright，靠此同步本地长图/Excel）。"""
+    if not _BUNDLED_CURRICULUM.is_dir():
+        return
+    for name, dest in (
+        ("课程对标总表_L0-L6.xlsx", _CMAP_XLSX),
+        ("课程地图_L0-L6.html", _CMAP_HTML),
+        ("课程地图_L0-L6.pdf", _CMAP_PDF),
+        ("课程级别长图_L0-L6.png", _CMAP_LONGIMG),
+    ):
+        src = _BUNDLED_CURRICULUM / name
+        if src.exists() and (force or not dest.exists()):
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, dest)
 
 
 def _ensure_curriculum_assets(*, force: bool = False) -> None:
@@ -2279,19 +2297,31 @@ def _ensure_curriculum_assets(*, force: bool = False) -> None:
     if st.session_state.get("_cmap_build_tried") and not force:
         return
     st.session_state["_cmap_build_tried"] = True
+    st.session_state.pop("_cmap_build_err", None)
     _FRAMEWORK_DIR.mkdir(parents=True, exist_ok=True)
+    _seed_curriculum_bundle(force=force)
+    errs: list[str] = []
     try:
         if force or not _CMAP_XLSX.exists():
             from build_curriculum_xlsx import build as build_xlsx
             build_xlsx()
+    except Exception as e:
+        errs.append(f"Excel: {e}")
+    try:
         if force or not _CMAP_HTML.exists():
             from build_curriculum_onepager import build as build_html
             build_html()
-        if force or not _CMAP_LONGIMG.exists():
+    except Exception as e:
+        errs.append(f"HTML/PDF: {e}")
+    if force or not _CMAP_LONGIMG.exists():
+        try:
             from build_curriculum_longimg import build as build_longimg
             build_longimg()
-    except Exception as e:
-        st.session_state["_cmap_build_err"] = str(e)
+        except Exception as e:
+            if not _CMAP_LONGIMG.exists():
+                errs.append(str(e))
+    if errs and not (_CMAP_XLSX.exists() and _CMAP_LONGIMG.exists()):
+        st.session_state["_cmap_build_err"] = "；".join(errs)
 
 
 def _render_curriculum_map() -> None:

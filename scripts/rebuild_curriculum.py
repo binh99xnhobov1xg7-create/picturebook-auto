@@ -28,7 +28,29 @@ def main() -> None:
     build_curriculum_onepager.build()
     print(">> 3/3 竖版长图 PNG ...")
     build_curriculum_longimg.build()
-    print("\n全部重建完成 ✔  同事网址下次刷新即为最新。")
+    _sync_bundle_to_repo()
+    print("\n全部重建完成。同事网址 / Streamlit Cloud 下次刷新即为最新。")
+
+
+def _sync_bundle_to_repo() -> None:
+    """把生成物同步进 assets/curriculum，供 Streamlit Cloud 免 Playwright 部署。"""
+    import shutil
+
+    from config import OUTPUTS_DIR
+
+    bundled = Path(__file__).resolve().parent.parent / "assets" / "curriculum"
+    bundled.mkdir(parents=True, exist_ok=True)
+    fw = OUTPUTS_DIR / "_framework"
+    for name in (
+        "课程对标总表_L0-L6.xlsx",
+        "课程地图_L0-L6.html",
+        "课程地图_L0-L6.pdf",
+        "课程级别长图_L0-L6.png",
+    ):
+        src = fw / name
+        if src.exists():
+            shutil.copy2(src, bundled / name)
+            print("  bundled", name)
 
 
 if __name__ == "__main__":
