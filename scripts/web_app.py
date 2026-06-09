@@ -17,8 +17,10 @@ import contextlib
 import hashlib
 import hmac
 import io
+import json
 import os
 import re
+import secrets
 import shutil
 import sys
 import time
@@ -27,6 +29,7 @@ from concurrent.futures import (
     ThreadPoolExecutor, FIRST_COMPLETED, wait, as_completed,
     TimeoutError as FuturesTimeoutError,
 )
+from collections.abc import Mapping
 from datetime import datetime
 from pathlib import Path
 
@@ -61,6 +64,7 @@ from curriculum_display import (
     curriculum_section_tables,
     level_metrics_rows,
     mini_map_png_bytes,
+    render_level_cards_html,
     render_mini_map_html,
     section_to_rows,
 )
@@ -2236,31 +2240,84 @@ def _render_evals_panel() -> None:
 
 
 _DINO_ICON = BRAND_DIR / "dino_head_icon.png"
+_KIDDE_HERO = BRAND_DIR / "dino_reading_logo.png"
+_KIDDE_FALLBACK = Path(__file__).resolve().parent.parent / "assets" / "ip_library" / "dino.png"
+
+
+def _img_b64(path: Path) -> str:
+    """读取品牌图并转 base64（嵌入 HTML）。"""
+    try:
+        if path.exists():
+            return base64.b64encode(path.read_bytes()).decode("ascii")
+    except Exception:
+        pass
+    return ""
 
 
 def _icon_b64() -> str:
-    """读取 Dino 头像并转 base64（嵌入 HTML，可在 markdown 里显示）。"""
-    try:
-        return base64.b64encode(_DINO_ICON.read_bytes()).decode("ascii")
-    except Exception:
-        return ""
+    """Kidde 小图标（优先官方 reading logo / ip_library dino）。"""
+    return _img_b64(_KIDDE_HERO) or _img_b64(_KIDDE_FALLBACK) or _img_b64(_DINO_ICON)
+
+
+def _hero_kidde_b64() -> str:
+    """Hero 区大号 Kidde 形象（VIPKID 官方黄色恐龙，非通用绿恐龙）。"""
+    return _img_b64(_KIDDE_HERO) or _img_b64(_KIDDE_FALLBACK)
 
 
 def _render_hero() -> None:
-    """顶部品牌横幅：Dino 吉祥物 + 标题「VIPKID Dino · 线下绘本教学」+ 一句话流程。"""
-    b64 = _icon_b64()
-    img = (f"<img src='data:image/png;base64,{b64}' class='hero-dino' alt='Dino'/>"
-           if b64 else "<span style='font-size:46px'>🦖</span>")
+    """Hero：AI 赋能 badge + 标题 + 三特性 pill + Kidde 官方恐龙图。"""
+    kidde_b64 = _hero_kidde_b64()
+    kidde_img = (
+        f"<img src='data:image/png;base64,{kidde_b64}' class='hero-kidde' alt='Kidde'/>"
+        if kidde_b64
+        else "<span class='hero-kidde-fallback'>🦕</span>"
+    )
     st.markdown(
         f"""
-        <div class='hero'>
-          <div class='hero-icon'>{img}</div>
-          <div class='hero-text'>
-            <div class='hero-title'>VIPKID Dino · 线下绘本教学</div>
-            <div class='hero-sub'>输入故事 → AI 抽取 → 老师微调 → 一键产出绘本 PPT / Worksheet / Reading Report / Teacher Guide</div>
+        <section class='hero-section hero-gradient'>
+          <div class='hero-grid'>
+            <div class='hero-copy'>
+              <div class='hero-pill'>
+                <span class='hero-pill-icon'>✨</span>
+                <span>AI 赋能 线下教学</span>
+              </div>
+              <h1 class='hero-headline'>
+                VIPKID Dino<br/><span class='hero-accent'>线下绘本教学</span>
+              </h1>
+              <p class='hero-lead'>
+                革新化的绘本教学流程：从 AI 智能抽取内容，到教师个性化精修，
+                最后实现 PPT、练习册与教案的一键生成。
+              </p>
+              <div class='hero-features'>
+                <div class='hero-feat'>
+                  <span class='feat-ic feat-ic-teal'>🧠</span>
+                  <div><p class='feat-t'>AI Extraction</p><p class='feat-s'>智能识别分级内容</p></div>
+                </div>
+                <div class='hero-feat'>
+                  <span class='feat-ic feat-ic-orange'>✏️</span>
+                  <div><p class='feat-t'>Fine-tuning</p><p class='feat-s'>灵活的人工微调</p></div>
+                </div>
+                <div class='hero-feat'>
+                  <span class='feat-ic feat-ic-blue'>🚀</span>
+                  <div><p class='feat-t'>One-click PPT</p><p class='feat-s'>课件资源秒速生成</p></div>
+                </div>
+              </div>
+            </div>
+            <div class='hero-visual'>
+              <div class='hero-glow'></div>
+              <div class='hero-glass'>
+                {kidde_img}
+                <div class='hero-glass-cap'>
+                  <div>
+                    <p class='cap-t'>Interactive Learning</p>
+                    <p class='cap-s'>Dino series interactive curriculum</p>
+                  </div>
+                  <span class='cap-play'>▶</span>
+                </div>
+              </div>
+            </div>
           </div>
-          <div class='hero-badge'>4 件套自动化</div>
-        </div>
+        </section>
         """,
         unsafe_allow_html=True,
     )
@@ -2332,7 +2389,7 @@ def _render_curriculum_map() -> None:
     except Exception:
         pass
     logo_html = (f"<img src='data:image/png;base64,{logo_b64}' style='height:30px'/>"
-                 if logo_b64 else "<span style='font-size:22px'>🦖</span>")
+                 if logo_b64 else "<span style='font-size:22px'>🦕</span>")
     st.markdown(render_mini_map_html(logo_html), unsafe_allow_html=True)
 
     with st.expander(
@@ -2424,31 +2481,114 @@ _MAIN_NAV = {
 _LEGACY_NAV = {"guide": "overview", "faq": "onboarding"}
 _AUTH_COOKIE = "dino_auth"
 _NAV_COOKIE = "dino_tab"
+_AUTH_MSG = b"vipkid-dino-auth-v1"
 
 
-def _get_app_password() -> str:
-    pwd = ""
+def _secret_str(key: str) -> str:
     try:
-        pwd = str(st.secrets.get("APP_PASSWORD", "")).strip()
+        return str(st.secrets.get(key, "")).strip()
     except Exception:
-        pwd = ""
-    if not pwd:
-        pwd = os.getenv("APP_PASSWORD", "").strip()
-    return pwd
+        return ""
 
 
-def _make_auth_token(pwd: str) -> str:
-    """HMAC 令牌：可存浏览器，不含明文密码。"""
-    return hmac.new(pwd.encode(), b"vipkid-dino-auth-v1", hashlib.sha256).hexdigest()
+def _parse_users_text(text: str) -> dict[str, str]:
+    """解析 JSON 或多行 user:pass 格式。"""
+    text = (text or "").strip()
+    if not text:
+        return {}
+    if text.startswith("{"):
+        try:
+            obj = json.loads(text)
+            if isinstance(obj, dict):
+                return {
+                    str(k).strip(): str(v).strip()
+                    for k, v in obj.items()
+                    if str(k).strip() and str(v).strip()
+                }
+        except json.JSONDecodeError:
+            pass
+    users: dict[str, str] = {}
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if ":" not in line:
+            continue
+        user, pwd = line.split(":", 1)
+        user, pwd = user.strip(), pwd.strip()
+        if user and pwd:
+            users[user] = pwd
+    return users
 
 
-def _verify_auth_token(token: str, pwd: str) -> bool:
-    if not token or not pwd:
-        return False
+def _get_app_users() -> dict[str, str]:
+    """返回 username → password。未配置任何账户时返回空 dict（不启用登录门）。"""
+    users: dict[str, str] = {}
     try:
-        return hmac.compare_digest(token, _make_auth_token(pwd))
+        raw = st.secrets.get("APP_USERS")
+        if isinstance(raw, Mapping):
+            users = {
+                str(k).strip(): str(v).strip()
+                for k, v in raw.items()
+                if str(k).strip() and str(v).strip()
+            }
     except Exception:
-        return False
+        pass
+    if not users:
+        users = _parse_users_text(_secret_str("APP_USERS") or os.getenv("APP_USERS", ""))
+    if not users:
+        pwd = _secret_str("APP_PASSWORD") or os.getenv("APP_PASSWORD", "").strip()
+        if pwd:
+            user = _secret_str("APP_USER") or os.getenv("APP_USER", "").strip() or "admin"
+            users = {user: pwd}
+    return users
+
+
+def _auth_enabled() -> bool:
+    return bool(_get_app_users())
+
+
+def _make_auth_token(username: str, password: str) -> str:
+    """HMAC 令牌：username:digest，可存浏览器，不含明文密码。"""
+    digest = hmac.new(
+        password.encode(),
+        f"{username}:".encode() + _AUTH_MSG,
+        hashlib.sha256,
+    ).hexdigest()
+    return f"{username}:{digest}"
+
+
+def _verify_auth_token(token: str, users: dict[str, str]) -> str | None:
+    """校验令牌，成功返回用户名；兼容旧版仅 digest 的单用户令牌。"""
+    if not token or not users:
+        return None
+    if ":" not in token:
+        for user, pwd in users.items():
+            legacy = hmac.new(pwd.encode(), _AUTH_MSG, hashlib.sha256).hexdigest()
+            try:
+                if hmac.compare_digest(token, legacy):
+                    return user
+            except Exception:
+                continue
+        return None
+    username, digest = token.split(":", 1)
+    pwd = users.get(username)
+    if not pwd or not digest:
+        return None
+    expected = hmac.new(
+        pwd.encode(),
+        f"{username}:".encode() + _AUTH_MSG,
+        hashlib.sha256,
+    ).hexdigest()
+    try:
+        return username if hmac.compare_digest(digest, expected) else None
+    except Exception:
+        return None
+
+
+def _clear_auth_query() -> None:
+    if "auth" in st.query_params:
+        del st.query_params["auth"]
 
 
 def _storage_bridge(storage_key: str, query_key: str) -> None:
@@ -2507,26 +2647,28 @@ def _go_to_nav(key: str) -> None:
 
 
 def _render_app_header_compact() -> None:
-    """顶栏：左侧品牌 + 右侧 pill 导航（参考 PRD 顶栏）。"""
+    """顶栏：Kidde logo + pill 导航 + 设置 / 开始制作。"""
     b64 = _icon_b64()
-    img = (f"<img src='data:image/png;base64,{b64}' class='hero-dino' alt='Dino'/>"
-           if b64 else "<span style='font-size:34px'>🦖</span>")
-    nav = st.session_state.get("main_nav", "work")
+    img = (
+        f"<img src='data:image/png;base64,{b64}' class='nav-dino-logo' alt='Kidde'/>"
+        if b64 else "<span class='nav-dino-fallback'>🦕</span>"
+    )
+    nav = st.session_state.get("main_nav", "overview")
     labels = list(_MAIN_NAV.values())
     keys = list(_MAIN_NAV.keys())
     idx = keys.index(nav) if nav in keys else 0
 
     st.markdown('<div id="app-header-anchor"></div>', unsafe_allow_html=True)
     with st.container(border=True):
-        c_brand, c_nav = st.columns([1.05, 1.95], vertical_alignment="center")
+        c_brand, c_nav, c_act = st.columns([1.05, 1.65, 0.65], vertical_alignment="center")
         with c_brand:
             st.markdown(
                 f"""
                 <div class='app-topbar-brand'>
                   {img}
                   <div>
-                    <div class='app-topbar-title'>VIPKID Dino · 线下绘本教学</div>
-                    <div class='app-topbar-sub'>输入书名与级别 → AI 生成故事 → 微调 → {_KIT_LABEL}</div>
+                    <div class='app-topbar-title'>VIPKID Dino</div>
+                    <div class='app-topbar-sub'>线下绘本教学系统</div>
                   </div>
                 </div>
                 """,
@@ -2543,6 +2685,24 @@ def _render_app_header_compact() -> None:
                 key="main_nav_radio",
             )
             st.markdown("</div>", unsafe_allow_html=True)
+        with c_act:
+            st.markdown('<div class="header-actions">', unsafe_allow_html=True)
+            if _auth_enabled() and not st.session_state.get("_authed"):
+                if st.button("登录", key="hdr_login", use_container_width=True):
+                    _clear_auth_query()
+                    st.session_state.pop("_authed", None)
+                    st.session_state.pop("_authed_user", None)
+                    _clear_storage(_AUTH_COOKIE)
+                    st.rerun()
+            else:
+                b1, b2 = st.columns(2)
+                with b1:
+                    if st.button("设置", key="hdr_settings", use_container_width=True):
+                        _go_to_nav("settings")
+                with b2:
+                    if st.button("开始制作", key="hdr_start", type="primary", use_container_width=True):
+                        _go_to_nav("work")
+            st.markdown("</div>", unsafe_allow_html=True)
 
     selected_key = keys[labels.index(selected)]
     if selected_key != nav:
@@ -2553,21 +2713,19 @@ def _render_app_header_compact() -> None:
 
 
 def _render_overview_section() -> None:
-    """概览：一句话价值 + 关键数字 + 课程地图 + 进入制作（不再重复 Hero/Dino）。"""
-    st.markdown(
-        "<div class='page-lead'>"
-        "<h2>让线下绘本教学更省心</h2>"
-        "<p>输入书名与级别 → AI 生成故事 → 老师微调 → 一键产出 "
-        f"{_KIT_LABEL}</p>"
-        "</div>",
-        unsafe_allow_html=True,
-    )
+    """概览：Hero + 课程地图卡片 + 关键数字 + CTA。"""
+    _render_hero()
+    st.markdown(render_level_cards_html(), unsafe_allow_html=True)
     m1, m2, m3, m4 = st.columns(4)
     m1.metric("4 大交付物", _KIT_LABEL)
     m2.metric("必填输入", "书名 + Level")
     m3.metric("AI 抽取", "约 2–3 分钟")
     m4.metric("级别覆盖", "L0 – L6")
-    _render_curriculum_map()
+    with st.expander(
+        "📊 详细梯度图（HTML 迷你地图 · 下载长图/PDF/Excel）",
+        expanded=False,
+    ):
+        _render_curriculum_map()
     st.markdown("---")
     c1, c2 = st.columns([1, 3])
     with c1:
@@ -2630,9 +2788,14 @@ def _render_features_section() -> None:
 def _faq_items() -> list[tuple[str, str]]:
     return [
         (
-            "刷新后又要输入密码？",
+            "刷新后又要重新登录？",
             "登录成功后会在浏览器 **localStorage** 保存 HMAC 校验令牌（**不含明文密码**）。"
             "若仍失效，请检查浏览器是否禁用本地存储。",
+        ),
+        (
+            "账户怎么配置？",
+            "管理员在 Secrets / 环境变量配置 **APP_USERS**（多用户）或 **APP_USER + APP_PASSWORD**（单用户）。"
+            "登录页填写 **用户名 + 密码**。",
         ),
         (
             "AI 抽取大概要多久？",
@@ -2657,6 +2820,52 @@ def _faq_items() -> list[tuple[str, str]]:
     ]
 
 
+def _render_faq_accordion(open_first: bool = True) -> None:
+    """FAQ 手风琴（HTML details，样式对齐 mockup）。"""
+    blocks = []
+    for i, (q, a) in enumerate(_faq_items()):
+        open_attr = " open" if open_first and i == 0 else ""
+        a_html = a.replace("\n", "<br/>")
+        blocks.append(
+            f"<details class='faq-item'{open_attr}>"
+            f"<summary><span class='faq-q'>{q}</span><span class='faq-chevron'>▼</span></summary>"
+            f"<div class='faq-a'>{a_html}</div></details>"
+        )
+    st.markdown(
+        f"""
+        <section class='faq-section' id='faq'>
+          <div class='faq-head'>
+            <h2>常见问题 (FAQ)</h2>
+            <p>了解更多关于 AI 抽取流程与平台的使用细节</p>
+          </div>
+          <div class='faq-list'>{"".join(blocks)}</div>
+        </section>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def _render_footer() -> None:
+    """页脚链接区（mockup footer）。"""
+    st.markdown(
+        """
+        <footer class='site-footer'>
+          <div class='footer-brand'>
+            <span class='footer-logo'>VIPKID Dino</span>
+            <p>© 2024 VIPKID Dino. Empowering young learners through AI storytelling.</p>
+          </div>
+          <div class='footer-links'>
+            <span>Privacy Policy</span>
+            <span>Terms of Service</span>
+            <span>Contact Us</span>
+            <span>About</span>
+          </div>
+        </footer>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def _render_onboarding_section() -> None:
     """新手引导：5 步走查 + FAQ。"""
     st.subheader("新手引导")
@@ -2672,11 +2881,7 @@ def _render_onboarding_section() -> None:
     st.divider()
     if st.button("去开始制作 →", type="primary", key="onboard_go_work"):
         _go_to_nav("work")
-    st.markdown("---")
-    st.markdown("##### 常见问题")
-    for q, a in _faq_items():
-        with st.expander(q, expanded=False):
-            st.markdown(a)
+    _render_faq_accordion(open_first=False)
 
 
 def _render_metrics_section() -> None:
@@ -2741,10 +2946,14 @@ def _render_settings_section() -> None:
     _render_evals_panel()
 
     st.divider()
-    if _get_app_password():
+    if _auth_enabled():
+        user = st.session_state.get("_authed_user", "")
+        if user:
+            st.caption(f"已登录账户：**{user}**")
         if st.button("退出登录", type="secondary", key="logout_btn"):
             st.session_state.pop("_authed", None)
-            st.query_params.clear()
+            st.session_state.pop("_authed_user", None)
+            _clear_auth_query()
             _clear_storage(_AUTH_COOKIE)
             st.rerun()
 
@@ -2759,42 +2968,67 @@ def _validate_required_inputs(title: str, raw_story: str = "") -> list[str]:
     return errors
 
 
-def _require_password() -> None:
-    """可选访问密码门。
+def _render_login_gate() -> None:
+    """未登录时展示的登录页（含品牌区，不含主导航）。"""
+    b64 = _icon_b64()
+    img = (
+        f"<img src='data:image/png;base64,{b64}' class='nav-dino-logo' alt='Kidde'/>"
+        if b64 else "<span class='nav-dino-fallback'>🦕</span>"
+    )
+    st.markdown(
+        f"""
+        <div class='app-topbar-brand' style='margin-bottom:1rem;'>
+          {img}
+          <div>
+            <div class='app-topbar-title'>VIPKID Dino</div>
+            <div class='app-topbar-sub'>线下绘本教学系统</div>
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    st.markdown("## 🔒 登录")
+    st.caption("请输入用户名与密码（向管理员获取）。登录状态会记住本机，**不会保存明文密码**。")
+    with st.form("login_gate", clear_on_submit=False):
+        entered_user = st.text_input("用户名", autocomplete="username")
+        entered_pwd = st.text_input("密码", type="password", autocomplete="current-password")
+        ok = st.form_submit_button("登录", type="primary")
+    if ok:
+        users = _get_app_users()
+        user = entered_user.strip()
+        pwd = users.get(user, "")
+        if pwd and secrets.compare_digest(entered_pwd, pwd):
+            auth_token = _make_auth_token(user, pwd)
+            st.session_state["_authed"] = True
+            st.session_state["_authed_user"] = user
+            st.query_params["auth"] = auth_token
+            _persist_storage(_AUTH_COOKIE, auth_token)
+            st.rerun()
+        else:
+            st.error("用户名或密码错误，请重试。")
 
-    仅当配置了 APP_PASSWORD 时才启用。验证通过后写入 HMAC 令牌到 localStorage（不含明文密码）。
-    """
-    pwd = _get_app_password()
-    if not pwd:
-        return
+
+def _restore_auth_session() -> bool:
+    """尝试恢复登录态。未配置账户时视为已通过。"""
+    users = _get_app_users()
+    if not users:
+        return True
 
     _storage_bridge(_AUTH_COOKIE, "auth")
 
     if st.session_state.get("_authed"):
-        return
+        return True
 
     token = st.query_params.get("auth", "")
-    if token and _verify_auth_token(token, pwd):
+    authed_user = _verify_auth_token(token, users)
+    if authed_user:
         st.session_state["_authed"] = True
-        return
+        st.session_state["_authed_user"] = authed_user
+        return True
     if token:
-        st.query_params.clear()
+        _clear_auth_query()
         _clear_storage(_AUTH_COOKIE)
-
-    st.markdown("## 🔒 VIPKID Dino 绘本工作台")
-    st.caption("请输入访问密码（向管理员获取）。登录状态会记住本机，**不会保存明文密码**。")
-    with st.form("login_gate", clear_on_submit=False):
-        entered = st.text_input("访问密码", type="password")
-        ok = st.form_submit_button("进入")
-    if ok:
-        if entered == pwd:
-            auth_token = _make_auth_token(pwd)
-            st.session_state["_authed"] = True
-            st.query_params["auth"] = auth_token
-            _persist_storage(_AUTH_COOKIE, auth_token)
-            st.rerun()
-        st.error("密码错误，请重试。")
-    st.stop()
+    return False
 
 
 def main() -> None:
@@ -2806,8 +3040,14 @@ def main() -> None:
         initial_sidebar_state="collapsed",
     )
     _inject_css()
-    _require_password()
     _init_main_nav()
+
+    auth_ok = _restore_auth_session()
+    _render_app_header_compact()
+    if not auth_ok:
+        _render_login_gate()
+        _render_footer()
+        return
 
     # Session 状态
     if "extracted" not in st.session_state:
@@ -2815,29 +3055,49 @@ def main() -> None:
     if "outline" not in st.session_state:
         st.session_state.outline = None
 
-    _render_app_header_compact()
     nav = st.session_state.get("main_nav", "overview")
 
     if nav == "overview":
         _render_overview_section()
+        _render_faq_accordion()
+        _render_footer()
         return
     if nav == "background":
         _render_background_section()
+        _render_footer()
         return
     if nav == "features":
         _render_features_section()
+        _render_footer()
         return
     if nav == "onboarding":
         _render_onboarding_section()
+        _render_footer()
         return
     if nav == "metrics":
         _render_metrics_section()
+        _render_footer()
         return
     if nav == "settings":
         _render_settings_section()
+        _render_footer()
         return
 
     # ---------- nav == work：制作工作台 ----------
+    st.markdown(
+        """
+        <section class='create-section' id='creation'>
+          <div class='create-head'>
+            <span class='create-icon'>✨</span>
+            <div>
+              <h2>生成绘本</h2>
+              <p>快速转换故事文本为专业教学课件</p>
+            </div>
+          </div>
+        </section>
+        """,
+        unsafe_allow_html=True,
+    )
     _key_status_banner()
 
     nav_sel = _render_deliverable_nav()
@@ -5193,16 +5453,16 @@ def _inject_css() -> None:
         """<style>
         @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@500;600;700;800&display=swap');
         :root{
-          --brand:#F47332; --brand-dark:#e0601f; --brand-tint:#fff5ef;
-          --brand-2:#ff9a4d;
-          --ink:#121826; --muted:#697586; --faint:#9aa4b2;
-          --line:#eceef2; --line-soft:#f2f4f7; --card:#ffffff;
-          --bg:#f7f8fb;
+          --brand:#006b58; --brand-dark:#004a3c; --brand-tint:#e8faf5;
+          --brand-2:#26c2a3; --primary-fixed:#6ff9d8;
+          --ink:#0b1c30; --muted:#3c4a45; --faint:#6c7a75;
+          --line:#dce9ff; --line-soft:#eff4ff; --card:#ffffff;
+          --bg:#f8f9ff;
           --radius:14px; --radius-lg:20px;
-          --shadow-sm:0 1px 2px rgba(16,24,40,.04),0 1px 3px rgba(16,24,40,.05);
-          --shadow-md:0 4px 12px rgba(16,24,40,.06),0 2px 4px rgba(16,24,40,.04);
-          --shadow-lg:0 18px 40px -12px rgba(16,24,40,.18);
-          --ring:0 0 0 3px rgba(244,115,50,.16);
+          --shadow-sm:0 1px 2px rgba(11,28,48,.04),0 1px 3px rgba(11,28,48,.05);
+          --shadow-md:0 4px 12px rgba(11,28,48,.06),0 2px 4px rgba(11,28,48,.04);
+          --shadow-lg:0 18px 40px -12px rgba(0,107,88,.15);
+          --ring:0 0 0 3px rgba(0,107,88,.16);
           --fs-base:15.5px; --fs-sm:13.5px; --fs-lg:17px;
         }
         html, body, [class*="css"]{
@@ -5212,8 +5472,8 @@ def _inject_css() -> None:
         .stApp{ font-size:var(--fs-base); }
         .stApp{
           background:
-            radial-gradient(900px 480px at 88% -8%, rgba(244,115,50,.10), transparent 60%),
-            radial-gradient(820px 460px at -6% 4%, rgba(120,120,255,.06), transparent 55%),
+            radial-gradient(900px 480px at 88% -8%, rgba(77,221,188,.12), transparent 60%),
+            radial-gradient(820px 460px at -6% 4%, rgba(0,107,88,.05), transparent 55%),
             var(--bg);
         }
         .block-container { max-width: 1340px; padding-top: 1.2rem; }
@@ -5232,13 +5492,16 @@ def _inject_css() -> None:
           border-radius:var(--radius-lg) !important;
           padding:10px 16px 6px !important;
           margin-bottom:18px !important;
-          background:linear-gradient(120deg, rgba(255,255,255,.96), rgba(255,247,241,.88)) !important;
+          background:linear-gradient(120deg, rgba(255,255,255,.96), rgba(232,250,245,.88)) !important;
           box-shadow:var(--shadow-md) !important;
         }
         .app-topbar-brand{ display:flex; align-items:center; gap:12px; min-width:0; }
         .app-topbar-title{
-          font-family:'Poppins','Inter',sans-serif; font-size:19px; font-weight:800; color:var(--ink); line-height:1.2;
+          font-family:'Plus Jakarta Sans','Noto Sans SC',sans-serif; font-size:20px; font-weight:800;
+          color:var(--brand); line-height:1.2;
         }
+        .nav-dino-logo{ width:40px; height:40px; object-fit:contain; }
+        .nav-dino-fallback{ font-size:32px; line-height:1; }
         .app-topbar-sub{ font-size:12px; color:var(--muted); margin-top:2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
         .main-nav-wrap [data-testid="stRadio"]{ width:100%; }
         .main-nav-wrap [role="radiogroup"]{
@@ -5259,12 +5522,12 @@ def _inject_css() -> None:
           display:none !important; width:0 !important; min-width:0 !important; margin:0 !important; padding:0 !important;
         }
         .main-nav-wrap [role="radiogroup"] > label:hover{
-          color:var(--brand) !important; background:rgba(244,115,50,.06) !important;
+          color:var(--brand) !important; background:rgba(0,107,88,.06) !important;
         }
         .main-nav-wrap [role="radiogroup"] > label:has(input:checked){
           color:var(--brand) !important;
-          background:linear-gradient(135deg, rgba(244,115,50,.16), rgba(255,154,77,.12)) !important;
-          box-shadow:0 1px 6px rgba(244,115,50,.18), inset 0 0 0 1px rgba(244,115,50,.22) !important;
+          background:linear-gradient(135deg, rgba(0,107,88,.14), rgba(38,194,163,.10)) !important;
+          box-shadow:0 1px 6px rgba(0,107,88,.16), inset 0 0 0 1px rgba(0,107,88,.20) !important;
         }
         .main-nav-wrap [role="radiogroup"] > label > div:last-child,
         .main-nav-wrap [role="radiogroup"] > label p{
@@ -5279,6 +5542,20 @@ def _inject_css() -> None:
           .main-nav-wrap [role="radiogroup"]{ justify-content:flex-start; }
           .app-topbar-sub{ white-space:normal; }
         }
+        .header-actions .stButton > button{
+          white-space:nowrap !important;
+          min-width:4.2rem;
+          font-size:12.5px !important;
+          padding:0.38rem 0.55rem !important;
+          line-height:1.2 !important;
+        }
+        @media (max-width: 1100px){
+          .header-actions .stButton > button{
+            font-size:11.5px !important;
+            padding:0.34rem 0.45rem !important;
+            min-width:3.6rem;
+          }
+        }
         .nav-title-inline{
           font-weight:700; font-size:13px; letter-spacing:.4px; color:var(--faint); margin:.4rem 0 .5rem;
         }
@@ -5290,8 +5567,8 @@ def _inject_css() -> None:
           font-weight:600; background:var(--card); transition:all .15s ease;
         }
         [data-testid="stRadio"] [role="radiogroup"][aria-label="交付物导航"] label:has(input:checked){
-          color:var(--brand); background:var(--brand-tint); border-color:rgba(244,115,50,.35);
-          box-shadow:inset 0 0 0 1px rgba(244,115,50,.12);
+          color:var(--brand); background:var(--brand-tint); border-color:rgba(0,107,88,.35);
+          box-shadow:inset 0 0 0 1px rgba(0,107,88,.12);
         }
         [data-testid="stRadio"] [role="radiogroup"][aria-label="交付物导航"] label > div:first-child{ display:none; }
 
@@ -5303,10 +5580,131 @@ def _inject_css() -> None:
         [data-testid="stMetricValue"]{ font-size:1.35rem !important; }
         [data-testid="stMetricLabel"]{ font-size:var(--fs-sm) !important; }
 
-        /* ---------- 顶部品牌横幅 hero（玻璃 + 网格渐变 高级感） ---------- */
+        /* ---------- Hero（mockup：mint 渐变 + Kidde + 特性 pill） ---------- */
+        .hero-section{
+          border-radius:var(--radius-lg); margin:0 0 24px; overflow:hidden;
+          padding:32px 28px;
+        }
+        .hero-gradient{
+          background:
+            radial-gradient(circle at top right, rgba(77,221,188,.15), transparent),
+            radial-gradient(circle at bottom left, rgba(0,107,88,.05), transparent);
+        }
+        .hero-grid{
+          display:grid; grid-template-columns:1.05fr .95fr; gap:28px; align-items:center;
+        }
+        @media (max-width:900px){ .hero-grid{ grid-template-columns:1fr; } }
+        .hero-pill{
+          display:inline-flex; align-items:center; gap:6px;
+          padding:4px 12px; border-radius:999px; margin-bottom:14px;
+          background:var(--primary-fixed); color:#002019;
+          font-size:12px; font-weight:600;
+        }
+        .hero-headline{
+          font-family:'Plus Jakarta Sans','Noto Sans SC',sans-serif;
+          font-size:clamp(32px,4vw,48px); font-weight:800; line-height:1.15;
+          color:var(--ink); margin:0 0 16px;
+        }
+        .hero-accent{ color:var(--brand); }
+        .hero-lead{
+          font-size:18px; line-height:1.55; color:var(--muted);
+          max-width:540px; margin:0 0 20px;
+        }
+        .hero-features{ display:flex; flex-wrap:wrap; gap:12px; }
+        .hero-feat{
+          display:flex; align-items:center; gap:10px;
+          padding:12px 14px; border-radius:12px;
+          background:#fff; border:1px solid #bbcac4; box-shadow:var(--shadow-sm);
+          min-width:160px;
+        }
+        .feat-ic{ font-size:20px; }
+        .feat-t{ font-size:14px; font-weight:600; color:var(--ink); margin:0; }
+        .feat-s{ font-size:13px; color:var(--muted); margin:0; }
+        .hero-visual{ position:relative; }
+        .hero-glow{
+          position:absolute; top:-40px; right:-40px; width:220px; height:220px;
+          border-radius:50%; background:#4dddbc; filter:blur(60px); opacity:.2;
+        }
+        .hero-glass{
+          position:relative; padding:8px; border-radius:14px;
+          background:rgba(255,255,255,.8); backdrop-filter:blur(12px);
+          border:1px solid #bbcac4; box-shadow:var(--shadow-lg); overflow:hidden;
+        }
+        .hero-kidde{
+          width:100%; max-height:360px; object-fit:contain;
+          border-radius:10px; display:block; background:#fff;
+        }
+        .hero-kidde-fallback{ font-size:80px; display:block; text-align:center; padding:40px; }
+        .hero-glass-cap{
+          position:absolute; left:20px; right:20px; bottom:20px;
+          display:flex; justify-content:space-between; align-items:center;
+          padding:12px 14px; border-radius:10px;
+          background:rgba(255,255,255,.85); backdrop-filter:blur(10px);
+          border:1px solid rgba(255,255,255,.5);
+        }
+        .cap-t{ font-size:14px; font-weight:600; color:var(--brand); margin:0; }
+        .cap-s{ font-size:13px; color:var(--ink); margin:0; }
+        .cap-play{ color:var(--brand); font-size:22px; }
+
+        /* ---------- 生成绘本区块头 ---------- */
+        .create-section{ margin:0 0 8px; }
+        .create-head{
+          display:flex; align-items:center; gap:14px; margin-bottom:16px;
+        }
+        .create-icon{
+          width:48px; height:48px; border-radius:12px;
+          background:var(--brand); color:#fff; display:flex;
+          align-items:center; justify-content:center; font-size:22px;
+        }
+        .create-head h2{
+          font-size:32px; font-weight:700; color:var(--ink); margin:0 0 4px;
+        }
+        .create-head p{ font-size:16px; color:var(--muted); margin:0; }
+
+        /* ---------- FAQ 手风琴 ---------- */
+        .faq-section{
+          margin:28px 0 20px; padding:28px 0;
+          background:var(--bg); border-radius:var(--radius-lg);
+        }
+        .faq-head{ text-align:center; margin-bottom:22px; }
+        .faq-head h2{
+          font-size:32px; font-weight:700; color:var(--ink); margin:0 0 6px;
+        }
+        .faq-head p{ color:var(--muted); margin:0; }
+        .faq-list{ max-width:880px; margin:0 auto; display:flex; flex-direction:column; gap:12px; }
+        .faq-item{
+          background:#fff; border:1px solid #bbcac4; border-radius:12px; overflow:hidden;
+        }
+        .faq-item summary{
+          display:flex; justify-content:space-between; align-items:center;
+          padding:18px 20px; cursor:pointer; list-style:none;
+        }
+        .faq-item summary::-webkit-details-marker{ display:none; }
+        .faq-q{ font-size:14px; font-weight:600; color:var(--ink); }
+        .faq-chevron{ color:var(--muted); transition:transform .2s; font-size:12px; }
+        .faq-item[open] .faq-chevron{ transform:rotate(180deg); }
+        .faq-a{
+          padding:0 20px 18px; font-size:15px; line-height:1.6;
+          color:var(--muted); border-top:1px solid #bbcac4; padding-top:14px;
+        }
+
+        /* ---------- 页脚 ---------- */
+        .site-footer{
+          display:flex; flex-wrap:wrap; justify-content:space-between; align-items:center;
+          gap:16px; margin-top:32px; padding:28px 0 12px;
+          border-top:1px solid #bbcac4;
+        }
+        .footer-logo{ font-size:14px; font-weight:700; color:var(--brand); }
+        .site-footer p{ font-size:13px; color:var(--muted); margin:4px 0 0; }
+        .footer-links{ display:flex; flex-wrap:wrap; gap:20px; }
+        .footer-links span{
+          font-size:12px; font-weight:500; color:var(--muted); cursor:default;
+        }
+
+        /* ---------- legacy hero 兼容（登录页等） ---------- */
         .hero{
           position:relative; display:flex; align-items:center; gap:20px;
-          background:linear-gradient(120deg, rgba(255,255,255,.86), rgba(255,247,241,.78));
+          background:linear-gradient(120deg, rgba(255,255,255,.86), rgba(232,250,245,.78));
           backdrop-filter:blur(14px) saturate(1.2); -webkit-backdrop-filter:blur(14px) saturate(1.2);
           border:1px solid rgba(255,255,255,.7); border-radius:var(--radius-lg);
           padding:22px 26px; margin:4px 0 20px;
@@ -5316,8 +5714,8 @@ def _inject_css() -> None:
         .hero::before{
           content:""; position:absolute; inset:0; z-index:0; pointer-events:none;
           background:
-            radial-gradient(420px 220px at 90% -40%, rgba(244,115,50,.22), transparent 60%),
-            radial-gradient(360px 200px at 8% 130%, rgba(255,154,77,.18), transparent 60%);
+            radial-gradient(420px 220px at 90% -40%, rgba(0,107,88,.22), transparent 60%),
+            radial-gradient(360px 200px at 8% 130%, rgba(38,194,163,.18), transparent 60%);
         }
         .hero::after{
           content:""; position:absolute; left:0; right:0; bottom:0; height:3px; z-index:1;
@@ -5328,7 +5726,7 @@ def _inject_css() -> None:
         .hero-icon{ flex:0 0 auto; display:flex; }
         .hero-dino{
           width:64px; height:64px; object-fit:contain;
-          filter:drop-shadow(0 6px 14px rgba(244,115,50,.34));
+          filter:drop-shadow(0 6px 14px rgba(0,107,88,.34));
         }
         .hero-text{ flex:1 1 auto; min-width:0; }
         .hero-title{
@@ -5344,7 +5742,7 @@ def _inject_css() -> None:
           background:linear-gradient(135deg,var(--brand),var(--brand-2)); color:#fff;
           font-weight:700; font-size:12px; letter-spacing:.3px;
           padding:6px 14px; border-radius:999px;
-          box-shadow:0 6px 16px rgba(244,115,50,.32); border:1px solid rgba(255,255,255,.35);
+          box-shadow:0 6px 16px rgba(0,107,88,.32); border:1px solid rgba(255,255,255,.35);
         }
 
         /* ---------- 侧边栏（玻璃质感 + 细描边） ---------- */
@@ -5358,7 +5756,7 @@ def _inject_css() -> None:
         }
         .side-brand .side-dino{
           width:42px; height:42px; object-fit:contain;
-          filter:drop-shadow(0 3px 7px rgba(244,115,50,.28));
+          filter:drop-shadow(0 3px 7px rgba(0,107,88,.28));
         }
         .side-brand span{ font-weight:800; color:var(--ink); font-size:16px; line-height:1.15; }
         .side-brand small{ font-weight:600; color:var(--muted); font-size:11px; }
@@ -5378,13 +5776,13 @@ def _inject_css() -> None:
         .stButton > button[kind="primary"],
         [data-testid="stBaseButton-primary"]{
           background:linear-gradient(135deg,var(--brand),var(--brand-2)) !important;
-          border:1px solid rgba(244,115,50,.4) !important;
-          color:#fff !important; box-shadow:0 8px 20px -6px rgba(244,115,50,.5);
+          border:1px solid rgba(0,107,88,.4) !important;
+          color:#fff !important; box-shadow:0 8px 20px -6px rgba(0,107,88,.5);
         }
         .stButton > button[kind="primary"]:hover,
         [data-testid="stBaseButton-primary"]:hover{
           filter:brightness(1.03);
-          box-shadow:0 12px 26px -6px rgba(244,115,50,.58) !important;
+          box-shadow:0 12px 26px -6px rgba(0,107,88,.58) !important;
         }
         /* secondary = 描边，hover 染橙 */
         .stButton > button[kind="secondary"]:hover,
@@ -5449,7 +5847,7 @@ def _inject_css() -> None:
         .wiz-fill{
           position:absolute; left:0; top:0; height:100%; border-radius:7px;
           background:linear-gradient(90deg,var(--brand),var(--brand-2));
-          box-shadow:0 0 12px rgba(244,115,50,.45);
+          box-shadow:0 0 12px rgba(0,107,88,.45);
           transition:width .4s cubic-bezier(.4,0,.2,1);
         }
 
@@ -5468,8 +5866,8 @@ def _inject_css() -> None:
           background:var(--brand-tint); color:var(--brand); transform:translateX(2px);
         }
         [data-testid="stSidebar"] [role="radiogroup"] label:has(input:checked){
-          background:linear-gradient(90deg,var(--brand-tint),rgba(255,245,239,.4));
-          color:var(--brand); border-color:rgba(244,115,50,.28);
+          background:linear-gradient(90deg,var(--brand-tint),rgba(232,250,245,.4));
+          color:var(--brand); border-color:rgba(0,107,88,.28);
           box-shadow:inset 3px 0 0 var(--brand);
         }
         [data-testid="stSidebar"] [role="radiogroup"] label > div:first-child{ display:none; }
@@ -5479,7 +5877,7 @@ def _inject_css() -> None:
           display:inline-flex; align-items:center; gap:9px;
           padding:7px 15px; border-radius:999px; font-size:13.5px; font-weight:600;
           color:var(--brand-dark); background:var(--brand-tint);
-          border:1px solid rgba(244,115,50,.28); box-shadow:var(--shadow-sm);
+          border:1px solid rgba(0,107,88,.28); box-shadow:var(--shadow-sm);
           margin:4px 0;
         }
         .timer-pill.done{
@@ -5488,7 +5886,7 @@ def _inject_css() -> None:
         .timer-pill b{ font-variant-numeric:tabular-nums; }
         .timer-spin{
           width:13px; height:13px; border-radius:50%;
-          border:2px solid rgba(244,115,50,.3); border-top-color:var(--brand);
+          border:2px solid rgba(0,107,88,.3); border-top-color:var(--brand);
           animation:tmr-spin .7s linear infinite;
         }
         @keyframes tmr-spin{ to{ transform:rotate(360deg); } }
@@ -5537,7 +5935,7 @@ def _inject_css() -> None:
           display:inline-flex; align-items:center; gap:6px;
           padding:5px 12px; border-radius:999px; font-size:12.5px; font-weight:600;
           color:var(--brand-dark); background:var(--brand-tint);
-          border:1px solid rgba(244,115,50,.22); line-height:1;
+          border:1px solid rgba(0,107,88,.22); line-height:1;
           transition:all .14s ease;
         }
         .chip:hover{ box-shadow:var(--shadow-sm); transform:translateY(-1px); }
@@ -5553,7 +5951,7 @@ def _inject_css() -> None:
           display:inline-flex; align-items:center; justify-content:center;
           width:30px; height:30px; border-radius:9px;
           background:linear-gradient(135deg,var(--brand),var(--brand-2)); color:#fff;
-          box-shadow:0 5px 12px -3px rgba(244,115,50,.5); font-size:15px;
+          box-shadow:0 5px 12px -3px rgba(0,107,88,.5); font-size:15px;
         }
         .sec-head .line{ flex:1 1 auto; height:1px; background:linear-gradient(90deg,var(--line),transparent); }
 
@@ -5578,7 +5976,7 @@ def _inject_css() -> None:
         ::-webkit-scrollbar{ width:11px; height:11px; }
         ::-webkit-scrollbar-thumb{ background:#d7dbe3; border-radius:8px; border:3px solid var(--bg); }
         ::-webkit-scrollbar-thumb:hover{ background:#c2c8d2; }
-        ::selection{ background:rgba(244,115,50,.22); }
+        ::selection{ background:rgba(0,107,88,.22); }
         .hero, [data-testid="stVerticalBlockBorderWrapper"]{ animation:rise .42s cubic-bezier(.2,.7,.2,1) both; }
         @keyframes rise{ from{ opacity:0; transform:translateY(8px); } to{ opacity:1; transform:translateY(0); } }
         @media (prefers-reduced-motion: reduce){ *{ animation:none !important; } }
@@ -5597,9 +5995,9 @@ def _inject_css() -> None:
         .stApp::before{
           content:""; position:fixed; inset:0; z-index:0; pointer-events:none;
           background:
-            radial-gradient(1100px 560px at 84% -12%, rgba(244,115,50,.10), transparent 62%),
+            radial-gradient(1100px 560px at 84% -12%, rgba(0,107,88,.10), transparent 62%),
             radial-gradient(900px 520px at -10% 8%, rgba(120,120,255,.07), transparent 58%),
-            radial-gradient(700px 700px at 50% 120%, rgba(255,154,77,.06), transparent 60%);
+            radial-gradient(700px 700px at 50% 120%, rgba(38,194,163,.06), transparent 60%);
           animation:bgdrift 26s ease-in-out infinite alternate;
         }
         @keyframes bgdrift{
@@ -5611,7 +6009,7 @@ def _inject_css() -> None:
         /* —— 2) 粘性顶栏：hero 吸顶 + 玻璃半透明（滚动时悬浮在内容之上）—— */
         .hero{
           position:sticky; top:.5rem; z-index:50;
-          background:linear-gradient(120deg, rgba(255,255,255,.72), rgba(255,247,241,.6));
+          background:linear-gradient(120deg, rgba(255,255,255,.72), rgba(232,250,245,.6));
           backdrop-filter:blur(18px) saturate(1.35); -webkit-backdrop-filter:blur(18px) saturate(1.35);
           border:1px solid rgba(255,255,255,.55);
         }
@@ -5642,7 +6040,7 @@ def _inject_css() -> None:
         .hero-icon{ position:relative; }
         .hero-icon::after{   /* 环绕光环 */
           content:""; position:absolute; inset:-8px; border-radius:50%;
-          border:1.5px dashed rgba(244,115,50,.35); animation:ring-spin 14s linear infinite;
+          border:1.5px dashed rgba(0,107,88,.35); animation:ring-spin 14s linear infinite;
         }
         @keyframes ring-spin{ to{ transform:rotate(360deg); } }
         .hero-title{

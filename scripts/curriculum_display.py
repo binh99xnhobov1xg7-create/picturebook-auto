@@ -238,6 +238,77 @@ def render_mini_map_html(logo_html: str = "") -> str:
     """
 
 
+def render_level_cards_html() -> str:
+    """Mockup 风格 L0–L6 卡片网格（brand_color_hex 配色，与 Excel 同源）。"""
+    d = DATA["② 对标基准"]
+    stage = DATA["① 阶段与培养目标"]["阅读阶段"]
+    goal = DATA["④ 学习重点与考察"]["核心目标"]
+    cards = []
+    for i, key in enumerate(LEVEL_KEYS):
+        color = brand_color_hex(key)
+        cefr = d["欧标 CEFR"][i]
+        raz = d["RAZ 阅读体系"][i]
+        cards.append(
+            f"<div class='lv-card level-card-shadow' style='border-top-color:{color}'>"
+            f"<span class='lv-badge' style='background:{color}22;color:{color}'>L{key}</span>"
+            f"<h3 class='lv-title'>{stage[i]}</h3>"
+            f"<p class='lv-goal'>{goal[i]}</p>"
+            f"<p class='lv-age'>{HEADER_AGE[i]}</p>"
+            f"<div class='lv-foot'><span style='color:{color}'>{cefr} | RAZ {raz}</span></div>"
+            f"</div>"
+        )
+    return f"""
+    <style>
+      .lv-section{{ margin:8px 0 20px; }}
+      .lv-section-head{{ text-align:center; margin-bottom:20px; }}
+      .lv-section-head h2{{
+        font-family:'Plus Jakarta Sans','Noto Sans SC',sans-serif;
+        font-size:32px; font-weight:700; color:#0b1c30; margin:0 0 6px;
+      }}
+      .lv-section-head p{{ font-size:16px; color:#3c4a45; margin:0; }}
+      .lv-grid{{
+        display:grid; grid-template-columns:repeat(7,minmax(0,1fr)); gap:14px;
+      }}
+      @media (max-width:1200px){{ .lv-grid{{ grid-template-columns:repeat(4,minmax(0,1fr)); }} }}
+      @media (max-width:780px){{ .lv-grid{{ grid-template-columns:repeat(2,minmax(0,1fr)); }} }}
+      @media (max-width:480px){{ .lv-grid{{ grid-template-columns:1fr; }} }}
+      .lv-card{{
+        background:#fff; border-radius:12px; border:1px solid #bbcac4;
+        border-top-width:4px; padding:16px 12px; text-align:center;
+        display:flex; flex-direction:column; align-items:center;
+        box-shadow:0 4px 20px rgba(0,0,0,.05);
+        transition:transform .3s ease,box-shadow .3s ease;
+      }}
+      .level-card-shadow:hover{{
+        transform:translateY(-4px); box-shadow:0 12px 30px rgba(0,0,0,.1);
+      }}
+      .lv-badge{{
+        width:48px; height:48px; border-radius:50%; display:flex;
+        align-items:center; justify-content:center; font-weight:800;
+        font-size:18px; margin-bottom:12px;
+      }}
+      .lv-title{{ font-size:14px; font-weight:600; color:#0b1c30; margin:0 0 4px; }}
+      .lv-goal{{
+        font-size:11px; color:#3c4a45; margin:0 0 8px; line-height:1.35;
+        min-height:30px; display:-webkit-box; -webkit-line-clamp:2;
+        -webkit-box-orient:vertical; overflow:hidden;
+      }}
+      .lv-age{{ font-size:13px; color:#3c4a45; margin:0 0 12px; }}
+      .lv-foot{{
+        margin-top:auto; padding-top:12px; border-top:1px solid #bbcac4;
+        width:100%; font-size:11px; font-weight:600;
+      }}
+    </style>
+    <section class='lv-section' id='features'>
+      <div class='lv-section-head'>
+        <h2>0–6 课程地图</h2>
+        <p>针对不同年龄段与认知水平的科学分级体系</p>
+      </div>
+      <div class='lv-grid'>{"".join(cards)}</div>
+    </section>
+    """
+
+
 def section_to_rows(section: dict[str, list[str]]) -> list[dict]:
     """把一个 Excel 分段转成 dataframe 行（维度 × L0–L6）。"""
     rows = []
