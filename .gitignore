@@ -15,6 +15,7 @@ _refppt/
 # 一次性生成/调试脚本（本地临时用）
 scripts/_gen_*.py
 scripts/_run_*.py
+!scripts/_run_l4_ic_batch.py
 
 # 抽取缓存（本地临时产物）
 scripts/_ec_cache_*.pkl
