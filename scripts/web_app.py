@@ -2282,7 +2282,7 @@ def _render_hero() -> None:
                 <span>AI 赋能 线下教学</span>
               </div>
               <h1 class='hero-headline'>
-                VIPKID Dino<br/><span class='hero-accent'>线下绘本教学</span>
+                <span class='hero-accent'>AI 赋能</span><br/>线下绘本教学
               </h1>
               <p class='hero-lead'>
                 革新化的绘本教学流程：从 AI 智能抽取内容，到教师个性化精修，
@@ -2865,7 +2865,7 @@ def _render_footer() -> None:
         <footer class='site-footer'>
           <div class='footer-brand'>
             <span class='footer-logo'>VIPKID Dino</span>
-            <p>© 2024 VIPKID Dino. Empowering young learners through AI storytelling.</p>
+            <p>© 2026 VIPKID Dino. Empowering young learners through AI storytelling.</p>
           </div>
           <div class='footer-links'>
             <span>Privacy Policy</span>
@@ -2987,24 +2987,7 @@ def _validate_required_inputs(title: str, raw_story: str = "") -> list[str]:
 
 
 def _render_login_gate() -> None:
-    """未登录时展示的登录页（含品牌区，不含主导航）。"""
-    b64 = _icon_b64()
-    img = (
-        f"<img src='data:image/png;base64,{b64}' class='nav-dino-logo' alt='Kidde'/>"
-        if b64 else "<span class='nav-dino-fallback'>🦕</span>"
-    )
-    st.markdown(
-        f"""
-        <div class='app-topbar-brand' style='margin-bottom:1rem;'>
-          {img}
-          <div>
-            <div class='app-topbar-title'>VIPKID Dino</div>
-            <div class='app-topbar-sub'>线下绘本教学系统</div>
-          </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+    """未登录时展示的登录页（品牌区已在顶栏，此处不再重复）。"""
     st.markdown("## 🔒 登录")
     st.caption("请输入用户名与密码（向管理员获取）。登录状态会记住本机，**不会保存明文密码**。")
     with st.form("login_gate", clear_on_submit=False):
@@ -5467,20 +5450,23 @@ def _zoom_image(path, key: str, caption: str = "") -> None:
 
 
 def _inject_css() -> None:
+    # VIPKID kid palette：L0 绿 + L1 橙（config.BRAND_COLORS SSOT）
+    _kid_green = brand_color_hex("0")
+    _kid_orange = brand_color_hex("1")
     st.markdown(
         """<style>
         @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@500;600;700;800&display=swap');
         :root{
-          --brand:#006b58; --brand-dark:#004a3c; --brand-tint:#e8faf5;
-          --brand-2:#26c2a3; --primary-fixed:#6ff9d8;
+          --brand:__KID_GREEN__; --brand-dark:#4a8538; --brand-tint:#eef7eb;
+          --brand-2:__KID_ORANGE__; --primary-fixed:#b8e0a8;
           --ink:#0b1c30; --muted:#3c4a45; --faint:#6c7a75;
           --line:#dce9ff; --line-soft:#eff4ff; --card:#ffffff;
           --bg:#f8f9ff;
           --radius:14px; --radius-lg:20px;
           --shadow-sm:0 1px 2px rgba(11,28,48,.04),0 1px 3px rgba(11,28,48,.05);
           --shadow-md:0 4px 12px rgba(11,28,48,.06),0 2px 4px rgba(11,28,48,.04);
-          --shadow-lg:0 18px 40px -12px rgba(0,107,88,.15);
-          --ring:0 0 0 3px rgba(0,107,88,.16);
+          --shadow-lg:0 18px 40px -12px rgba(94,159,73,.15);
+          --ring:0 0 0 3px rgba(94,159,73,.16);
           --fs-base:15.5px; --fs-sm:13.5px; --fs-lg:17px;
         }
         html, body, [class*="css"]{
@@ -5490,8 +5476,8 @@ def _inject_css() -> None:
         .stApp{ font-size:var(--fs-base); }
         .stApp{
           background:
-            radial-gradient(900px 480px at 88% -8%, rgba(77,221,188,.12), transparent 60%),
-            radial-gradient(820px 460px at -6% 4%, rgba(0,107,88,.05), transparent 55%),
+            radial-gradient(900px 480px at 88% -8%, rgba(184,224,168,.12), transparent 60%),
+            radial-gradient(820px 460px at -6% 4%, rgba(94,159,73,.05), transparent 55%),
             var(--bg);
         }
         .block-container { max-width: 1340px; padding-top: 1.2rem; }
@@ -5510,7 +5496,7 @@ def _inject_css() -> None:
           border-radius:var(--radius-lg) !important;
           padding:10px 16px 6px !important;
           margin-bottom:18px !important;
-          background:linear-gradient(120deg, rgba(255,255,255,.96), rgba(232,250,245,.88)) !important;
+          background:linear-gradient(120deg, rgba(255,255,255,.96), rgba(238,247,235,.88)) !important;
           box-shadow:var(--shadow-md) !important;
         }
         .app-topbar-brand{ display:flex; align-items:center; gap:12px; min-width:0; }
@@ -5540,12 +5526,12 @@ def _inject_css() -> None:
           display:none !important; width:0 !important; min-width:0 !important; margin:0 !important; padding:0 !important;
         }
         .main-nav-wrap [role="radiogroup"] > label:hover{
-          color:var(--brand) !important; background:rgba(0,107,88,.06) !important;
+          color:var(--brand) !important; background:rgba(94,159,73,.06) !important;
         }
         .main-nav-wrap [role="radiogroup"] > label:has(input:checked){
           color:var(--brand) !important;
-          background:linear-gradient(135deg, rgba(0,107,88,.14), rgba(38,194,163,.10)) !important;
-          box-shadow:0 1px 6px rgba(0,107,88,.16), inset 0 0 0 1px rgba(0,107,88,.20) !important;
+          background:linear-gradient(135deg, rgba(94,159,73,.14), rgba(241,130,0,.10)) !important;
+          box-shadow:0 1px 6px rgba(94,159,73,.16), inset 0 0 0 1px rgba(94,159,73,.20) !important;
         }
         .main-nav-wrap [role="radiogroup"] > label > div:last-child,
         .main-nav-wrap [role="radiogroup"] > label p{
@@ -5585,8 +5571,8 @@ def _inject_css() -> None:
           font-weight:600; background:var(--card); transition:all .15s ease;
         }
         [data-testid="stRadio"] [role="radiogroup"][aria-label="交付物导航"] label:has(input:checked){
-          color:var(--brand); background:var(--brand-tint); border-color:rgba(0,107,88,.35);
-          box-shadow:inset 0 0 0 1px rgba(0,107,88,.12);
+          color:var(--brand); background:var(--brand-tint); border-color:rgba(94,159,73,.35);
+          box-shadow:inset 0 0 0 1px rgba(94,159,73,.12);
         }
         [data-testid="stRadio"] [role="radiogroup"][aria-label="交付物导航"] label > div:first-child{ display:none; }
 
@@ -5605,8 +5591,8 @@ def _inject_css() -> None:
         }
         .hero-gradient{
           background:
-            radial-gradient(circle at top right, rgba(77,221,188,.15), transparent),
-            radial-gradient(circle at bottom left, rgba(0,107,88,.05), transparent);
+            radial-gradient(circle at top right, rgba(184,224,168,.15), transparent),
+            radial-gradient(circle at bottom left, rgba(94,159,73,.05), transparent);
         }
         .hero-grid{
           display:grid; grid-template-columns:1.05fr .95fr; gap:28px; align-items:center;
@@ -5623,7 +5609,7 @@ def _inject_css() -> None:
           font-size:clamp(32px,4vw,48px); font-weight:800; line-height:1.15;
           color:var(--ink); margin:0 0 16px;
         }
-        .hero-accent{ color:var(--brand); }
+        .hero-accent{ color:var(--brand-2); }
         .hero-lead{
           font-size:18px; line-height:1.55; color:var(--muted);
           max-width:540px; margin:0 0 20px;
@@ -5641,7 +5627,7 @@ def _inject_css() -> None:
         .hero-visual{ position:relative; }
         .hero-glow{
           position:absolute; top:-40px; right:-40px; width:220px; height:220px;
-          border-radius:50%; background:#4dddbc; filter:blur(60px); opacity:.2;
+          border-radius:50%; background:#b8e0a8; filter:blur(60px); opacity:.2;
         }
         .hero-glass{
           position:relative; padding:8px; border-radius:14px;
@@ -5732,8 +5718,8 @@ def _inject_css() -> None:
         .hero::before{
           content:""; position:absolute; inset:0; z-index:0; pointer-events:none;
           background:
-            radial-gradient(420px 220px at 90% -40%, rgba(0,107,88,.22), transparent 60%),
-            radial-gradient(360px 200px at 8% 130%, rgba(38,194,163,.18), transparent 60%);
+            radial-gradient(420px 220px at 90% -40%, rgba(94,159,73,.22), transparent 60%),
+            radial-gradient(360px 200px at 8% 130%, rgba(241,130,0,.18), transparent 60%);
         }
         .hero::after{
           content:""; position:absolute; left:0; right:0; bottom:0; height:3px; z-index:1;
@@ -5744,7 +5730,7 @@ def _inject_css() -> None:
         .hero-icon{ flex:0 0 auto; display:flex; }
         .hero-dino{
           width:64px; height:64px; object-fit:contain;
-          filter:drop-shadow(0 6px 14px rgba(0,107,88,.34));
+          filter:drop-shadow(0 6px 14px rgba(94,159,73,.34));
         }
         .hero-text{ flex:1 1 auto; min-width:0; }
         .hero-title{
@@ -5760,7 +5746,7 @@ def _inject_css() -> None:
           background:linear-gradient(135deg,var(--brand),var(--brand-2)); color:#fff;
           font-weight:700; font-size:12px; letter-spacing:.3px;
           padding:6px 14px; border-radius:999px;
-          box-shadow:0 6px 16px rgba(0,107,88,.32); border:1px solid rgba(255,255,255,.35);
+          box-shadow:0 6px 16px rgba(94,159,73,.32); border:1px solid rgba(255,255,255,.35);
         }
 
         /* ---------- 侧边栏（玻璃质感 + 细描边） ---------- */
@@ -5774,7 +5760,7 @@ def _inject_css() -> None:
         }
         .side-brand .side-dino{
           width:42px; height:42px; object-fit:contain;
-          filter:drop-shadow(0 3px 7px rgba(0,107,88,.28));
+          filter:drop-shadow(0 3px 7px rgba(94,159,73,.28));
         }
         .side-brand span{ font-weight:800; color:var(--ink); font-size:16px; line-height:1.15; }
         .side-brand small{ font-weight:600; color:var(--muted); font-size:11px; }
@@ -5794,13 +5780,13 @@ def _inject_css() -> None:
         .stButton > button[kind="primary"],
         [data-testid="stBaseButton-primary"]{
           background:linear-gradient(135deg,var(--brand),var(--brand-2)) !important;
-          border:1px solid rgba(0,107,88,.4) !important;
-          color:#fff !important; box-shadow:0 8px 20px -6px rgba(0,107,88,.5);
+          border:1px solid rgba(94,159,73,.4) !important;
+          color:#fff !important; box-shadow:0 8px 20px -6px rgba(94,159,73,.5);
         }
         .stButton > button[kind="primary"]:hover,
         [data-testid="stBaseButton-primary"]:hover{
           filter:brightness(1.03);
-          box-shadow:0 12px 26px -6px rgba(0,107,88,.58) !important;
+          box-shadow:0 12px 26px -6px rgba(94,159,73,.58) !important;
         }
         /* secondary = 描边，hover 染橙 */
         .stButton > button[kind="secondary"]:hover,
@@ -5865,7 +5851,7 @@ def _inject_css() -> None:
         .wiz-fill{
           position:absolute; left:0; top:0; height:100%; border-radius:7px;
           background:linear-gradient(90deg,var(--brand),var(--brand-2));
-          box-shadow:0 0 12px rgba(0,107,88,.45);
+          box-shadow:0 0 12px rgba(94,159,73,.45);
           transition:width .4s cubic-bezier(.4,0,.2,1);
         }
 
@@ -5885,7 +5871,7 @@ def _inject_css() -> None:
         }
         [data-testid="stSidebar"] [role="radiogroup"] label:has(input:checked){
           background:linear-gradient(90deg,var(--brand-tint),rgba(232,250,245,.4));
-          color:var(--brand); border-color:rgba(0,107,88,.28);
+          color:var(--brand); border-color:rgba(94,159,73,.28);
           box-shadow:inset 3px 0 0 var(--brand);
         }
         [data-testid="stSidebar"] [role="radiogroup"] label > div:first-child{ display:none; }
@@ -5895,7 +5881,7 @@ def _inject_css() -> None:
           display:inline-flex; align-items:center; gap:9px;
           padding:7px 15px; border-radius:999px; font-size:13.5px; font-weight:600;
           color:var(--brand-dark); background:var(--brand-tint);
-          border:1px solid rgba(0,107,88,.28); box-shadow:var(--shadow-sm);
+          border:1px solid rgba(94,159,73,.28); box-shadow:var(--shadow-sm);
           margin:4px 0;
         }
         .timer-pill.done{
@@ -5904,7 +5890,7 @@ def _inject_css() -> None:
         .timer-pill b{ font-variant-numeric:tabular-nums; }
         .timer-spin{
           width:13px; height:13px; border-radius:50%;
-          border:2px solid rgba(0,107,88,.3); border-top-color:var(--brand);
+          border:2px solid rgba(94,159,73,.3); border-top-color:var(--brand);
           animation:tmr-spin .7s linear infinite;
         }
         @keyframes tmr-spin{ to{ transform:rotate(360deg); } }
@@ -5953,7 +5939,7 @@ def _inject_css() -> None:
           display:inline-flex; align-items:center; gap:6px;
           padding:5px 12px; border-radius:999px; font-size:12.5px; font-weight:600;
           color:var(--brand-dark); background:var(--brand-tint);
-          border:1px solid rgba(0,107,88,.22); line-height:1;
+          border:1px solid rgba(94,159,73,.22); line-height:1;
           transition:all .14s ease;
         }
         .chip:hover{ box-shadow:var(--shadow-sm); transform:translateY(-1px); }
@@ -5969,7 +5955,7 @@ def _inject_css() -> None:
           display:inline-flex; align-items:center; justify-content:center;
           width:30px; height:30px; border-radius:9px;
           background:linear-gradient(135deg,var(--brand),var(--brand-2)); color:#fff;
-          box-shadow:0 5px 12px -3px rgba(0,107,88,.5); font-size:15px;
+          box-shadow:0 5px 12px -3px rgba(94,159,73,.5); font-size:15px;
         }
         .sec-head .line{ flex:1 1 auto; height:1px; background:linear-gradient(90deg,var(--line),transparent); }
 
@@ -5994,7 +5980,7 @@ def _inject_css() -> None:
         ::-webkit-scrollbar{ width:11px; height:11px; }
         ::-webkit-scrollbar-thumb{ background:#d7dbe3; border-radius:8px; border:3px solid var(--bg); }
         ::-webkit-scrollbar-thumb:hover{ background:#c2c8d2; }
-        ::selection{ background:rgba(0,107,88,.22); }
+        ::selection{ background:rgba(94,159,73,.22); }
         .hero, [data-testid="stVerticalBlockBorderWrapper"]{ animation:rise .42s cubic-bezier(.2,.7,.2,1) both; }
         @keyframes rise{ from{ opacity:0; transform:translateY(8px); } to{ opacity:1; transform:translateY(0); } }
         @media (prefers-reduced-motion: reduce){ *{ animation:none !important; } }
@@ -6013,9 +5999,9 @@ def _inject_css() -> None:
         .stApp::before{
           content:""; position:fixed; inset:0; z-index:0; pointer-events:none;
           background:
-            radial-gradient(1100px 560px at 84% -12%, rgba(0,107,88,.10), transparent 62%),
+            radial-gradient(1100px 560px at 84% -12%, rgba(94,159,73,.10), transparent 62%),
             radial-gradient(900px 520px at -10% 8%, rgba(120,120,255,.07), transparent 58%),
-            radial-gradient(700px 700px at 50% 120%, rgba(38,194,163,.06), transparent 60%);
+            radial-gradient(700px 700px at 50% 120%, rgba(241,130,0,.06), transparent 60%);
           animation:bgdrift 26s ease-in-out infinite alternate;
         }
         @keyframes bgdrift{
@@ -6058,7 +6044,7 @@ def _inject_css() -> None:
         .hero-icon{ position:relative; }
         .hero-icon::after{   /* 环绕光环 */
           content:""; position:absolute; inset:-8px; border-radius:50%;
-          border:1.5px dashed rgba(0,107,88,.35); animation:ring-spin 14s linear infinite;
+          border:1.5px dashed rgba(94,159,73,.35); animation:ring-spin 14s linear infinite;
         }
         @keyframes ring-spin{ to{ transform:rotate(360deg); } }
         .hero-title{
@@ -6149,7 +6135,9 @@ def _inject_css() -> None:
         @media (prefers-reduced-motion: reduce){
           .hero-dino, .hero-icon::after, .hero-title, .stApp::before{ animation:none !important; }
         }
-        </style>""",
+        </style>"""
+        .replace("__KID_GREEN__", _kid_green)
+        .replace("__KID_ORANGE__", _kid_orange),
         unsafe_allow_html=True,
     )
 
