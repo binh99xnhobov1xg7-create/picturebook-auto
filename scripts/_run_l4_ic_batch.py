@@ -6,6 +6,9 @@ L4 worksheet/RR 版式、官方 S&S 注入 Strategy/Skill/GO。
 """
 from __future__ import annotations
 
+import os
+os.environ["PYTHONUNBUFFERED"] = "1"
+
 import re
 import sys
 import time
