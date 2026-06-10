@@ -18,12 +18,13 @@ Suqianxue 及同事账号仅写在 Cloud Secrets 或本机 gitignore 的 secrets
 | Sally | 同事 |
 | Jeffrey | 同事 |
 | Cola | 同事 |
+| Selena | 同事 |
 
 ## Cloud Secrets 结构（占位符示例）
 
 完整可粘贴内容请用本机 `.streamlit/secrets-cloud-paste.toml`（由 `.env` 生成，不入库）。
 
-**重要（TOML 语法）**：`[APP_USERS]` 会开启一张表；若把 API Key 写在 `[APP_USERS]` **下面**，它们会被当成用户表里的字段，`st.secrets["IMAROUTER_API_KEY"]` 会读不到。正确做法是：**所有 API / 模型配置写在文件最前面（顶层）**，**最后**再放 `[APP_USERS]`，且该段内只保留 4 个用户名。
+**重要（TOML 语法）**：`[APP_USERS]` 会开启一张表；若把 API Key 写在 `[APP_USERS]` **下面**，它们会被当成用户表里的字段，`st.secrets["IMAROUTER_API_KEY"]` 会读不到。正确做法是：**所有 API / 模型配置写在文件最前面（顶层）**，**最后**再放 `[APP_USERS]`，且该段内只保留 5 个用户名。
 
 ```toml
 IMAROUTER_API_KEY = "sk-替换为你的-imarouter-key"
@@ -51,6 +52,7 @@ Suqianxue = "VIPKID@2026"
 Sally = "VIPKID@2026"
 Jeffrey = "VIPKID@2026"
 Cola = "VIPKID@2026"
+Selena = "VIPKID@2026"
 ```
 
 ## 本地

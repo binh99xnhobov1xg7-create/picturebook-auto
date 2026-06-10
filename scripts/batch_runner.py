@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import os
 import re
 import threading
 import time
@@ -23,7 +24,7 @@ from typing import Callable, Optional
 
 from ai_extractor import apply_extracted_to_outline, extract_all
 from cn_prompt_builder import build_cn_page_prompt, validate_page_ip_lock
-from config import OUTPUTS_DIR, resolve_ip_age
+from config import L02_PIPELINE, OUTPUTS_DIR, resolve_image_backend, resolve_ip_age
 from parser import BookOutline, PageSpec, enrich_from_syllabus
 from ppt_builder import build_picturebook_pptx, safe_filename
 from reading_report_builder import attach_rr_questions, build_reading_report
@@ -36,7 +37,7 @@ try:
 except Exception:  # pragma: no cover
     auto_summary = None  # type: ignore
 
-PER_BOOK_TIMEOUT_S = 30 * 60  # 单本超时 30 分钟
+PER_BOOK_TIMEOUT_S = int(os.getenv("PER_BOOK_TIMEOUT_S", str(45 * 60)))  # 单本超时 45 分钟（生图重试更耐心后放大）
 
 # 出图前/后耗时估算（仅用于 Dry-run 预检展示，非精确）
 EST_SECS_PER_IMAGE = 16
@@ -151,10 +152,11 @@ def _story_lines(story: str) -> list[str]:
 
 def run_one(item: BatchItem, out_root: Path, *, mock: bool = False,
             flat: bool = False, resume: bool = False,
-            image_workers: int = 4) -> BatchResult:
+            image_workers: int = 4, prompts_only: bool = False) -> BatchResult:
     """跑一本：抽取 → outline → 生图 → 4 件套 → zip。失败抛异常由上层捕获。
 
     resume=True：已存在且非空的 page_xx.png 直接复用（断点续跑/重跑失败本只补缺页）。
+    prompts_only=True：只构建并落盘 image_prompts.txt，不出图、不组装文档（供复查对齐）。
     image_workers：本本内出图并发数；实际在途总数仍由全局 _IMG_SEM 统一节流。
     """
     t0 = time.time()
@@ -243,11 +245,23 @@ def run_one(item: BatchItem, out_root: Path, *, mock: bool = False,
                 if resume and (not mock) and ap.exists() and ap.stat().st_size > 0:
                     r.anchor_path = str(ap)
                     continue
+                # prompts_only（dry-run）：只登记角色 + 计算外观锁文本，绝不调图片 API 生成锚图。
+                #   外观锁文本（desc_en）注入与锚图是否存在无关，足够复查 prompt。
+                if prompts_only:
+                    if ap.exists() and ap.stat().st_size > 0:
+                        r.anchor_path = str(ap)
+                    continue
                 try:
                     ap.parent.mkdir(parents=True, exist_ok=True)
+                    # 一次性角色（永远是非 IP）锚图【一律不挂含主角的三人组风格锚 trio】：
+                    #   trio_style_anchor 含 Mia/Tommy，挂上去会把命名儿童角色(如 Ben)直接带成
+                    #   Tommy 的翻版（同棕色蓬松短发/浅蓝衣/相似脸）——Book57 Ben 克隆 Tommy 的根因。
+                    #   成人角色→空参考(已有成人锁)；非成人儿童命名角色→同样空参考，靠 anchor_prompt
+                    #   里的【全新独立·国际化·反克隆】锁 + 治愈水彩画风描述全新生成。
+                    role_refs = []
                     with _img_guard():
                         generate_image(prompt=anchor_prompt(r), dest=ap,
-                                       references=[style_anchor] if style_anchor else [],
+                                       references=role_refs,
                                        label=f"{item.name_prefix} 角色锚:{r.display}", mock=mock)
                     r.anchor_path = str(ap)
                 except Exception as e:  # noqa: BLE001
@@ -255,7 +269,7 @@ def run_one(item: BatchItem, out_root: Path, *, mock: bool = False,
             outline.book_cast = book_cast
             named = "、".join(f"{r.display}" for r in book_cast.values() if r.needs_anchor)
             if named:
-                print(f"[{item.name_prefix}] 书内角色册：为反复出场角色锁定形象 → {named}")
+                print(f"[{item.name_prefix}] 书内角色册：为反复出场角色锁定形象 -> {named}")
     except Exception as e:  # noqa: BLE001
         print(f"[{item.name_prefix}] 书内角色册跳过: {e}")
 
@@ -270,12 +284,21 @@ def run_one(item: BatchItem, out_root: Path, *, mock: bool = False,
             pass
         return ""
 
+    # 出图后端：L0-2=即梦(可收多张独立 base64 参考图)，L3-6=gpt-image-2(只收 1 张)。
+    # 参考图策略按后端分流（2026-06-08 修：即梦不再拼定妆表，避免多人物页注意力摊薄/IP 漂移）。
+    img_backend = resolve_image_backend(item.level)
+    # 新流程(gpt_then_jimeng)：L0-2 第①段也是 gpt-image-2(只收1张)→应走"合并定妆表/单锚"；
+    # 仅旧流程(即梦直出)才发多张独立 base64 定妆图。
+    use_multi_ref = (img_backend == "jimeng_refine" and L02_PIPELINE != "gpt_then_jimeng")
+
     # ---- 阶段 1：顺序构建每页 prompt + 参考锚（CPU/IO，确定性，便于断点续跑判断）----
     jobs: list[tuple] = []          # (index, dest, page_prompt, page_refs, fallback_prompt)
     image_paths: list[Path] = []
     ip_lock_issues: list[str] = []  # 出图前自检门累计的主角铁律违规
+    built_pages: list[tuple] = []   # SOP 第8条导出层复用：(page, BuiltPromptCN)，不重算
     for page in outline.pages:
         built = build_cn_page_prompt(page, outline, ip_age)
+        built_pages.append((page, built))
         # 出图前自检门（用户拍板 2026-06-07）：校验主角铁律，违规累计 → 标记人工抽查
         _viol = validate_page_ip_lock(built, outline, ip_age, page)
         if _viol:
@@ -286,46 +309,140 @@ def run_one(item: BatchItem, out_root: Path, *, mock: bool = False,
         # 图生图 IP 锁定（用户拍板 2026-06-06）：本页每个出场 IP 都用官方定妆图驱动。
         # 主角置顶 → 多角色拼「定妆表」、单角色裁单锚；并加“照表还原·只改姿势表情”强约束。
         refs = [Path(r) for r in built.references if r]
-        if prot_ref and Path(prot_ref) in refs:
-            refs.remove(Path(prot_ref))
-            refs.insert(0, Path(prot_ref))
+        # 参考排序（用户拍板 2026-06-09·Book57 关键）：主角锚置顶，但【一次性角色锚(book_cast/_roles)】
+        #   紧随其后、绝不被多余 IP 挤出 5 张上限；再放其余 IP 参考。这样剧情主体/配角锚都能进参考表，
+        #   且定妆表左→右顺序 = (主角→一次性角色→其它)，与配色轮"第N个配角穿X色"的左→右排序对齐。
+        def _is_oneoff_anchor(p: Path) -> bool:
+            return "_roles" in p.parts or p.stem.startswith("role_")
+        leads = [r for r in refs if prot_ref and r == Path(prot_ref)]
+        oneoffs = [r for r in refs if _is_oneoff_anchor(r) and r not in leads]
+        others = [r for r in refs if r not in leads and r not in oneoffs]
+        refs = (leads + oneoffs + others)[:5]
         local = [r for r in refs if r.exists()]
-        names = [(_ip_name(r) or "") for r in local]
+
+        def _oneoff_label(p: Path) -> str:
+            # role_<rid>.png → 用 used_characters 里的 display；回退用 rid。
+            if not _is_oneoff_anchor(p):
+                return ""
+            rid = p.stem[len("role_"):] if p.stem.startswith("role_") else p.stem
+            for _c in (built.used_characters or []):
+                if str(_c.get("key", "")) == f"oneoff:{rid}":
+                    return _c.get("name", "") or rid
+            return rid
+        names = [(_ip_name(r) or _oneoff_label(r)) for r in local]
         anchor, note = None, ""
-        if len(local) >= 2:
-            sheet = build_reference_sheet(
-                local, anchor_dir / "_refsheets" / f"sheet_p{page.index:02d}.png",
-                labels=names)
-            if sheet is not None:
-                anchor = sheet
-                disp = "、".join(n for n in names if n) or "本页角色"
-                note = (
-                    "【参考图＝角色定妆表（连续性绘本·形象永久锁定）】所附唯一参考图是白底"
-                    f"「角色定妆表」，并排展示本页所有出场角色（{disp}，面板上方有英文名标签）。"
-                    "请把每个角色的脸型、五官、发型、发色、肤色、服装款式与配色 1:1 精确还原，"
-                    "与定妆表完全一致、与往期绘本同一个人。【唯一允许改变：姿势/动作 与 面部表情】，"
-                    "形象其余一律不得改动；严禁照搬定妆表的白底/并排站姿/多视图排版。"
-                )
-        if anchor is None and local:
-            anchor = crop_character_portrait(
-                local[0], anchor_dir / f"anchor_p{page.index:02d}.png") or local[0]
-            nm = names[0] or "主角"
+        if use_multi_ref and local:
+            # 即梦支持最多 4 张独立 base64 参考图：逐角色发"独立定妆图"，不拼定妆表。
+            # 多人物页（如《My Family》）拼图会把注意力摊薄→每人都还原不准、Mia/Tommy 漂移；
+            # 拆成独立锚图后，每个角色（主角优先）各占一张干净参考，锁形象更稳。
+            cleaned: list[Path] = []
+            for i, rp in enumerate(local[:4]):
+                cp = crop_character_portrait(
+                    rp, anchor_dir / f"anchor_p{page.index:02d}_{i}.png") or rp
+                cleaned.append(cp)
+            page_refs = cleaned
+            disp = "、".join(n for n in names[:len(cleaned)] if n) or "本页角色"
             note = (
-                f"【参考图＝{nm} 官方定妆图（连续性绘本·形象永久锁定）】请把 {nm} 的脸型/五官/发型/"
-                "发色/肤色/服装款式与配色 1:1 精确还原，与往期绘本同一个人。"
-                "【唯一允许改变：该角色的姿势/动作与面部表情】，形象其余不得改动；不要照搬参考图背景或姿势。"
+                f"【参考图＝{len(cleaned)} 张独立角色定妆图·形象永久锁定】依次对应【{disp}】，每张只锁一个角色；"
+                "逐一 1:1 还原五官/发型/发色/肤色/服装与配色、与往期同一个人、不串用；"
+                "只改姿势/动作与表情，不照搬白底/站姿/排版。"
             )
-        elif anchor is None and style_anchor:
-            anchor = style_anchor
-        page_refs = [anchor] if anchor else []
+        else:
+            # L3-6 gpt-image-2 只收 1 张：多角色拼「定妆表」、单角色裁单锚。
+            if len(local) >= 2:
+                sheet = build_reference_sheet(
+                    local, anchor_dir / "_refsheets" / f"sheet_p{page.index:02d}.png",
+                    labels=names)
+                if sheet is not None:
+                    anchor = sheet
+                    disp = "、".join(n for n in names if n) or "本页角色"
+                    note = (
+                        f"【参考图＝白底角色定妆表·形象永久锁定】并排展示本页出场角色（{disp}，上方有英文名标签）；"
+                        "把每个角色的脸型/五官/发型/发色/肤色/服装与配色 1:1 还原、与往期同一个人；"
+                        "只改姿势/动作与表情，严禁照搬白底/并排站姿/多视图排版。"
+                    )
+            if anchor is None and local:
+                anchor = crop_character_portrait(
+                    local[0], anchor_dir / f"anchor_p{page.index:02d}.png") or local[0]
+                nm = names[0] or "主角"
+                note = (
+                    f"【参考图＝{nm} 官方定妆图（连续性绘本·形象永久锁定）】请把 {nm} 的脸型/五官/发型/"
+                    "发色/肤色/服装款式与配色 1:1 精确还原，与往期绘本同一个人。"
+                    "【唯一允许改变：该角色的姿势/动作与面部表情】，形象其余不得改动；不要照搬参考图背景或姿势。"
+                )
+            elif anchor is None and prot_ref and Path(prot_ref).exists():
+                # 本页无任何角色定妆图，但本书有系列主角 → 优先挂【主角新定妆单锚】(mia_10/tommy_10)，
+                #   绝不回退到含旧形象的 trio 兜底图（根因一·2026-06-10：代词页脱模/Tommy 漂深蓝）。
+                anchor = crop_character_portrait(
+                    prot_ref, anchor_dir / f"anchor_p{page.index:02d}.png") or Path(prot_ref)
+                nm = _ip_name(prot_ref) or "主角"
+                note = (
+                    f"【参考图＝{nm} 官方定妆图（连续性绘本·形象永久锁定）】请把 {nm} 的脸型/五官/发型/"
+                    "发色/肤色/服装款式与配色 1:1 精确还原，与往期绘本同一个人。"
+                    "【唯一允许改变：该角色的姿势/动作与面部表情】，形象其余不得改动；不要照搬参考图背景或姿势。"
+                )
+            elif anchor is None and style_anchor:
+                anchor = style_anchor
+            page_refs = [anchor] if anchor else []
+        # 即梦页若本页无任何角色定妆图，用全书风格锚兜底
+        if img_backend == "jimeng_refine" and not page_refs and style_anchor:
+            page_refs = [style_anchor]
         page_prompt = built.prompt + ("\n\n" + note if note else "")
+        # 定向修图(补人/改色)需要精确 IP 锁：gpt-image-2 修图只吃 1 张参考(草图)，
+        # 没法再塞 IP 定妆图 → 把每个出场角色的精确服装/发型锁(按本书年龄)作为文字带进修图，
+        # 杜绝"补出的人/改后的人"漂移成藏青/黑发路人(用户拍板 2026-06-09：IP 连续锁定)。
+        cast_lock: list[str] = []
+        try:
+            from character_registry import get_description as _get_desc
+            for _c in (built.used_characters or []):
+                _k = (_c.get("key") or "").split("_")[0]
+                _d = _get_desc(_k, ip_age) if _k else None
+                if _d:
+                    cast_lock.append(_d)
+        except Exception:
+            cast_lock = []
         review_meta = {
             "page_text": page.text or "",
             "scene_cn": getattr(built, "scene_cn", "") or "",
+            "story_lock": getattr(built, "story_lock", "") or "",
             "cast_names": [c.get("name", "") for c in (built.used_characters or [])],
             "ip_age": ip_age,
+            "cast_lock": cast_lock,
         }
         jobs.append((page.index, dest, page_prompt, page_refs, built.prompt, review_meta))
+
+    # ---- 落盘：把每页出图提示词写到 image_prompts.txt（便于复查/对齐 IP 与画风）----
+    try:
+        from config import GPT_CLEAN_STYLE_DIRECTIVE as _STY, GPT_CLEAN_STYLE_ECHO as _ECHO
+        _lv_dump = str(item.level).strip().lower().lstrip("l")
+        _is_l36 = _lv_dump in ("3", "4", "5", "6")
+        _lines = [f"# {item.name_prefix} 出图提示词（共 {len(jobs)} 页）", ""]
+        if _is_l36:
+            _lines += ["【全局画风·前缀（每页自动前置）】", _STY.strip(),
+                       "", "【全局画风·末尾回声（每页自动后置）】", _ECHO.strip(),
+                       "", "=" * 60, ""]
+        for _idx, _dest, _pp, _refs, _fb, _rm in sorted(jobs, key=lambda j: j[0]):
+            _tag = "封面" if _idx == 0 else f"P{_idx}"
+            _refnames = "、".join(Path(r).name for r in (_refs or []))
+            _lines += [f"—— {_tag} —— 参考图: {_refnames or '无'}", _pp.strip(), "", "-" * 60, ""]
+        (book_dir / "image_prompts.txt").write_text("\n".join(_lines), encoding="utf-8")
+        print(f"[prompts] 已落盘 → {book_dir / 'image_prompts.txt'}", flush=True)
+    except Exception as _e:  # noqa: BLE001
+        print(f"[prompts] 提示词落盘失败（不影响出图）：{_e}")
+
+    # ---- SOP 第8条 · 对外交付 4 部分纯文本 Prompt 文档（复用已构建分页 prompt，不重算）----
+    #   纯新增产物，与 image_prompts.txt / PPT / RR 并存、不冲突；失败不影响出图。
+    try:
+        from export_sop_prompts import write_sop_document
+        _sop = write_sop_document(outline, built_pages, book_dir, item.name_prefix)
+        print(f"[SOP] 对外交付4部分文档已落盘 → {_sop}", flush=True)
+    except Exception as _e:  # noqa: BLE001
+        print(f"[SOP] 对外交付文档落盘失败（不影响出图）：{_e}")
+
+    if prompts_only:
+        res.status = "ok"
+        res.elapsed = time.time() - t0
+        return res
 
     # ---- 阶段 2：并行出图（页间无先后依赖，各写各的 dest）----
     #   断点续跑：已存在且非空的页直接复用；全局 _IMG_SEM 统一节流在途总数。
@@ -355,11 +472,46 @@ def run_one(item: BatchItem, out_root: Path, *, mock: bool = False,
             if skipped:
                 res.skipped_pages += 1
 
+    # ---- 涂色线稿（用户拍板 2026-06-08 / 2026-06-09 扩到 L3）：worksheet 读后页 = 涂色线稿 + 自主造句 ----
+    #   单独黑白线稿（不走水彩画风指令），失败则 worksheet 自动用留白画框兜底，绝不阻断出书。
+    coloring_path: Optional[Path] = None
+    _lv = str(item.level).strip().lower().lstrip("l")
+    if _lv in ("smart", "0", "1", "2", "3"):
+        cp = img_dir / "coloring.png"
+        if resume and (not mock) and cp.exists() and cp.stat().st_size > 0:
+            coloring_path = cp
+        else:
+            try:
+                # 画题取【故事最简单的一句】(通常第 1 句)，让涂色内容贴本书核心概念、可被老师复用；
+                # 缺省再退回主题/书名。例：'Shoes always come in a pair.' → 一双鞋。
+                _first_line = ""
+                for _pg in outline.pages:
+                    if getattr(_pg, "page_type", "") == "story" and (_pg.text or "").strip():
+                        _first_line = (_pg.text or "").strip()
+                        break
+                subj = _first_line or (outline.theme or item.title or "the story").strip()
+                color_prompt = (
+                    "Black-and-white COLORING BOOK line art for young children (ages 4-7). "
+                    f"One simple, clear scene that illustrates this sentence: \"{subj}\". "
+                    "Draw only the key objects from the sentence as large simple shapes "
+                    "(e.g. if it is about a pair of items, draw that matching pair). "
+                    "Thick clean bold black outlines only, NO shading, NO color, NO gray fills, "
+                    "pure solid white background, large simple shapes with generous space to color, "
+                    "centered and uncluttered. No text, no words, no letters anywhere."
+                )
+                with _img_guard():
+                    generate_image(prompt=color_prompt, dest=cp, references=[],
+                                   label=f"{item.name_prefix} 涂色线稿", mock=mock)
+                coloring_path = cp
+            except Exception as e:  # noqa: BLE001
+                print(f"[{item.name_prefix}] 涂色线稿生成失败（worksheet 用留白画框兜底）: {e}")
+                coloring_path = None
+
     pre = item.name_prefix
     pb = book_dir / f"{pre}_Reader.pptx"
     build_picturebook_pptx(outline, image_paths, pb)
     ws = book_dir / f"{pre}_Worksheet.pptx"
-    build_worksheet(outline, ws, image_paths=image_paths)
+    build_worksheet(outline, ws, image_paths=image_paths, coloring_image=coloring_path)
     rr = book_dir / f"{pre}_Reading_Report.docx"
     build_reading_report(outline, rr)
     tg = book_dir / f"{pre}_Teachers_Guide.docx"
@@ -390,7 +542,7 @@ def run_one(item: BatchItem, out_root: Path, *, mock: bool = False,
         res.needs_human_review = True
         if res.eval_level not in ("error",):
             res.eval_level = "warn"
-        print(f"[{item.name_prefix}] ⚠ 主角铁律自检命中 {len(ip_lock_issues)} 处，已标记人工抽查")
+        print(f"[{item.name_prefix}] [WARN] 主角铁律自检命中 {len(ip_lock_issues)} 处，已标记人工抽查")
 
     # 单本 ZIP
     zp = book_dir / f"{pre}_Full_Set.zip"

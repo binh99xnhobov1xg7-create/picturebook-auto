@@ -37,30 +37,34 @@ MIA = {
         10: "mia_age10.png",  # 官方正样 Mia10
         12: "mia_age12.png",  # 官方正样 Mia12
     },
-    # HAIR LOCK（用户拍板 2026-06-07）：Mia 任何年龄都是「高马尾·扎在脑后正中(back-CENTER, high)」，
-    # 绝不是侧马尾、绝不披散两侧。前面留短刘海+几缕碎发，长发全部上扎到脑后。
+    # HAIR LOCK（用户拍板 2026-06-09 改版）：half-up 语义模糊被模型画成丸子头/发髻，改为
+    # 「高马尾 high ponytail」——全部头发在头顶/脑后高高束成一根马尾，不留任何披散散发；
+    # 绝不是丸子头/发髻/half-up/半扎/散开。前面可留极少量碎发框脸或不留（以参考图为准）。
     "description_by_age": {
         8: (
-            "Mia: 8y GIRL. HAIR LOCK: dark-brown hair tied UP into a HIGH PONYTAIL at the "
-            "BACK-CENTER (back-top middle) of the head, ponytail flows straight down behind; "
-            "short fringe bangs + a few thin face-framing strands in front (NEVER a side ponytail, "
-            "NEVER loose flowing hair on both sides). "
+            "Mia: 8y GIRL. HAIR LOCK (HIGH PONYTAIL): dark-brown hair gathered entirely into ONE "
+            "single HIGH PONYTAIL tied high at the top/back of the head; ALL hair is pulled up and "
+            "tied, with NO loose hair left hanging down; the tail falls naturally; a few face-framing "
+            "strands at the front are optional. NOT a bun, NOT a top-knot, NOT a hair-bun, NOT half-up, "
+            "NOT a low/side ponytail, NOT loose/undone hair. "
             "lavender purple SHORT-SLEEVE tee, light-blue WIDE-LEG denim jeans (cuffed hems), "
             "lilac-and-white sneakers, bare wrists, " + NO_ACCESSORY
         ),
         10: (
-            "Mia: 10y GIRL. HAIR LOCK: dark-brown hair tied UP into a HIGH PONYTAIL at the "
-            "BACK-CENTER (back-top middle) of the head, ponytail flows straight down behind; "
-            "short fringe bangs + a few thin face-framing strands (NEVER a side ponytail, "
-            "NEVER loose flowing hair on both sides). "
+            "Mia: 10y GIRL. HAIR LOCK (HIGH PONYTAIL): dark-brown hair gathered entirely into ONE "
+            "single HIGH PONYTAIL tied high at the top/back of the head; ALL hair is pulled up and "
+            "tied, with NO loose hair left hanging down; the tail falls naturally; a few face-framing "
+            "strands at the front are optional. NOT a bun, NOT a top-knot, NOT a hair-bun, NOT half-up, "
+            "NOT a low/side ponytail, NOT loose/undone hair. "
             "lavender purple LONG-SLEEVE sweatshirt, light gray sweatpants, white sneakers, "
             "bare wrists, " + NO_ACCESSORY
         ),
         12: (
-            "Mia: 12y GIRL. HAIR LOCK: dark-brown hair tied UP into a HIGH PONYTAIL at the "
-            "BACK-CENTER (back-top middle) of the head with a small white scrunchie, ponytail flows "
-            "straight down behind; short fringe bangs + a few thin face-framing strands "
-            "(NEVER a side ponytail, NEVER cascading loose on both sides). "
+            "Mia: 12y GIRL. HAIR LOCK (HIGH PONYTAIL): dark-brown hair gathered entirely into ONE "
+            "single HIGH PONYTAIL tied high at the top/back of the head (with a small white "
+            "scrunchie); ALL hair is pulled up and tied, with NO loose hair left hanging down; the "
+            "tail falls naturally; a few face-framing strands at the front are optional. NOT a bun, "
+            "NOT a top-knot, NOT a hair-bun, NOT half-up, NOT a low/side ponytail, NOT loose/undone hair. "
             "lavender purple LONG-SLEEVE polo-collar pullover, white wide-leg trousers, white sneakers, "
             "bare wrists, " + NO_ACCESSORY
         ),
@@ -165,7 +169,7 @@ DINO = {
 MAX = {
     "kind": "pet",
     "gender": "pet",
-    "aliases": ["max", "the dog", "puppy", "doggy"],
+    "aliases": ["max"],
     "reference_by_age": {"pet": "max_dog.png"},
     "description_by_age": {
         "pet": (
@@ -272,7 +276,11 @@ MOM = {
     "reference_by_age": {"adult": "mom.png"},
     "description_by_age": {
         "adult": (
-            "Mom: adult woman, long brown WAVY hair, gentle warm face, "
+            "Mom: a MATURE ADULT woman in her early thirties (clearly a grown-up parent, "
+            "an adult face and adult body proportions — NOT a child, NOT a teenager, "
+            "and absolutely NOT an enlarged version of the girl Mia), "
+            "long brown WAVY hair worn LOOSE and DOWN over the shoulders "
+            "(NEVER a ponytail, NEVER tied up, NEVER a bun), gentle warm adult face, "
             "loose WHITE long-sleeve top, light-blue straight jeans, white sneakers, "
             "gentle smile, bare wrists"
         ),

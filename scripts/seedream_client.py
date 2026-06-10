@@ -28,15 +28,26 @@ from PIL import Image, ImageDraw, ImageFilter
 from config import (
     ARK_API_KEY,
     ARK_BASE_URL,
+    enforce_prompt_budget as _enforce_prompt_budget,
+    GPT_CLEAN_STYLE_DIRECTIVE,
+    GPT_CLEAN_STYLE_ECHO,
     IMAGE_DELIVER_PRINT,
     IMAGE_HOST_PROVIDER,
     IMAGE_POLL_INTERVAL,
     IMAGE_POLL_MAX_TRIES,
     IMAGE_SELF_REVIEW,
     IMAGE_SIZE,
+    IMAGE_QUALITY,
     IMAGE_TARGET_PRINT,
     IMAGE_TARGET_RATIO,
     IMAGE_UPSCALE_METHOD,
+    IMAGE_USM_PERCENT,
+    IMAGE_USM_RADIUS,
+    IMAGE_USM_THRESHOLD,
+    IMAGE_USM_EDGE_ONLY,
+    IMAGE_USM_EDGE_GAIN,
+    IMAGE_FLAT_DENOISE,
+    IMAGE_FLAT_DENOISE_RADIUS,
     IMAGE_PRINT_DPI,
     IMAGE_PRINT_DELIVER_PX,
     IMAGE_DELIVER_CMYK,
@@ -50,6 +61,7 @@ from config import (
     JIMENG_MODEL,
     JIMENG_SEEDREAM_MODEL,
     JIMENG_SEEDREAM_SIZE,
+    L02_PIPELINE,
     REQUEST_RETRIES,
     REQUEST_TIMEOUT,
     VISION_REVIEW_MODEL,
@@ -82,30 +94,88 @@ def crop_to_ratio(img: "Image.Image", ratio: tuple[int, int] = IMAGE_TARGET_RATI
 
 
 def _upscale_esrgan(img: "Image.Image", target: tuple[int, int]) -> "Image.Image | None":
-    """尝试用 Real-ESRGAN 超分；未安装则返回 None 让调用方回退 Lanczos。"""
+    """尝试用 Real-ESRGAN 超分；未安装/失败则返回 None 让调用方回退 Lanczos。
+
+    依次探测两个常见 Real-ESRGAN Python 绑定：
+      - realesrgan_ncnn_py（NCNN，CPU/GPU 通吃，无需 torch）
+      - realesrgan（基于 torch 的官方实现）
+    任一可用即用其超分（自带高质量细节恢复，无需再叠 USM）；都不可用则 None。
+    """
+    src = img.convert("RGB")
+    # 绑定一：realesrgan_ncnn_py
     try:
         from realesrgan_ncnn_py import Realesrgan  # type: ignore
-        import numpy as np  # type: ignore
 
         engine = Realesrgan(gpuid=0)
-        out = engine.process_pil(img.convert("RGB"))
+        out = engine.process_pil(src)
+        return out.resize(target, Image.LANCZOS) if out.size != target else out
+    except Exception:
+        pass
+    # 绑定二：realesrgan（torch）
+    try:
+        import numpy as np  # type: ignore
+        from realesrgan import RealESRGANer  # type: ignore
+        from basicsr.archs.rrdbnet_arch import RRDBNet  # type: ignore
+
+        model = RRDBNet(num_in_ch=3, num_out_ch=3, num_feat=64,
+                        num_block=23, num_grow_ch=32, scale=4)
+        up = RealESRGANer(scale=4, model_path=None, model=model, half=False)
+        arr, _ = up.enhance(np.array(src), outscale=4)
+        out = Image.fromarray(arr)
         return out.resize(target, Image.LANCZOS) if out.size != target else out
     except Exception:
         return None
 
 
+def _edge_mask(im: "Image.Image", gain: float) -> "Image.Image":
+    """生成柔和的【边缘掩膜】(L 模式)：边缘处≈白(255)、平滑/渐变区≈黑(0)。
+
+    用于把锐化/降噪【分区】：仅在边缘锐化、仅在平滑区降噪——避免 USM 把水彩底颗粒
+    在大片渐变区放大成斑驳色斑。
+    """
+    gray = im.convert("L")
+    edges = gray.filter(ImageFilter.FIND_EDGES)
+    # 轻微膨胀 + 模糊，得到平滑过渡的掩膜，避免硬边
+    edges = edges.filter(ImageFilter.MaxFilter(3)).filter(ImageFilter.GaussianBlur(1.2))
+    g = max(0.5, gain)
+    return edges.point(lambda v: 255 if v * g >= 255 else int(v * g))
+
+
 def _upscale_to(im: "Image.Image", target: tuple[int, int]) -> "Image.Image":
-    """把图升到目标像素：优先 ESRGAN，否则 Lanczos + 轻度 USM 锐化（弥补插值发虚）。"""
-    out = None
-    if IMAGE_UPSCALE_METHOD.lower() == "esrgan":
+    """把图升到目标像素：优先 Real-ESRGAN（高质量，无需 USM）；不可用则
+    Lanczos + 【弱化·边缘限定】USM + 平滑区轻度降噪（治色斑/磕碎感）。
+
+    可调参数见 config：IMAGE_USM_*（弱化的 USM）、IMAGE_USM_EDGE_ONLY（仅边缘锐化）、
+    IMAGE_FLAT_DENOISE（平滑区降噪）。把 IMAGE_UPSCALE_METHOD=lanczos 可跳过 ESRGAN 探测。
+    """
+    method = (IMAGE_UPSCALE_METHOD or "").lower()
+    # 默认（非显式 lanczos）都先探测 Real-ESRGAN；探到即用，自带细节恢复、无需 USM。
+    if method != "lanczos":
         out = _upscale_esrgan(im, target)
-    if out is None:
-        out = im.resize(target, Image.LANCZOS)
-        if IMAGE_PRINT_UNSHARP:
-            # 放大后轻锐化：恢复边缘清晰、不发虚（印刷无模糊）。
-            # 2026-06-08（L4 反馈"过锐/碎纹理"）：下调强度，radius 1.6→1.2 / percent 80→45 / threshold 2→3，
-            # 只补回插值发虚，避免过锐化光晕与高频伪影。
-            out = out.filter(ImageFilter.UnsharpMask(radius=1.2, percent=45, threshold=3))
+        if out is not None:
+            return out
+
+    out = im.resize(target, Image.LANCZOS)
+    if not IMAGE_PRINT_UNSHARP:
+        return out
+
+    # 弱化版 USM：旧式 percent=45/threshold=3 会把渐变区颗粒放大成色斑；
+    # 这里降到 percent≈22/threshold≈6，并默认【仅作用于边缘】。
+    sharp = out.filter(ImageFilter.UnsharpMask(
+        radius=IMAGE_USM_RADIUS, percent=IMAGE_USM_PERCENT, threshold=IMAGE_USM_THRESHOLD))
+
+    if IMAGE_USM_EDGE_ONLY:
+        mask = _edge_mask(out, IMAGE_USM_EDGE_GAIN)
+        # 边缘用锐化结果、平滑区保留未锐化原图 → 平滑区不再被放大成色斑
+        out = Image.composite(sharp, out, mask)
+        if IMAGE_FLAT_DENOISE:
+            # 仅平滑区(非边缘)做极轻高斯降噪，抹掉斑驳色斑/磕碎感、保留均匀细纸纹
+            from PIL import ImageChops
+            flat_mask = ImageChops.invert(mask)
+            denoised = out.filter(ImageFilter.GaussianBlur(IMAGE_FLAT_DENOISE_RADIUS))
+            out = Image.composite(denoised, out, flat_mask)
+    else:
+        out = sharp
     return out
 
 
@@ -566,6 +636,9 @@ def generate_image(
         "size": img_size,
         "n": 1,
     }
+    # 清晰度参数（用户拍板 2026-06-09）：gpt-image 支持 quality=high，此前漏设导致画面偏软。
+    if IMAGE_QUALITY:
+        payload["quality"] = IMAGE_QUALITY
     if ref_url:
         payload["image"] = ref_url
 
@@ -591,7 +664,11 @@ def generate_image(
             msg = str(e).lower()
             is_rate = ("429" in msg or "rate" in msg or "limit" in msg
                        or "too many" in msg or "quota" in msg)
-            base = 12 if is_rate else 3       # 限流退避更久
+            # 连接闪断/代理/超时/任务超时：也给更久退避（供应商反馈 gpt-image-2 偶发）
+            is_conn = ("timed out" in msg or "timeout" in msg or "proxy" in msg
+                       or "reset" in msg or "closed connection" in msg
+                       or "max retries" in msg or "connection" in msg)
+            base = 12 if (is_rate or is_conn) else 3
             time.sleep(base * (attempt + 1) + _rnd.uniform(0, 3))
 
     raise RuntimeError(f"gpt-image-2 生图失败（已重试）: {last_err}")
@@ -725,7 +802,10 @@ def generate_image_jimeng(
                 break
             msg = str(e).lower()
             is_rate = ("429" in msg or "rate" in msg or "limit" in msg or "quota" in msg)
-            time.sleep((12 if is_rate else 3) * (attempt + 1) + _rnd.uniform(0, 3))
+            is_conn = ("timed out" in msg or "timeout" in msg or "proxy" in msg
+                       or "reset" in msg or "closed connection" in msg
+                       or "max retries" in msg or "connection" in msg)
+            time.sleep((12 if (is_rate or is_conn) else 3) * (attempt + 1) + _rnd.uniform(0, 3))
     raise RuntimeError(f"即梦(Ark)生图失败（已重试）: {last_err}")
 
 
@@ -751,12 +831,14 @@ def _loads_review_json(raw: str) -> dict | None:
 
 
 def _review_image(image_path: Path, *, page_text: str = "", scene_cn: str = "",
+                  story_lock: str = "",
                   cast_names: Iterable[str] = (), ip_age: int | None = None) -> dict:
     """GPT 视觉自审（用户拍板 2026-06-08）：看即梦出的图，只判定"有没有硬伤"。
 
     返回 {"ok": bool, "issues": [str], "fix": str}。审核失败/不可用时返回 ok=True（不强行修图）。
     检查项：① IP 是否统一(同一角色形象一致)；② 明显错误(多指/缺指/畸形肢体/五官错乱)；
-            ③ 图文是否匹配(画面是否忠实本页文字，不该出现文中没有的东西)；④ 是否分身(同一角色出现多次)。
+            ③ 图文是否匹配(画面是否忠实本页文字，不该出现文中没有的东西)；④ 是否分身(同一角色出现多次)；
+            ⑦【剧情/场景匹配】画面是否画对本页规定的关键道具/动作/场景、是否讲对本页故事（2026-06-10 新增）。
     """
     if not IMAGE_SELF_REVIEW:
         return {"ok": True, "issues": [], "fix": ""}
@@ -770,14 +852,35 @@ def _review_image(image_path: Path, *, page_text: str = "", scene_cn: str = "",
         usr_text = (
             f"本页应出现的角色：{names}" + (f"（年龄约 {ip_age} 岁）" if ip_age else "") + "。\n"
             f"本页英文文字：{(page_text or '').strip()[:400]}\n"
-            f"本页画面意图(中文)：{(scene_cn or '').strip()[:400]}\n"
-            "判定下面四类硬伤，任一存在则 ok=false 并在 issues 写明、在 fix 给一句定向修图指令"
+            f"本页画面意图(中文·必须画对)：{(scene_cn or '').strip()[:500]}\n"
+            + (f"本页【关键动作/道具/场景·必演锁】：{(story_lock or '').strip()[:400]}\n" if story_lock else "")
+            + "判定下面几类硬伤，任一存在则 ok=false 并在 issues 写明、在 fix 给一句定向修图指令"
             "（只修该处，不要重画风格）：\n"
-            "① 同一角色形象前后不一致 / IP 不统一；\n"
+            "① 同一角色形象前后不一致 / IP 不统一（含【配色错】：Mia 上衣必须是紫色系，若画成黄/绿/其他色＝错；"
+            "Tommy 上衣必须是蓝色系）；\n"
             "② 明显解剖错误：多指/少指、畸形手脚、五官错乱、肢体扭曲；\n"
             "③ 图文不匹配：画面出现文字里没有的关键物/人，或漏掉文字的关键动作（如文字说狗丢了却画出狗）；\n"
-            "④ 分身：同一个角色在画面里出现两次以上（两个 Mia/两个 Tommy/复制人）；\n"
-            "⑤ 家具/物件比例明显失真：桌椅床门相对孩子身高过大或过小（孩子像小人国或像巨人）。\n"
+            "④ 分身/超员：同一个角色出现两次以上（两个 Mia/两个 Tommy/复制人）；"
+            "或画面里的【儿童】超过本页应出场名单——本系列主角只有 Mia(女孩) 与 Tommy(男孩) 两个孩子，"
+            "正常一页里女孩最多 1 个(Mia)、男孩最多 1 个(Tommy)，若出现第 2 个男孩或第 2 个女孩、"
+            "或冒出名单之外的陌生小孩，都属于多余角色/分身，必须删掉多余的那个；\n"
+            "⑤ 家具/物件比例明显失真：桌椅床门相对孩子身高过大或过小（孩子像小人国或像巨人）；\n"
+            "⑥ 角色年龄/身高错位：主角 Mia/Tommy 应是同龄、身高相近的儿童"
+            + (f"（约 {ip_age} 岁）" if ip_age else "")
+            + "，不能一个画成幼儿、一个画成青少年或成年人；"
+            "若画面里有爸爸/妈妈，必须是成熟成年人（绝不能画成小孩或青少年/teenager），"
+            "若有爷爷/奶奶必须是白发老人；成年人身高必须明显高于孩子，绝不能大人小孩同高同龄。\n"
+            "⑦【剧情/场景匹配·重点】对照上面的【本页画面意图】与【关键动作/道具/场景·必演锁】判断："
+            "画面是否真的把本页规定的【关键动作/道具/场景】画了出来、讲对了本页故事，且主角是【亲手参与的实施者】？"
+            "若出现下列任一即 ok=false：(a) 主角只是在空旷或与本页无关的室内/背景里单纯站立、并排摆拍或闲聊，"
+            "缺少本页规定的关键道具/动作/场景；(b) 画面跳题或漏掉本页关键情节/关键道具（如本页应出现展柜/书架/垃圾/扫帚/狗/手机照片等却没有）；"
+            "(c) 非虚构主题页缺少该主题的标志性道具/场景，退化成空泛无主题室内；"
+            "(d) 主角 Mia/Tommy 被晾在画面边缘/远景当背景路人，完全脱离本页这件事，既没有专注参与本页这一刻、"
+            "也没有与本页关键道具/场景发生任何关联（本系列要求双主角作为故事主角全程在场、专注参与本页活动；"
+            "但要贴合本页实际——本页本就是观看/参观/听讲性质时，主角专注地看、俯身细看或指认眼前事物也算参与，"
+            "不必硬做“亲手操作”，更不要因为“没动手”就误判为硬伤）；"
+            "(e) 画面里出现了与本页剧情无关、本页文字也没点名的【多余陌生路人/围观人群/凑数配角】（默认画面就只有 Mia 和 Tommy；除非本页确需 1 位必要的成年人/具名角色，否则多出来的陌生人都应删掉）；"
+            "fix 里要具体点明【缺了什么关键道具/动作/场景、主角该怎样亲手参与、要删掉哪些多余路人、应补成什么样】。\n"
             "若以上都没有，输出 {\"ok\": true, \"issues\": [], \"fix\": \"\"}。"
         )
         data_uri = _encode_image_b64(image_path)
@@ -802,18 +905,36 @@ def _review_image(image_path: Path, *, page_text: str = "", scene_cn: str = "",
         return {"ok": True, "issues": [], "fix": ""}
 
 
-def _fix_prompt(issues: list[str], fix: str) -> str:
-    """定向修图（图生图）prompt：只修审出的硬伤，完全保留即梦的构图/画风/身份/内容。"""
+def _fix_prompt(issues: list[str], fix: str, cast_lock: list[str] | None = None) -> str:
+    """定向修图（图生图）prompt：只修审出的硬伤，完全保留即梦的构图/画风/身份/内容。
+
+    cast_lock：本页出场角色的【精确 IP 锁】（服装颜色/发型，按本书年龄）。因 gpt-image-2 修图
+    只吃 1 张参考（草图），补人/改色全靠文字 → 必须把精确锁写死，杜绝补出藏青上衣/黑发路人。
+    """
     issue_txt = "；".join(str(i) for i in issues if i) or fix
-    return (
+    lock_block = ""
+    if cast_lock:
+        lock_block = (
+            "⑥【本页角色精确 IP 锁·按此还原，补人或改色都必须严格照此画】：\n"
+            + "\n".join(f"   - {d}" for d in cast_lock if d) + "\n"
+            "   关键：Tommy 上衣是【浅天蓝 pale sky-blue #5FA8D6~#8EC0ED】绝不是深蓝/藏青 navy/polo/牛仔；Tommy 是【棕色蓬乱短发】不是黑发长发；"
+            "Mia 是【紫色长袖卫衣】+【后脑中高位马尾、用紫色发圈束发、中长波浪辫垂至肩/上背(绝不丸子头/发髻/half-up/颅顶超高马尾)】；严格对齐上面每个角色的服装与发型。\n"
+        )
+    else:
+        lock_block = "⑥ Mia 上衣保持紫色、Tommy 上衣保持【浅蓝(不是藏青/深蓝)】；主角 Mia/Tommy 是同龄、身高相近的儿童；\n"
+    out = (
         "【图生图·定向修瑕】所附参考图是本页最终画面，整体画风/构图/人物身份/场景内容【全部保留、不要重画】。"
         "仅修正以下被指出的硬伤，改动范围尽量小：\n"
         f"- 需修正：{issue_txt}\n"
         + (f"- 修图指令：{fix}\n" if fix else "")
-        + "硬约束：① 不改变画风（保持即梦原画的治愈水彩观感与色调）；② 不改人物长相/身份、不新增或删减角色；"
+        + "硬约束：① 不改变画风（保持即梦原画的治愈水彩观感与色调）；② 不改人物长相/身份、不新增或删减角色（除非上面明确要求补出缺失角色）；"
         "③ 同一角色只能出现一次（若有分身请删掉多余的那个）；④ 每只手 5 指、肢体五官自然；"
-        "⑤ 保持原构图与镜头不变。"
+        "⑤ 保持原构图与镜头不变；⑦【全图无文字锁】不要新增/保留任何可辨认文字、字母、单词、数字、书名、标题、招牌字样、水印（如原画有英文招牌/横幅文字，请改成无文字的抽象图案色块）；\n"
+        + lock_block
+        + "若画面有爸爸/妈妈须是明显高于孩子的成熟成年人（不是青少年），爷爷/奶奶须是白发老人。"
     )
+    # 与正向 prompt 同一截断/精简策略：去重精简、超软上限告警（防下游 4000 截断）。
+    return _enforce_prompt_budget(out, label="定向修图")
 
 
 def _self_review_and_fix(dest: Path, *, prompt: str, review_meta: dict | None,
@@ -833,6 +954,7 @@ def _self_review_and_fix(dest: Path, *, prompt: str, review_meta: dict | None,
             dest,
             page_text=meta.get("page_text", ""),
             scene_cn=meta.get("scene_cn", "") or prompt,
+            story_lock=meta.get("story_lock", ""),
             cast_names=meta.get("cast_names", ()),
             ip_age=meta.get("ip_age"),
         )
@@ -847,7 +969,7 @@ def _self_review_and_fix(dest: Path, *, prompt: str, review_meta: dict | None,
         return dest
     issues = verdict.get("issues") or []
     fix = verdict.get("fix") or ""
-    print(f"[review] {label} 审出问题 → 定向修图：{issues}")
+    print(f"[review] {label} 审出问题 -> 定向修图：{issues}")
     draft = dest.with_name(dest.stem + "_draft.png")
     try:
         dest.replace(draft)  # 原图留作图生图参考与回退
@@ -861,7 +983,7 @@ def _self_review_and_fix(dest: Path, *, prompt: str, review_meta: dict | None,
             postprocess_4k(dest)
         return dest
     try:
-        generate_image(prompt=_fix_prompt(issues, fix), dest=dest,
+        generate_image(prompt=_fix_prompt(issues, fix, meta.get("cast_lock")), dest=dest,
                        reference_url=draft_url, mock=False,
                        label=f"{label} 定向修图", deliver_print=deliver_print)
         return dest
@@ -911,6 +1033,72 @@ def generate_image_two_stage(
                               mock=False, label=label, deliver_print=deliver_print)
 
 
+def _jimeng_restyle_prompt(orig_prompt: str) -> str:
+    """即梦【只换画风·不改内容】图生图 prompt：保留 gpt 底图的全部内容，只重绘成治愈水彩。"""
+    return (
+        "【图生图 · 只换画风，绝不改内容】所附参考图是本页【最终内容稿】：人物数量、每个人的身份/长相/"
+        "发型/服装与配色、站位构图、动作姿势、视线、场景与道具——全部 1:1 保留，"
+        "绝不增删或复制任何人物（尤其绝不多出小孩）、绝不改人数、绝不改任何人的身份/年龄/身高/衣服颜色/位置。"
+        "你唯一要做的是把它【重绘成治愈系儿童绘本水彩画风】："
+        "通透柔和的水彩晕染、暖米低饱和主调 + 柔和莫兰迪点缀、明亮柔光、阴影浅淡干净、"
+        "精致清晰的细墨线、前中后景空间层次与景深、画面干净细腻高级，像高品质精印实体绘本内页；"
+        "不要塑料 3D 感、不要厚重油画、不要强烈硬光影。"
+    )
+
+
+def generate_image_gpt_base_jimeng_style(
+    *,
+    prompt: str,
+    dest: Path,
+    references: Iterable[Path | str] = (),
+    mock: bool = False,
+    label: str = "",
+    deliver_print: bool | None = None,
+    review_meta: dict | None = None,
+) -> Path:
+    """L0-2 新流程（用户拍板 2026-06-08）：
+       ① gpt-image-2 出底图（内容/人物/构图遵循度高，按参考图锁 IP，少多人/乱入）；
+       ② 即梦(Seedream) 图生图【只换皮】→ 把底图重绘成治愈水彩（保留构图/人物/数量/身份/动作）；
+       ③ GPT 视觉自审 → 仅硬伤定向修图。
+    任一段失败都优雅回退，绝不阻断出图。"""
+    dest = Path(dest)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    do_print = IMAGE_DELIVER_PRINT if deliver_print is None else deliver_print
+    if mock or not ARK_API_KEY:
+        # 无 Ark：退回纯 gpt-image-2（mock 也由它处理占位图）
+        return generate_image(prompt=prompt, dest=dest, references=references,
+                              mock=mock, label=label, deliver_print=deliver_print)
+    # ① gpt-image-2 底图（内容主导）
+    gpt_base = dest.with_name(dest.stem + "_gptbase.png")
+    try:
+        generate_image(prompt=prompt, dest=gpt_base, references=references,
+                       mock=False, label=f"{label} gpt底图", deliver_print=False)
+    except Exception as e:  # noqa: BLE001
+        print(f"[gpt->即梦] gpt底图失败，回退即梦直出：{e}")
+        return generate_image_two_stage(prompt=prompt, dest=dest, references=references,
+                                        mock=False, label=label, deliver_print=deliver_print,
+                                        review_meta=review_meta)
+    # ② 即梦换皮（img2img，参考=gpt底图，只改画风）
+    try:
+        generate_image_jimeng(prompt=_jimeng_restyle_prompt(prompt), dest=dest,
+                              references=[gpt_base], mock=False,
+                              label=f"{label} 即梦换皮", deliver_print=False)
+    except Exception as e:  # noqa: BLE001
+        print(f"[gpt->即梦] 即梦换皮失败，用 gpt 底图交付：{e}")
+        try:
+            gpt_base.replace(dest)
+        except Exception:
+            # replace 失败（跨盘/占用）→ 字节级拷贝兜底，绝不让自审拿到半成品/旧图
+            try:
+                dest.write_bytes(gpt_base.read_bytes())
+            except Exception as e2:  # noqa: BLE001
+                print(f"[gpt->即梦] gpt 底图回退也失败，跳过自审直接交付底图：{e2}")
+                return gpt_base if gpt_base.exists() else dest
+    # ③ GPT 视觉自审（共用 helper）
+    return _self_review_and_fix(dest, prompt=prompt, review_meta=review_meta,
+                                label=label, deliver_print=deliver_print, do_print=do_print)
+
+
 def generate_image_for_level(
     level: str,
     *,
@@ -922,15 +1110,27 @@ def generate_image_for_level(
     deliver_print: bool | None = None,
     review_meta: dict | None = None,
 ) -> Path:
-    """按 level 选出图后端：L0-2 即梦全程出图+GPT自审定向修图，L3-6 单段(gpt-image-2)。"""
+    """按 level 选出图后端：L0-2 双段（gpt底图→即梦换皮 或 即梦直出→GPT修），L3-6 单段(gpt-image-2)。"""
     backend = resolve_image_backend(level)
     if backend == "jimeng_refine":
+        if L02_PIPELINE == "gpt_then_jimeng":
+            return generate_image_gpt_base_jimeng_style(
+                prompt=prompt, dest=dest, references=references,
+                mock=mock, label=label, deliver_print=deliver_print, review_meta=review_meta)
         return generate_image_two_stage(prompt=prompt, dest=dest, references=references,
                                         mock=mock, label=label, deliver_print=deliver_print,
                                         review_meta=review_meta)
     # L3-6：纯 gpt-image-2 出图 → GPT 视觉自审 → 仅有硬伤才定向修图（块3·扩到全级别）
+    # 用户拍板 2026-06-08：L3-6 走 GPT 时，画风英文指令【首尾双置】（治色斑/碎纹理）。
+    #   - 前置：最高优先级前缀；- 末尾：简短回声。
+    # 因 generate_image 内部会把 prompt 截到 4000 字符（会切掉末尾），这里预留尾部空间后再拼，
+    # 保证截断后画风回声仍稳稳落在文末。
     do_print = IMAGE_DELIVER_PRINT if deliver_print is None else deliver_print
-    generate_image(prompt=prompt, dest=dest, references=references,
+    _MAX_PROMPT = 4000  # 与 generate_image 内 safe_prompt[:4000] 对齐
+    _head_body = GPT_CLEAN_STYLE_DIRECTIVE + prompt
+    _reserve = max(0, _MAX_PROMPT - len(GPT_CLEAN_STYLE_ECHO))
+    gpt_prompt = _head_body[:_reserve].rstrip() + GPT_CLEAN_STYLE_ECHO
+    generate_image(prompt=gpt_prompt, dest=dest, references=references,
                    mock=mock, label=label, deliver_print=False)
     if mock or not IMAGE_SELF_REVIEW:
         if do_print and not mock:

@@ -487,8 +487,8 @@ def _fill_difficulty(row, outline: BookOutline) -> None:
     # - L3-L6 = "Fiction" / "Non-Fiction"（取 outline.fiction_type 或 outline.reader_type）
     reader_type = _default_reader_type(outline)
 
-    # v2.0：按官方 L5-1 实测样本，词汇难度只显示短码（A2/B1），不带 "CEFR" 前缀和 Lexile
-    vocab_code = _default_cefr_short_code(outline)
+    # 篇章难度（用户拍板 2026-06-09）：标签用「篇章难度」，值带 CEFR 前缀（如 "CEFR A2"）
+    passage_cefr = _default_cefr_text(outline)
 
     lp = _lp(outline)
     diff_pt = lp.get("diff", DIFF_PT)
@@ -498,7 +498,7 @@ def _fill_difficulty(row, outline: BookOutline) -> None:
     pairs = [
         ("类型：", reader_type),
         ("阅读字数：", str(outline.total_words or "—")),
-        ("词汇难度：", vocab_code),
+        ("篇章难度：", passage_cefr),
         ("语法难度：", lp.get("grammar") or _normalize_grammar_cn(outline.grammar_focus) or "—"),
     ]
     for i, (label, value) in enumerate(pairs):
@@ -511,6 +511,9 @@ def _fill_difficulty(row, outline: BookOutline) -> None:
         _bind_run(r_lbl, FONT_EN, FONT_CN, size_pt=diff_pt, bold=True)
         r_val = p.add_run(value)
         _bind_run(r_val, FONT_EN, FONT_CN, size_pt=diff_pt, bold=False)
+        if label == "语法难度：":
+            # 语法难度的值显式取消加粗（否则会继承样式默认粗体）
+            r_val.font.bold = False
 
 
 def _fill_vocab(row, outline: BookOutline) -> None:
@@ -1057,14 +1060,16 @@ def _concise_affix(text: str) -> str:
     rules = [r.strip() for r in _re.split(r"\s*[;；]\s*|\s+/\s+", (text or "").strip()) if r.strip()]
     out: list[str] = []
     for r in rules:
-        r = r.replace('"', "").replace("'", "").strip().rstrip("；;").strip()
+        # 注意：自然拼读(phonics)需保留英文直双引号（如 long vowel "ea" as in "health"），
+        # 只在构词法分支里去掉词缀外层引号；这里仅去掉单引号。
+        r = r.replace("'", "").strip().rstrip("；;").strip()
         if not r:
             continue
 
         # 构词法分支：含 "(= 含义)" → 规整成 'head (= 含义): ex1, ex2'（最多 2 例）
         m_mean = _re.search(r"\(=\s*(.*?)\)", r)
         if m_mean:
-            head = r[:m_mean.start()].strip()
+            head = r[:m_mean.start()].replace('"', "").strip()
             meaning = m_mean.group(1).strip()
             rest = r[m_mean.end():].strip()
 

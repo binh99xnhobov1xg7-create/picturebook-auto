@@ -67,7 +67,7 @@ def list_by_kind() -> dict[str, list[IPEntry]]:
 # ---------- 角色名 → IP key 自动匹配（用于"主角识别"）----------
 _NAME_ALIAS: dict[str, str] = {
     # 主角
-    "mia": "mia", "tommy": "tommy", "anna": "anna",
+    "mia": "mia", "tommy": "tommy", "anna": "anna", "bob": "dad",
     # 朋友
     "ali": "ali", "cate": "cate",
     # 家人
@@ -78,7 +78,7 @@ _NAME_ALIAS: dict[str, str] = {
     # 老师 / 宠物
     "teacher": "teacher", "ms. kim": "teacher", "mrs. kim": "teacher", "kim": "teacher",
     "cat": "cat", "kitty": "cat", "kitten": "cat",
-    "max": "max", "the dog": "max", "puppy": "max", "doggy": "max",
+    "max": "max",
     "dino": "dino",
 }
 
@@ -132,7 +132,8 @@ def resolve_generic_role(role: str, age: int) -> IPEntry | None:
         "woman": "mom", "man": "dad",
         "old woman": "grandma", "old man": "grandpa",
         "cat": "cat", "kitty": "cat", "kitten": "cat",
-        "dog": "max", "puppy": "max", "doggy": "max",
+        # 狗默认不再映射 Max（家养柯基 Max 仅在正文显式点名 "Max" 时出现）；
+        #   泛指 "a dog / puppy" 视为剧情狗，由 book_cast 走独立犬种锁，避免误画成 Max。
     }
     base = default_map.get(r)
     if not base:

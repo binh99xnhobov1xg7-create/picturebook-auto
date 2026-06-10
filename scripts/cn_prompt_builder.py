@@ -35,6 +35,8 @@ from character_registry import (
 from config import (
     CHARACTERS_DIR,
     STYLE_DIR,
+    CONCISE_PROMPT as _CONCISE_PROMPT,
+    enforce_prompt_budget as _enforce_prompt_budget,
     composition_prompt_cn,
     composition_negative_cn,
     smoothness_prompt_cn,
@@ -67,7 +69,7 @@ STYLE_CN = (
     "颜色均匀简洁干净、整体明亮清透温暖耐看，颜色清晰可辨（不发灰惨白、也不刺眼高饱和）。"
     "【光线】明亮柔和的自然光，方向统一，做克制而细腻的明暗塑形带出体积与层次（轻盈不厚重）；阴影浅淡干净、绝不压暗。"
     "【背景】极简整洁、适度留白、清爽不杂乱：空墙面只留少量精简点缀，主体人物干净突出、边缘清晰、平涂干净。"
-    "人物面部干净简洁（柔和线条平涂），大眼睛+淡淡腮红+小鼻子，五官清爽精致"
+    "人物面部干净简洁（柔和线条平涂），柔和大眼睛+小鼻子，脸颊干净光洁、至多极淡的一点点脸颊红润（绝不要明显腮红/红脸蛋/圆形红晕色斑），五官清爽精致"
     "（主角相貌一律以角色定妆参考图为准；配角/路人可为多元族裔、体现国际化）。"
     "拒绝：浑浊脏色、过暗压抑、斑驳破碎/拼贴补丁感、噪点颗粒色斑、可见笔触/纸张纹理颗粒、Q版贴纸、"
     "厚重立体的3D塑料渲染、油画厚涂、强烈明暗体积塑形、写实光影、塑料磨皮感、照片写实质感、AI脏噪乱纹、打印模糊发糊。"
@@ -76,8 +78,10 @@ STYLE_CN = (
     "纤细克制的描边为辅；不要自由发挥、不要改变既定画风与配色、不要增添多余杂乱装饰、不要添加噪点颗粒与碎纹理。"
     "【高明度·明亮通透·绝不暗沉】整体高调明亮(high-key)、画面通透干净、像沐浴在柔和日光里；"
     "阴影极浅淡干净、绝无硬阴影/重阴影/暗角；严禁发暗、压暗、阴沉、灰暗、夜景、暖光过浓发黄、整体偏暗调。"
-    "【构图·预留文字留白】主体人物明显偏置一侧(绝不铺满整幅、不要居中堵满)，画面另一侧预留约 20-25% 干净的浅色留白区域"
-    "(如天空、空墙面或地面)，背景极简整洁、便于后期叠放文字而不遮挡主体与关键信息，留白处不放人物与关键道具。"
+    "【构图·必须预留干净文字留白】主体人物明显偏置一侧(绝不铺满整幅、不要居中堵满)，画面另一侧(或顶部)必须预留"
+    "【至少 20%、最好 20-25% 的一整块连续、彻底干净的浅色留白区域】(如天空、空墙面或地面)，"
+    "这块留白区必须完全空净——绝对不能有任何物体伸入或遮挡：不许有树枝/枝叶/花草/云朵图案/道具/人物/手脚/建筑/家具的任何一部分探进这块区域，"
+    "保证后期能在此整块叠放文字而不遮挡任何画面元素；背景极简整洁。"
     "【人物一致·只改表情动作】画面中出现的既有角色（Mia/Tommy/Anna 等）其发型、脸型、五官、肤色、"
     "服装款式与配色必须与其定妆参考图完全一致；本页仅改变其表情与肢体动作以贴合剧情，"
     "严禁改动长相、发型、服装与配色，严禁凭空新增或减少角色。"
@@ -95,7 +99,9 @@ _ENV_HINTS: list[tuple[str, str]] = [
     (r"playground|outside|park|yard",
      "户外环境：柔和的浅绿草地、一两棵舒展的树、淡蓝天空与几朵白云、暖阳柔光，"
      "背景自然清新、极简整洁、不杂乱"),
-    (r"home|house|bedroom|kitchen",
+    # home/house 加词界（修"homework/warehouse"等子串误触发）；再排除体育语境
+    #   home team/home game/home run… 避免足球等户外页被塞家庭布景（Book57）。
+    (r"\bhome\b(?!\s+(?:team|game|run|base|side|ground|field|crowd|stadium|win))|\bhouse\b|bedroom|kitchen",
      "家庭环境（温馨现代居家）：暖米白墙面、少量浅色家具、窗台绿植、单侧窗柔光，"
      "干净的浅色地面、少量温馨家居小物，背景极简整洁、适度留白"),
     (r"library|book",
@@ -115,8 +121,8 @@ def _detect_environment(text: str) -> str:
 # v3.3 镜头景别（用户拍板：主角是画面视觉中心，占画面 50-60%，背景 40-50%）
 COMPOSITION_CN: dict[str, str] = {
     "close":  "中近景半身，主角胸部以上占画面 55-65%、明显偏置一侧，清晰饱满，另一侧留出排文字空间，背景有清晰可辨的环境元素",
-    "medium": "中景，主角七分身或全身占画面 45-55% 高度、偏置画面一侧为视觉焦点，另一侧留约 20-25% 排文字空间，背景环境占 40-50%、细节清晰",
-    "full":   "全身中景，主角从头到脚完整可见、占画面 45-55% 高度、偏置一侧，另一侧留出环境与排文字空间",
+    "medium": "中景，主角七分身或全身占画面 55-65% 高度、偏置画面一侧为视觉焦点（画得清晰饱满、不要缩小），仅在另一侧留约 20-25% 排文字空间，其余由环境充实饱满地填满、细节清晰",
+    "full":   "全身中景，主角从头到脚完整可见、占画面 55-65% 高度、偏置一侧（画得饱满、不空旷），仅留约 20-25% 排文字空间，其余由环境充实填满",
     "wide":   "远景，主角占画面 35-45%（仍是视觉焦点），环境（教室全景、走廊、建筑、地标）占其余画面",
 }
 DEFAULT_SHOT = "medium"  # 中景为默认（主角 50-60%）
@@ -133,9 +139,89 @@ CAMERA_ANGLE_CN: dict[str, str] = {
 DEFAULT_ANGLE = "eye"
 
 
+# ============================================================
+#  SOP 第7/二.5 条：情绪 → 固定面部细节词表（强制·禁抽象情绪词）
+#  原文逐字固化：Happy/Excited/Focused/Peaceful/Curious/Sad 六类；
+#  其余近义情绪词归并到最接近的一类（找不到则省略，交回 scene_cn 的具体描述）。
+# ============================================================
+SOP_EMOTION_FACE_CN: dict[str, str] = {
+    "happy":    "嘴角上扬，眼眸明亮，眼角微弯，面带柔和笑意",
+    "excited":  "眉毛微扬，眼睛睁大明亮，嘴角自然扬起",
+    "focused":  "眉头轻收，眼神沉静向下凝视，神情专注安静",
+    "peaceful": "眉眼放松舒展，嘴角平缓微扬，神态宁静安然",
+    "curious":  "头部微侧，眼睛睁大带好奇，眉毛轻抬",
+    "sad":      "嘴角微下垂，眼神柔和略沉静，眉头轻蹙",
+}
+# 近义情绪 → 六类归并（中英文都覆盖；只做保守映射，命中不了就留空）。
+_EMOTION_ALIASES: list[tuple[str, str]] = [
+    (r"happy|joy|joyful|glad|cheer|delight|smil|content|pleased|高兴|开心|快乐|愉快|欢喜|笑", "happy"),
+    (r"excit|eager|thrill|amazed|astonish|wow|surpris|惊喜|兴奋|激动|期待|惊讶|雀跃", "excited"),
+    (r"focus|concentrat|serious|think|determin|attentive|careful|专注|认真|思考|凝神|聚精会神|沉思", "focused"),
+    (r"peace|calm|relax|gentle|serene|cozy|warm|safe|平静|安宁|放松|平和|安心|温馨|惬意", "peaceful"),
+    (r"curious|wonder|interest|intrigu|puzzl|question|好奇|疑惑|纳闷|好奇心|探究", "curious"),
+    (r"sad|worri|nervous|upset|scare|afraid|fear|anxious|shy|lonely|disappoint|难过|伤心|担心|紧张|害怕|焦虑|失落|沮丧|害羞|孤单", "sad"),
+]
+
+
+def _normalize_emotion(raw: str) -> str:
+    """把任意情绪词（中/英、单词或短语）归并到 SOP 六类之一；归并不到返回空串。"""
+    s = (raw or "").strip().lower()
+    if not s:
+        return ""
+    if s in SOP_EMOTION_FACE_CN:
+        return s
+    for pat, cat in _EMOTION_ALIASES:
+        if _re.search(pat, s):
+            return cat
+    return ""
+
+
+def _emotion_face_cn(raw: str) -> str:
+    """情绪词 → SOP 固定面部细节描述（命中六类才返回，否则空串）。"""
+    cat = _normalize_emotion(raw)
+    return SOP_EMOTION_FACE_CN.get(cat, "")
+
+
 def _angle_phrase(angle: str) -> str:
     a = (angle or "").strip().lower()
     return CAMERA_ANGLE_CN.get(a, "")
+
+
+_VALID_SHOTS = ("close", "medium", "full", "wide")
+# 为打破"连续4页同景别"准备的替补轮转（SOP 第4/二.3 条：任意连续4页≥2种景别）。
+_SHOT_ALTERNATES = ("wide", "close", "full", "medium")
+
+
+def _ensure_shot_variety(outline: BookOutline) -> None:
+    """SOP 第4条：任意连续 4 页内至少出现 2 种不同景别。
+
+    等价条件 = 不允许任何【连续 4 页景别完全相同】。本函数只在检测到 4 连同景别时，
+    把窗口末页换成一个不同的合法景别（情绪关键页的 CU/ECU 由 AI 在 shot 里另行指定，
+    这里不动非默认的显式景别选择以外的语义）。幂等：用 outline 上的标记位防重复执行。
+    """
+    if getattr(outline, "_shot_variety_done", False):
+        return
+    try:
+        story = [p for p in outline.pages
+                 if getattr(p, "page_type", "") != "cover" and getattr(p, "index", 0) >= 1]
+        # 归一化非法/空景别为默认 medium（与 build 主流程一致）。
+        for p in story:
+            s = (getattr(p, "shot", "") or "").strip().lower()
+            if s not in _VALID_SHOTS:
+                p.shot = DEFAULT_SHOT
+        # 扫描每个 4 连窗口：若四页景别完全相同，把末页换成第一个不同的合法景别。
+        for i in range(3, len(story)):
+            window = [story[j].shot for j in range(i - 3, i + 1)]
+            if len(set(window)) == 1:
+                same = window[0]
+                repl = next((a for a in _SHOT_ALTERNATES if a != same), "wide")
+                story[i].shot = repl
+    except Exception:
+        pass
+    try:
+        setattr(outline, "_shot_variety_done", True)
+    except Exception:
+        pass
 
 
 def _resolve_camera_angle(page: PageSpec, outline: BookOutline) -> str:
@@ -154,13 +240,6 @@ def _resolve_camera_angle(page: PageSpec, outline: BookOutline) -> str:
         return "eye"
     return a
 
-# 留白位置（中文）
-BLANK_CN: dict[int, str] = {
-    0: "右上角预留 15% 干净空白用于配文字",  # cover
-    # 故事页：左下/右下交替
-}
-
-
 def _blank_text(page_index: int) -> str:
     """根据页码返回文字留白说明（对齐官方 SOP）。
 
@@ -169,17 +248,23 @@ def _blank_text(page_index: int) -> str:
     该区域保留场景真实色彩与纹理，只是没有主角/关键道具，方便后期排文字。
     """
     if page_index == 0:
-        return ("利用场景顶部约 30% 的原生空旷区域（天空 / 明亮的天花板 / 大片墙面等，"
-                "保留真实色彩与纹理、其上无人物与关键道具）作为书名的文字留白，"
-                "禁止画任何纯白色块或空白方框")
+        return ("利用场景顶部【约 20-25%（至少 20%）的一整条横带】留出文字区供后期叠加书名；"
+                "这条带【绝不能是纯白/惨白的空色块】，必须是本页场景的自然延续、有色彩有质感（蓝天淡云 / 暖金黄昏 / 柔灰阴雨 / 有肌理的墙面天花板等，"
+                "随场景天气来画、低饱和莫兰迪质感、与下方同一光源自然过渡）；这条带里只禁止【可识别的人物/动物/关键道具/文字，以及杂乱探入的树枝枝叶/招牌建筑】，"
+                "但允许柔和的云、光晕、远处树梢顶端、墙面肌理等低饱和氛围元素；其余画面由主体与环境充实饱满地填满、不空旷；"
+                "作画时这条带里绝对不要画任何文字/字母/书名/标题，也禁止纯白色块或硬边空白方框")
     side = "右侧" if page_index % 2 == 1 else "左侧"
-    return (f"把主体明显偏置到画面另一侧，在画面{side}留出约 20-25% 的连续干净区域用于排文字："
-            f"利用场景原生的空旷区域（如墙面 / 地面 / 天空 / 草地等，"
-            f"保留该处真实场景色彩与纹理、其上无人物与关键道具），确保后期文字不会遮挡主角与关键信息；"
-            "禁止画纯白色块、白色矩形或人工硬边空白")
+    return (f"把主体偏置到画面一侧，在画面{side}（或顶部）留出【约 20-25%（至少 20%）的一整条区域】用于排文字："
+            f"这块区域【绝不能是纯白/惨白的空色块】，要利用场景原生区域并保留真实色彩与质感（墙面 / 地面 / 天空 / 草地等，随本页场景天气自然延续、低饱和莫兰迪质感）；"
+            f"这块区只禁止【可识别的人物/动物/关键道具/文字，以及杂乱探入的树枝枝叶/建筑】，但允许云、光晕、远处树梢顶端、墙面肌理等低饱和氛围元素，让它有质感、不空洞；"
+            f"确保后期文字能整块落入、不遮挡主体；其余画面由主体与环境充实饱满地填满、不空旷；禁止纯白色块、白色矩形或人工硬边空白")
 
 
-FORBID_CN = "画面内不要出现任何文字、字母、数字、水印"
+FORBID_CN = (
+    "【绝对禁止任何文字】画面里绝对不要出现任何文字、字母、单词、英文、汉字、数字、书名、标题、"
+    "印刷字、手写字、标语、字幕、签名、水印或 logo——一个字符都不要画；"
+    "书名/标题一律由后期软件单独叠加，作画时留白处只保留干净的原生背景，绝不画字"
+)
 
 
 # ============================================================
@@ -191,6 +276,13 @@ _GENERIC_ROLE_MAP: list[tuple[str, str]] = [
     # (英文 + 中文匹配模式, registry key)
     (r"\b(?:a |an |the )?girl(?:s)?\b|女孩|小姑娘", "mia"),
     (r"\b(?:a |an |the )?boy(?:s)?\b|男孩|小男孩", "tommy"),
+    # 系列铁律 §4：无名泛指的同辈孩子 sister/brother = 兄妹双主角 Mia/Tommy
+    # （注意：grandmother/grandfather 不含 sister/brother，不会误命中）
+    (r"\b(?:my |a |the )?(?:little |big |older |younger )?sister(?:s)?\b|妹妹|姐姐", "mia"),
+    (r"\b(?:my |a |the )?(?:little |big |older |younger )?brother(?:s)?\b|弟弟|哥哥", "tommy"),
+    # "parents/父母/爸妈" → 同时带出妈妈+爸爸（两条独立规则各按 key 去重命中）
+    (r"\bparents\b|\bmom and dad\b|父母|爸妈", "mom"),
+    (r"\bparents\b|\bmom and dad\b|父母|爸妈", "dad"),
     (r"\b(?:a |an |the )?woman\b|阿姨|女老师", "teacher_kim"),
     (r"\b(?:a |an |the )?cat\b|kitten|猫", "winnie"),
 ]
@@ -342,6 +434,7 @@ def _detect_characters(text: str, ip_age: int) -> list[dict]:
                     "description_cn": desc_cn,
                     "ref_path": ref,
                     "is_generic": False,
+                    "kind": char.get("kind", ""),
                 })
                 found_keys.add(key)
                 break
@@ -368,10 +461,31 @@ def _detect_characters(text: str, ip_age: int) -> list[dict]:
                 "description_cn": desc_cn,
                 "ref_path": ref,
                 "is_generic": True,
+                "kind": char.get("kind", ""),
             })
             found_keys.add(default_key)
 
     return out
+
+
+# ============================================================
+#  Mia 发型铁律（用户拍板 2026-06-10：以官方 Age10 定妆表为准对齐）
+#  Mia = 后脑【中高位】马尾，用【紫色发圈】束发：发髻明显在后脑、位置适中
+#  （不在颅顶正上方、也不在后颈低处）；马尾辫中等长度、略带波浪、垂至肩部/上背。
+#  前面留少量碎发框脸。绝不丸子头/发髻/half-up/披散不扎/颅顶超高马尾。
+# ============================================================
+MIA_HAIR_LOCK = (
+    "棕色头发在后脑束成一根马尾，用一根【紫色发圈】束发：发髻明显在后脑、位置适中——"
+    "【不在颅顶正上方，也不在后颈低处】；马尾辫【中等长度、略带波浪】、自然垂落至【肩部/上背】"
+    "（以定妆表为准，长度明显可见、不是一小撮短穗）；前面留少量碎发框脸；"
+    "绝不是丸子头/发髻/half-up 半扎、绝不大片披散不扎（以参考图为准）"
+)
+MIA_HAIR_NEG = (
+    "禁止丸子头/发髻/top-knot、禁止 half-up 半扎、禁止只扎上层而下半部分头发披散、"
+    "禁止【颅顶/头顶正中的超高马尾】、禁止发髻在头顶正上方、禁止仅 3–5cm 的短马尾穗、"
+    "禁止头发完全散开不扎、禁止大量披散的散发、禁止双马尾/麻花辫、禁止脏辫乱团/头发糊成一团、"
+    "禁止用非紫色的发圈（必须紫色发圈）（允许并必须：后脑中高位马尾 + 紫色发圈 + 垂至肩/上背的中长辫）"
+)
 
 
 # ============================================================
@@ -388,29 +502,23 @@ def _en_to_cn_desc(en_desc: str, key: str, age) -> str:
     age_n = age if isinstance(age, int) else 12
 
     if key == "mia":
-        # Mia: 三档年龄长袖/短袖、紫色，单束马尾必须有
-        outfit = {
-            8:  "薄紫色短袖T恤+浅蓝色阔腿卷边牛仔裤",
-            10: "薄紫色长袖卫衣+浅灰色运动裤",
-            12: "薄紫色长袖翻领针织衫+白色阔腿裤",
-        }.get(age_n, "薄紫色上衣")
+        # 官方 Age10 定妆表对齐（用户拍板 2026-06-10）：三档【同一形象·衣色发型一致】，
+        #   仅体型随年龄变化——紫色长袖圆领卫衣 + 浅灰白直筒裤 + 紫色发圈马尾。
+        outfit = "紫色长袖圆领卫衣（哑光素色）+浅灰白色直筒长裤"
         return (
-            f"Mia：{age_n}岁女孩，棕色长发束成一束高马尾在脑后（必须是马尾，不能散开），"
-            f"前额碎刘海+少许鬓发框脸，穿{outfit}，白色运动鞋，"
-            f"不戴手表/手链/项链/耳环/眼镜/帽子"
+            f"Mia：{age_n}岁女孩（体型为{age_n}岁），{MIA_HAIR_LOCK}；{MIA_HAIR_NEG}；"
+            f"穿{outfit}，白色低帮运动鞋，不戴手表/手链/项链/耳环/眼镜/帽子"
         )
     if key == "tommy":
-        # 官方定妆图三档配色（用户拍板 2026-06-07，严格区分年龄）：
-        #   8岁=蓝白横条纹短袖T+浅蓝长裤；10岁=【浅蓝】长袖卫衣+【卡其】裤；
-        #   12岁=【深蓝/藏青】短袖polo+蓝色牛仔裤。深蓝polo是12岁专属，10岁绝不能穿。
-        outfit = {
-            8:  "蓝白横条纹短袖T恤+浅蓝色长裤",
-            10: "浅蓝色长袖圆领卫衣+卡其色直筒长裤（绝不是深蓝、绝不是polo、绝不是牛仔裤）",
-            12: "深蓝色（藏青）短袖polo翻领衫+蓝色牛仔裤",
-        }.get(age_n, "浅蓝色长袖卫衣+卡其色长裤")
+        # 官方 Age10 定妆表对齐（用户拍板 2026-06-10）：三档【同一形象·衣色发型一致】，
+        #   仅体型随年龄变化——浅天蓝长袖圆领卫衣 + 卡其直筒裤（旧的"8岁条纹T/12岁深蓝polo"已废弃）。
+        outfit = ("【浅天蓝 pale sky-blue / light powder-blue】长袖圆领卫衣（哑光、无翻领、无门襟拉链）"
+                  "+卡其色直筒裤（色值锚定近 #5FA8D6~#8EC0ED；绝不深蓝/藏青/navy/钴蓝/靛蓝/teal、"
+                  "绝不短袖polo翻领、绝不牛仔裤；上衣的蓝必须明显浅于任何成人制服蓝与背景深蓝物体）")
         return (
-            f"Tommy：{age_n}岁亚洲男孩（必须是男孩，不能有马尾，不能长发，绝不戴眼镜，不戴帽子），"
-            f"棕色蓬松短发清爽，穿{outfit}，白色低帮运动鞋"
+            f"Tommy：{age_n}岁亚洲男孩（体型为{age_n}岁，必须是男孩，不能有马尾，不能长发，绝不戴眼镜，不戴帽子），"
+            f"棕色蓬乱蓬松短发，穿{outfit}，白色低帮运动鞋，"
+            f"且 Tommy 是画面里唯一穿【浅天蓝卫衣】的人，其蓝明显浅于任何成人制服蓝/警服蓝/背景深蓝物体"
         )
     if key == "anna":
         # v4.0 改版(2026-06-03)：以新定妆图为准——黑色短发bob+白发箍+绿毛衣
@@ -429,9 +537,13 @@ def _en_to_cn_desc(en_desc: str, key: str, age) -> str:
     if key == "winnie":
         return "Winnie：灰色虎斑小猫，白色肚皮和爪子，琥珀色大眼，粉色鼻子，体型小巧"
     if key == "mom":
-        return "妈妈：成年女性（不是小孩），约35岁，棕色长波浪发，白色宽松长袖上衣+浅蓝色牛仔裤+白色运动鞋，温柔微笑"
+        return ("妈妈：成熟成年女性（约35岁，是大人，绝不是小孩、绝不是青少年/teenager、绝不是大学生），"
+                "成年人脸庞与身材比例、身高明显高于孩子，棕色长波浪发，"
+                "白色宽松长袖上衣+浅蓝色牛仔裤+白色运动鞋，温柔微笑")
     if key == "dad":
-        return "爸爸：成年男性（不是小孩），约38岁，棕色短发，灰色短袖polo衫+卡其色长裤+棕色皮鞋，不戴眼镜，温和微笑"
+        return ("爸爸：成熟成年男性（约38岁，是大人，绝不是小孩、绝不是青少年/teenager、绝不是大学生），"
+                "成年人脸庞与身材比例、身高明显高于孩子，棕色短发，"
+                "灰色短袖polo衫+卡其色长裤+棕色皮鞋，不戴眼镜，温和微笑")
     if key == "grandma":
         return "奶奶：年长女性（不是小孩，明显皱纹），银灰色发髻，淡紫色开衫+米色内搭+橄榄绿长裙+棕色鞋，慈祥微笑"
     if key == "grandpa":
@@ -450,7 +562,9 @@ def _key_lock_phrase(key: str, age) -> str:
     """
     age_n = age if isinstance(age, int) else 12
     if key == "mia":
-        return f"（{age_n}岁女孩，单束高马尾必须扎着，不戴眼镜，不戴任何饰品）"
+        return (
+            f"（{age_n}岁女孩，{MIA_HAIR_LOCK}；{MIA_HAIR_NEG}；不戴眼镜，不戴任何饰品）"
+        )
     if key == "tommy":
         return f"（{age_n}岁男孩，棕色蓬松短发清爽，绝不戴眼镜，不能有马尾或长发，不戴帽子）"
     if key == "anna":
@@ -524,21 +638,23 @@ def _scene_to_cn(page: PageSpec, outline: BookOutline) -> str:
 
 @dataclass
 class BuiltPromptCN:
-    """v3：拆成正向/反向两段，最终 prompt = positive + ==请勿出现== + negative。"""
+    """v3：拆成正向/反向两段，最终 prompt = 正向(1-19 段公式) + 第 20 段【不要改变/不要出现】负向锁。"""
     positive: str                  # v3: 正向 prompt（火山风单段流畅）
     negative: str                  # v3: 反向 prompt（分类禁忌）
     prompt: str                    # v3: 最终拼接后字符串（实际发送给 Seedream）
     references: list[Path]
     used_characters: list[dict]    # 调试用
+    scene_cn: str = ""             # 本页【13·必出细节】场景意图（供视觉自审判"剧情是否画对"）
+    story_lock: str = ""           # 本页【剧情/场景必演】锁（含非虚构主题标志道具，供自审参照）
 
     @staticmethod
     def join(positive: str, negative: str) -> str:
-        """把正向 + 反向拼成最终 prompt。"""
+        """把正向(1-19 段) + 反向(第 20 段·负向锁)拼成最终 prompt。"""
         pos = (positive or "").strip()
         neg = (negative or "").strip()
         if not neg:
             return pos
-        return f"{pos}\n\n==请勿出现==\n{neg}"
+        return f"{pos}\n\n【20·不要改变/不要出现】（负向锁·以下内容一律不得出现）\n{neg}"
 
 
 # ============================================================
@@ -560,21 +676,54 @@ def _signature_color_of(ip_key: str) -> str:
     return _SIGNATURE_COLOR.get(base, "")
 
 
+# 配角【确定性配色轮】（用户拍板 2026-06-09）——
+#   旧做法靠"各自改穿绿/黄/橙…彼此不同"的软描述，模型仍易给男孩默认蓝、女孩默认紫而撞主角专属色。
+#   改为按出场序硬指派一个互不相同、且【刻意避开主角专属色（紫/蓝/绿/粉）】的确定色相轮转。
+_EXTRA_COLOR_WHEEL: list[str] = ["橙色", "黄色", "青绿色", "红色", "米色", "棕色", "灰色"]
+# 主角专属色（配角一律禁穿）：紫=Mia / 蓝=Tommy / 绿=Anna / 粉=Cate。
+_LEAD_RESERVED_COLORS: list[str] = ["紫色系", "蓝色系", "绿色系", "粉色系"]
+
+
+def _extra_color_assignment_cn() -> str:
+    """生成配角【确定性硬指派】配色正向句（替换原"彼此不同"软描述）。"""
+    seq = "、".join(f"第{i+1}个配角穿{c}" for i, c in enumerate(_EXTRA_COLOR_WHEEL))
+    reserved = "、".join(_LEAD_RESERVED_COLORS)
+    return (
+        f"【配角配色·硬指派】配角按出场顺序依次穿：{seq}（多于7个按色轮循环、相邻必不同），主色互不相同；"
+        f"一律严禁穿主角专属色：{reserved}（紫=Mia、蓝=Tommy、绿=Anna、粉=Cate），不与主角撞色；"
+        "上色仍像水彩般柔和自然，不画成生硬色块。"
+    )
+
+
+def _extra_diversity_cn() -> str:
+    """配角多元/各异硬约束（与确定性配色配套，明显区别于主角）。"""
+    return (
+        "【配角各异】非 IP 配角国际化、多元族裔、彼此各异且明显区别于主角，绝不复制 Mia/Tommy 脸或发型，不抢主体。"
+    )
+
+
 # ============================================================
 #  v3 角色特征锁短语（用于反向区"防止跑帧"）
 # ============================================================
 # 每个角色 base key 对应一段否定锁（明确说不戴眼镜、不变发型等）
 _CHAR_NEGATIVE_LOCK: dict[str, str] = {
-    "mia":     "Mia戴眼镜、Mia散发不扎马尾、Mia扎双马尾或三辫子、Mia穿裙子、Mia穿其他颜色上衣",
-    "tommy":   "Tommy戴任何眼镜或墨镜（Tommy绝不戴眼镜）、Tommy长发、Tommy扎马尾、Tommy被画成女孩、Tommy穿其他颜色上衣",
+    "mia":     (
+        f"Mia戴眼镜、Mia丸子头/发髻/top-knot、Mia是half-up半扎（只扎上层下半披散）、"
+        f"Mia头发完全散开不扎、Mia大量披散的散发、Mia低马尾或侧马尾、Mia双马尾或三辫子、"
+        f"Mia脏辫乱团、Mia头发糊成一团、Mia颅顶/头顶正中超高马尾、Mia发髻在头顶正上方、Mia仅短马尾穗、Mia用非紫色发圈、"
+        f"（Mia必须是后脑中高位马尾+紫色发圈、辫尾垂至肩/上背：{MIA_HAIR_LOCK}）、"
+        f"Mia穿裙子、Mia穿黄色或绿色或其他非紫色上衣（Mia上衣必须是紫色系）、"
+        f"Mia被画成幼儿或青少年（必须是8/10/12岁同龄儿童）"
+    ),
+    "tommy":   "Tommy戴任何眼镜或墨镜（Tommy绝不戴眼镜）、Tommy长发、Tommy扎马尾、Tommy被画成女孩、Tommy穿其他颜色上衣（必须是蓝色系）、Tommy被画成幼儿或青少年或成年人（必须是与Mia同龄的儿童）",
     "anna":    "Anna扎马尾或双低马尾或辫子、Anna长发披肩、Anna不戴白发箍、Anna戴眼镜、Anna穿裙子、Anna穿黄色或紫色或其他颜色上衣（必须纯绿色毛衣）",
     "cate":    "Cate散发不扎、Cate穿其他颜色上衣",
     "ali":     "Ali被画成深肤色或黑色卷发（应浅肤色+棕色短发）、Ali穿黄色上衣（应蓝色短袖T+卡其短裤）",
     "teacher": "Teacher Kim 穿太花哨或显得太年轻",
-    "mom":     "妈妈年龄看起来过老或过年轻",
-    "dad":     "爸爸年龄看起来过老或过年轻",
-    "grandma": "奶奶发色过深（应是白发）",
-    "grandpa": "爷爷发色过深（应是白发）",
+    "mom":     "妈妈被画成小孩或青少年/teenager、妈妈与孩子同高同龄、妈妈像大学生（妈妈必须是成熟成年人且明显比孩子高）",
+    "dad":     "爸爸被画成小孩或青少年/teenager、爸爸与孩子同高同龄、爸爸像大学生（爸爸必须是成熟成年人且明显比孩子高）",
+    "grandma": "奶奶发色过深（应是白发）、奶奶被画成年轻人或小孩（奶奶是明显年长的老人）",
+    "grandpa": "爷爷发色过深（应是白发）、爷爷被画成年轻人或小孩（爷爷是明显年长的老人）",
 }
 
 
@@ -638,7 +787,8 @@ def _head_body_ratio_lock(ip_age: int) -> str:
     if ip_age <= 8:
         return "儿童头身比约 5 头身（学龄前期），头身比例自然，四肢匀称"
     if ip_age <= 10:
-        return "儿童头身比约 5.5-6 头身（学龄期），身体比例已接近少年"
+        return ("儿童头身比约 5.5-6 头身（学龄期 10 岁），身体比例已接近少年——"
+                "头部相对身体不要过大、腿身要修长，绝不是大头娃娃/Q版4头身的幼态矮小比例")
     # 11-14：少年
     return "少年头身比约 6.5-7 头身（青春期前期），身体修长、四肢比例匀称，但保留少年面部特征"
 
@@ -707,6 +857,56 @@ def _detect_key_props(text: str) -> list[str]:
     return out
 
 
+# 非虚构主题 → 标志性道具/场景（关键词命中即注入；通用对所有书生效，不写死某本）。
+_THEME_SIGNATURE: list[tuple[str, str]] = [
+    (r"museum|博物馆|展览|exhibit", "博物馆/展馆的标志性场景：玻璃展柜、恐龙骨架或文物雕塑、说明牌支架（无可读文字）、高挑展厅与射灯"),
+    (r"librar|图书馆|借书|book.?shelf|阅览", "图书馆的标志性场景：成排高书架与满架书本、借书台/服务台、阅览桌椅、安静明亮的阅览空间"),
+    (r"clean|tidy|litter|trash|garbage|rubbish|打扫|清洁|清扫|垃圾|捡|扫除", "清洁/社区服务的标志性场景：街道或公园 + 垃圾袋/垃圾桶/扫帚/夹子/手套，人物正在弯腰捡拾或打扫"),
+    (r"sport|exercise|运动|锻炼|球|跑步|健身", "运动主题的标志性场景：运动场/操场/球场或器材，人物正在做该项运动（跑、跳、踢球、拉伸）"),
+    (r"garden|plant|grow|farm|种|花园|农场|植物", "种植/园艺的标志性场景：花园/菜地/花盆 + 铲子/水壶/泥土/幼苗，人物正在浇水或栽种"),
+    (r"market|shop|store|grocery|超市|商店|市场|购物", "商店/市场的标志性场景：货架/摊位/购物篮/价签牌（无可读文字）、琳琅商品"),
+    (r"hospital|doctor|nurse|医院|医生|护士|看病", "医疗主题的标志性场景：诊室/医院走廊 + 听诊器/病床/医疗器械，医护为成年人"),
+    (r"firefighter|fire\s?station|消防|救火", "消防主题的标志性场景：消防车/消防栓/消防站、消防员为成年人"),
+    (r"police|officer|警察|警官|警", "社区/安全主题的标志性场景：社区活动现场或街道，成年警官在执勤/讲解"),
+    (r"weather|season|rain|snow|天气|季节|四季", "天气/季节主题：明确的天气/季节标志（雨伞雨滴/积雪/落叶/烈日）贯穿画面"),
+    (r"recycl|环保|回收|地球", "环保/回收主题：分类回收桶/可回收物/绿色环保标识（图形非文字）"),
+    (r"community|neighbo|社区|邻里|helping\s?hand|帮助", "社区互助主题：街区/社区中心/邻里场景，人物在【具体地帮助他人/做社区服务】而非空场站立"),
+]
+
+
+def _scene_story_lock(outline: BookOutline, page: PageSpec, scene_cn: str, is_cover: bool) -> str:
+    """本页【剧情/场景必演】锁（通用，对所有书生效）：
+
+    1) 强制把本页关键动作/道具/场景"演"出来，禁止退化成主角在空旷/无关室内单纯站立摆拍/闲聊；
+    2) 非虚构主题页：必须出现该主题的标志性道具/场景（按主题关键词注入）。
+    """
+    if _nf_body_page(page, outline):
+        base = (
+            "把本页【关键动作/道具/场景】真实演出来：科普对象/知识过程占画面主体、清晰可辨；"
+            "专注知识可视化，不出现系列主角；绝不退化成空旷背景或跳题省略本页情节"
+        )
+    else:
+        base = (
+            "把本页【关键动作/道具/场景】真实演出来：主角在场、专注投入、与关键道具真实互动"
+            "（动手就亲手操作、观看就专注看/指认）；关键道具/场景占画面主体、清晰可辨；"
+            "绝不退化成空旷背景里呆站/摆拍/跳题省略本页情节"
+        )
+    if _is_nonfiction(outline):
+        theme = (getattr(outline, "theme", "") or "")
+        title = (getattr(outline, "title", "") or "")
+        # 优先按【本页场景】匹配（图书馆页→书架、博物馆页→展柜，避免整本套同一主题道具）；
+        #   本页场景无明确主题词时，再回退到全书主题/标题。
+        scene_low = (scene_cn or "").lower()
+        sig = next((desc for pat, desc in _THEME_SIGNATURE if _re.search(pat, scene_low)), "")
+        if not sig:
+            hay = f"{theme} {title}".lower()
+            sig = next((desc for pat, desc in _THEME_SIGNATURE if _re.search(pat, hay)), "")
+        if not sig:
+            sig = f"必须出现与主题《{theme or title}》直接相关的标志性道具/场景，让人一眼看出主题"
+        base += ("；【主题锁·标志场景与道具作为画面主体、占主要面积，主角置身其中专注参与】" + sig)
+    return base
+
+
 def _make_protagonist_entry(k: str, ip_age: int) -> dict | None:
     """构造一个系列默认主角的 cast 条目（带年龄对应参考图 + 形象锁），供封面/NF 注入复用。"""
     if not CHAR_REGISTRY.get(k):
@@ -722,6 +922,28 @@ def _make_protagonist_entry(k: str, ip_age: int) -> dict | None:
         "description_cn": desc_cn,
         "ref_path": ref,
         "is_generic": True,
+    }
+
+
+def _make_family_adult_entry(k: str, ip_age: int) -> dict | None:
+    """构造一个家庭成年角色（妈妈/爸爸/爷爷/奶奶）的 cast 条目（成人定妆 + 锚图 + 形象锁）。
+    用于"家人在家做饭/吃饭/团聚"等页面：把家长锁成系列固定 IP，避免模型自由画成陌生大人。"""
+    char = CHAR_REGISTRY.get(k)
+    if not char:
+        return None
+    age_key = next(iter(char.get("description_by_age", {}).keys()), "adult")
+    desc_cn, ref = _curated_ref_desc(
+        k, ip_age,
+        _en_to_cn_desc(registry_get_desc(k, age_key) or "", k, age_key),
+        registry_get_ref(k, age_key),
+    )
+    return {
+        "name": k.capitalize(),
+        "key": k,
+        "description_cn": desc_cn,
+        "ref_path": ref,
+        "is_generic": False,
+        "kind": char.get("kind", "family"),
     }
 
 
@@ -800,14 +1022,19 @@ def validate_page_ip_lock(
             official_raw = (oip.page_scene(page.index) or "").strip()
         except Exception:
             official_raw = ""
-    if official_raw:
+    if _nf_body_page(page, outline):
+        must_have_leads = False
+    elif official_raw:
         low = _official_cast_text(official_raw).lower()
         official_names_leads = bool(_re.search(r"\b(mia|tommy)\b", low))
         # 有官方文本：仅当官方点到主角（或封面点到）才要求主角在场
         must_have_leads = official_names_leads
     else:
-        must_have_leads = is_cover or _is_nonfiction(outline) or (
-            _book_centers_on_leads(outline) and page_has_person
+        must_have_leads = is_cover or _nf_intro_page(page, outline) or (
+            not _is_nonfiction(outline)
+            and _book_centers_on_leads(outline) and page_has_person
+            and not _page_scopes_to_named_nonlead(page, cast)
+            and not _page_names_specific_child(cast)
         )
     # 框架寓言纯故事页：他俩是读者、刻意不入场 → 不要求主角在场（避免误报）
     if _is_frame_fable(outline) and _frame_page_kind(
@@ -815,7 +1042,7 @@ def validate_page_ip_lock(
         must_have_leads = False
     if must_have_leads:
         # 按四规则判定本书应出现的主角（可能只 Mia，如 Mia+具名朋友的故事）
-        for who in _lead_keys_for_book(outline):
+        for who in _lead_keys_for_book(outline, page):
             if who not in base_keys:
                 issues.append(f"应出现的主角缺失：{who}")
 
@@ -827,10 +1054,11 @@ def validate_page_ip_lock(
             if ref and str(ip_age) not in Path(ref).stem:
                 issues.append(f"{base} 参考图年龄档不符（应 {ip_age} 岁）：{Path(ref).name}")
 
-    # 5) 人数上限（只数 IP/注册角色；一次性角色不计入）
+    # 5) 人数上限（只数 IP/注册角色；一次性角色不计入）。门限 3→5（用户拍板 2026-06-09）：
+    #   参考图上限本就是 5，群像/家庭页常合法出现 4-5 个注册角色，门限 3 会误报人工抽查。
     n_main = sum(1 for c in cast if not c.get("is_oneoff"))
-    if n_main > 3:
-        issues.append(f"cast 超过 3 人（{n_main}）")
+    if n_main > 5:
+        issues.append(f"cast 超过 5 人（{n_main}）")
 
     return issues
 
@@ -850,6 +1078,8 @@ _FAMILY_RE = _re.compile(
     r"grandpa|grandfather|parents|family)\b|妈妈|爸爸|奶奶|爷爷|外婆|外公|爸妈|父母"
 )
 _LEADS_RE = _re.compile(r"\b(mia|tommy)\b")
+# 成人/老人 key（点名成人不算"点名孩子"，家庭页仍需补齐兄妹）
+_ADULT_KEYS = {"mom", "dad", "grandma", "grandpa", "granny", "grandfather", "teacher", "teacher_kim"}
 
 
 def _book_centers_on_leads(outline: BookOutline) -> bool:
@@ -893,6 +1123,67 @@ def _named_sibling_leads(outline: BookOutline) -> list[str]:
     return [k for k in ("mia", "tommy") if _re.search(rf"\b{k}\b", low)]
 
 
+# 本页"单一主角焦点"显式标记：作者已写明画面只聚焦一个孩子（如 P1 的 "only ONE main character"）。
+#   有此标记时，文本里出现的泛指 "girl/boy" 多半是对具名配角(如 Anna)的同位语指代，而非第二个孩子。
+_SINGLE_FOCUS_RE = _re.compile(
+    r"only one (?:main )?(?:character|child|kid|person|girl|boy)|"
+    r"\bone main character\b|\bsits? alone\b|\bsitting alone\b|\bstands? alone\b|"
+    r"\ball alone\b|\bby (?:her|him)self\b|\balone\b|"
+    r"只有一个|仅一个|独自|单独",
+    _re.IGNORECASE)
+
+
+def _page_names_specific_child(cast: list[dict]) -> bool:
+    """本页 cast 是否【显式点名了具体的"孩子"角色】(Anna/Mia/Tommy/Cate… 非泛指、非成人/宠物)。
+
+    用户拍板 2026-06-08：点名了孩子 → 以本页点名名单为权威，不强行补齐未点名的另一位兄妹。
+    """
+    for c in cast:
+        if c.get("is_generic"):
+            continue
+        base = (c.get("key") or "").split("_")[0]
+        if base in _ADULT_KEYS:
+            continue
+        ch = CHAR_REGISTRY.get(base)
+        if ch and ch.get("kind") not in ("pet", "brand", "family", "adult"):
+            return True
+    return False
+
+
+def _page_scopes_to_named_nonlead(page: PageSpec, cast: list[dict]) -> bool:
+    """本页是否【明确只围绕某具名非主角角色】（如 Anna 单人页）→ 不应硬塞 Mia/Tommy。
+
+    用户拍板 2026-06-08（先理解文本→再修 IP）：内页"谁在场"先信本页文本。很保守：
+      · 本页文本/Scene 没显式点名 Mia/Tommy、也没出现家人字样（妈妈/爸爸/爷爷/奶奶…）；
+      · 本页 cast（注入主角前）里有至少 1 个【具名(非泛指)的人类配角】（如 Anna）；
+      · 若本页还检测出【泛指小孩】(girl/boy→映射成 Mia/Tommy)：仅当 Scene 写明"单一主角焦点"
+        （only ONE main character / alone / 独自…）时才判为同位语指代 → 仍可 scope（随后剔除这些泛指）；
+        否则保守认为可能真有第二个孩子，不 scope。
+    """
+    txt = ((page.text or "") + " " + (getattr(page, "scene", "") or "")).lower()
+    if _LEADS_RE.search(txt) or _FAMILY_RE.search(txt):
+        return False
+    named_nonlead = False
+    has_generic_person = False
+    for c in cast:
+        base = (c.get("key") or "").split("_")[0]
+        ch = CHAR_REGISTRY.get(base)
+        if not ch or ch.get("kind") in ("pet", "brand"):
+            continue
+        if c.get("is_generic"):
+            has_generic_person = True
+        elif base in ("mia", "tommy"):
+            # 真·具名主角在场（理论上已被 _LEADS_RE 拦下）→ 保险起见不 scope
+            return False
+        else:
+            named_nonlead = True
+    if not named_nonlead:
+        return False
+    if not has_generic_person:
+        return True
+    return bool(_SINGLE_FOCUS_RE.search(txt))
+
+
 # 动物/非人物种词库（用于区分"人类具名朋友"与"动物寓言主角"）。
 # 注意：绝不含 man/woman/boy/girl 等人类词——那些是人，不是动物。
 _ANIMAL_SPECIES_RE = _re.compile(
@@ -926,15 +1217,44 @@ def _recurring_human_friend_keys(outline: BookOutline) -> list[str]:
     return out
 
 
-def _lead_keys_for_book(outline: BookOutline) -> list[str]:
+def _nf_intro_page(page: PageSpec, outline: BookOutline) -> bool:
+    """非虚构：封面或 P1（index≤1）保留 Mia+Tommy 探索引子。"""
+    return _is_nonfiction(outline) and (page.page_type == "cover" or page.index <= 1)
+
+
+def _nf_body_page(page: PageSpec, outline: BookOutline) -> bool:
+    """非虚构正文内页（index≥2）：无主角，纯知识画面。"""
+    return _is_nonfiction(outline) and page.page_type != "cover" and page.index > 1
+
+
+_STANDALONE_I_RE = _re.compile(r"(?:^|[.!?]\s+|\n)I\s", _re.I)
+_STANDALONE_WE_RE = _re.compile(r"(?:^|[.!?]\s+|\n)We\s", _re.I)
+
+
+def _pronoun_lead_keys(page_text: str) -> list[str] | None:
+    """本页正文独立 I/We 人称 → I=Tommy 单人；We=Mia+Tommy 双主角。无则 None。"""
+    t = (page_text or "").strip()
+    if not t:
+        return None
+    if _STANDALONE_WE_RE.search(t):
+        return ["mia", "tommy"]
+    if _STANDALONE_I_RE.search(t):
+        return ["tommy"]
+    return None
+
+
+def _lead_keys_for_book(outline: BookOutline, page: PageSpec | None = None) -> list[str]:
     """这本书在【有人物的页/封面】上应出现的系列主角键（四规则自动判定，用户拍板 2026-06-08）。
 
       规则1 纯动物寓言 → 由框架逻辑在纯故事页移除主角（此函数仅决定读者页/封面带谁）。
       规则2/3 有具名人类朋友(Lucia)做主角之一 → 只带【被点名的那位兄妹】，绝不硬塞第二位
               （如《Mia and Her Spanish Friend》→ 只 Mia，配 Lucia；不加 Tommy）。
-      规则4 科普 / 无具名朋友的兄妹·家庭故事 → 维持 Mia & Tommy 双主角。
+      规则4 科普封面/P1 → Mia & Tommy 双主角引子；科普正文内页 → 无主角。
+      规则5 无具名朋友的兄妹·家庭故事 → 维持 Mia & Tommy 双主角。
     """
     if _is_nonfiction(outline):
+        if page is not None and _nf_body_page(page, outline):
+            return []
         return ["mia", "tommy"]
     friends = _recurring_human_friend_keys(outline)
     if friends:
@@ -1079,9 +1399,13 @@ def _vision_frame_close_wrapper(tale_scene: str) -> str:
 #  典型坑：官方只在部分页标了「Rainy variant」，导致同一场雨里中间页突然放晴。
 #  解决：扫全书天气/时间线索，把"同一场持续天气"贯穿到区间内的所有户外页。
 # ============================================================
+# 注意（2026-06-08 修）：原来裸的 pour|pouring 会把 "sunlight pouring from the window"（阳光倾泻）
+#   误判成下雨，导致晴天页凭空下雨。现要求 pour 必须带"雨/水"语境才算下雨。
 _RAIN_RE = _re.compile(
-    r"\b(rain|rainy|raining|storm|stormy|pour|pouring|downpour|drizzle|thunder|"
-    r"soaked|drenched|wet (?:forest|ground|path|grass))\b|暴雨|大雨|下雨|雨中|雨水",
+    r"\b(rain|rainy|raining|rainfall|storm|stormy|downpour|drizzle|drizzly|thunder|"
+    r"soaked|drenched|wet (?:forest|ground|path|grass))\b|"
+    r"\b(?:rain|water)\s+pour\w*|\bpour\w*\s+rain\b|"
+    r"暴雨|大雨|下雨|雨中|雨水",
     _re.IGNORECASE)
 _SNOW_RE = _re.compile(r"\b(snow|snowy|snowing|blizzard|snowstorm)\b|下雪|大雪|雪中", _re.IGNORECASE)
 # 仅当主角真正"进入遮蔽/安全干燥处"时才排除天气延续。
@@ -1221,10 +1545,9 @@ def _location_continuity_note(outline: BookOutline, page: PageSpec,
         return ""
     name, blueprint, lo, hi = info
     return (
-        f"【同一场景·布景连续】本页与第 {lo}–{hi} 页发生在【同一处{name}】，必须是【同一个空间】的不同瞬间："
-        f"{blueprint}——空间布局、建筑结构、墙面/地面/天花的材质与颜色、门窗与固定陈设(柜子/家具/装饰)的位置和外观、"
-        "整体配色与光照基调，全部与该场景其它页【保持完全一致】，像同一套实景连续拍摄的不同分镜；"
-        "只允许改变人物动作/表情、镜头机位与前景细节，绝不可重新设计、更换或改变这个场景的样貌、布局、结构与配色。"
+        f"【同一场景·布景连续】本页与第 {lo}–{hi} 页是【同一处{name}】的不同瞬间：{blueprint}——"
+        "空间布局、墙面/地面/天花材质与颜色、门窗与固定陈设位置、整体配色与光照，与该场景其它页完全一致；"
+        "只改人物动作/表情与机位，绝不重新设计这个场景。"
     )
 
 
@@ -1256,6 +1579,38 @@ def _scrub_official_scene(s: str) -> str:
     parts = [p for p in parts if "dino" not in p.lower()]
     s = "".join(parts).strip()
     return s[:300]
+
+
+# ── 可读文字清洗（用户拍板 2026-06-09）─────────────────────────────────
+#   scene_cn 直接进正向 prompt 置顶段；"写着 Big Game 的横幅 / 记分牌""引号内英文台词"
+#   会诱导模型在图里画出可辨认英文字母（绘本铁律是【全图无文字】）。这里做【通用】清洗：
+#   把这类措辞改写成"抽象图案/色块装饰展板（无可辨认文字）""张嘴说话、不画字母"，不逐书硬编码。
+_SIGN_NOUNS = (
+    r"(海报|横幅|条幅|横额|旗帜|锦旗|标语|招牌|牌子|标牌|指示牌|路牌|门牌|"
+    r"记分牌|计分牌|比分牌|价签|价格牌|标价牌|告示牌?|公告牌?|布告|通知|展板|"
+    r"看板|黑板|白板|菜单|奖状|证书|徽章|条幅|banner|标题|字样)"
+)
+# "（上面）写着/印着 X 的<招牌类>" → 抽象图案、无文字
+_SIGN_WRITE_RE = _re.compile(
+    rf"(?:上面)?(?:写着|印着|标着|写有|印有|书写着|上书|标有)[\"“”'']?[^，。；、！？\n]{{0,40}}?[\"“”'']?的{_SIGN_NOUNS}",
+    _re.I)
+# "<招牌类>上写着/印着 X" → 招牌（上面只有抽象图案、无文字）
+_SIGN_ON_RE = _re.compile(
+    rf"{_SIGN_NOUNS}上(?:面)?(?:写着|印着|标着|写有|印有|书写着|标有)[\"“”'']?[^，。；、！？\n]{{0,40}}",
+    _re.I)
+# 引号内含连续英文字母（多为台词 / 招牌字样）→ 改"张嘴说话、不画字母"
+_QUOTED_EN_RE = _re.compile(r"[\"“'']([^\"”'’\n]*[A-Za-z]{2,}[^\"”'’\n]*)[\"”'’]")
+
+
+def _scrub_readable_text(scene_cn: str) -> str:
+    """把会诱导画出可辨认文字的措辞改写为"抽象图案/张嘴说话不画字母"（通用，非逐书硬编码）。"""
+    if not scene_cn:
+        return scene_cn
+    s = scene_cn
+    s = _SIGN_WRITE_RE.sub(r"印有抽象图案与装饰色块的\1（无任何可辨认文字）", s)
+    s = _SIGN_ON_RE.sub(r"\1（上面只有抽象图案与色块装饰、无任何可辨认文字）", s)
+    s = _QUOTED_EN_RE.sub("（角色张嘴说话的神态，不要画出任何字母或文字）", s)
+    return s
 
 
 # 官方 prompt 文本里可能出现的 IP 角色（别名 → registry key）。
@@ -1353,7 +1708,9 @@ def _cast_from_official(official_raw: str, ip_age: int) -> list[dict]:
             if e:
                 out.append(e)
                 found.add(key)
-    return out[:3]
+    # 上限 3→5（修 L3 #42 P7「全家餐桌」：官方点名 Mia/Tommy/Mom/Dad 4 人时，
+    #   旧 [:3] 会丢掉第 4 人 → 无参考图只靠文字 → 形象漂移）。
+    return out[:5]
 
 
 def build_cn_page_prompt(
@@ -1405,10 +1762,10 @@ def build_cn_page_prompt(
     #       girl→Mia / boy→Tommy 通用映射（保证每个孩子都是 IP，但不硬塞第二位主角，
     #       避免画出两个一模一样的人）。
     # ============================================================
-    _lead_keys = _lead_keys_for_book(outline)
+    _lead_keys = _lead_keys_for_book(outline, page)
 
     def _inject_leads(base_cast: list[dict]) -> list[dict]:
-        """把本书的系列主角（按四规则判定：双主角 / 仅 Mia 等）置于队首，再并入已有配角，去重，≤3 人。"""
+        """把本书的系列主角（按四规则判定：双主角 / 仅 Mia 等）置于队首，再并入已有配角，去重，≤5 人。"""
         pair = [
             e for k in _lead_keys
             for e in (_make_protagonist_entry(k, ip_age),) if e
@@ -1418,7 +1775,8 @@ def build_cn_page_prompt(
                       if not c.get("is_generic") and c.get("key") not in lead_keys]
         rest_generic = [c for c in base_cast
                         if c.get("is_generic") and c.get("key") not in lead_keys]
-        return (pair + rest_named + rest_generic)[:3]
+        # 上限 3→5：一页可同时容纳 Mia/Tommy/Mom/Dad 等家人各带 1 张定妆图（修多人同框漂移）。
+        return (pair + rest_named + rest_generic)[:5]
 
     def _is_person_entry(c: dict) -> bool:
         ch = CHAR_REGISTRY.get((c.get("key") or "").split("_")[0])
@@ -1431,6 +1789,11 @@ def build_cn_page_prompt(
         _frame_page_kind(outline, page, getattr(outline, "frame_mode", "A+"))
         if _frame_fable else None
     )
+    # SOP 人称：独立 I=Tommy 单人；We=双主角（NF 正文内页无主角，不应用）
+    if not _nf_body_page(page, outline):
+        _pk = _pronoun_lead_keys(page.text or "")
+        if _pk is not None and not (_frame_fable and _frame_kind == "pure"):
+            _lead_keys = _pk
     if official_has_scene:
         # ★ 官方权威优先（用户拍板 2026-06-07）：本页"谁在场"以官方 prompt 点名为准。
         #   纯寓言页（官方没点到 Mia/Tommy）→ 不强塞主角；封面若官方漏写主角则补全双主角。
@@ -1442,7 +1805,8 @@ def build_cn_page_prompt(
             else:
                 # 框架页/合书页：确保双主角作为【读者】在场（置顶），寓言角色作幻象（book_cast 注入）
                 cast = _inject_leads(cast)
-        elif is_cover and not any(c.get("key") in ("mia", "tommy") for c in cast):
+        elif (is_cover or _nf_intro_page(page, outline)) and not any(
+                c.get("key") in ("mia", "tommy") for c in cast):
             cast = _inject_leads(cast)
     else:
         if _frame_fable:
@@ -1454,13 +1818,85 @@ def build_cn_page_prompt(
         else:
             _book_leads = _book_centers_on_leads(outline)
             _page_has_person = any(_is_person_entry(c) for c in cast)
-            if is_cover or _is_nonfiction(outline):
-                # 封面 / 科普：两位主角永远同框
+            # 本页是否【显式点名了具体的"孩子"角色】（Anna/Mia/Tommy/Cate… 等，非泛指、非成人）。
+            # 用户拍板 2026-06-08（先理解文本→只用 Scene 点名者）：点名了孩子 → 以本页在场名单为权威，
+            # 不再强行补齐未点名的另一位兄妹（修“P2 只有 Anna+Mia 却乱入 Tommy / P4 只有 Anna+Tommy 却乱入 Mia”）。
+            _names_child = _page_names_specific_child(cast)
+            if is_cover or _nf_intro_page(page, outline):
+                # 封面 / 科普开篇(P1)：双主角探索引子
                 cast = _inject_leads(cast)
-            elif _book_leads and _page_has_person:
-                # 家庭/写实故事的内页：只要有人，兄妹双主角必到场（修掉“孩子没锚图→年龄漂移/乱入Anna”）
+            elif _page_scopes_to_named_nonlead(page, cast):
+                # 本页明确只围绕某具名配角（如 Anna 单人页）→ 信本页在场名单，不硬塞 Mia/Tommy。
+                # 同时剔除把同位语"girl/boy"误映射出来的泛指主角（修“Anna 单人页凭空多出 Mia/Tommy”）。
+                _named = [c for c in cast if not c.get("is_generic")]
+                cast = _named or cast
+            elif _names_child and _book_leads and len(_lead_keys) >= 2 and (
+                    lambda _named_keys: bool(_named_keys) and _named_keys <= set(_lead_keys)
+                )({
+                    (c.get("key") or "").split("_")[0]
+                    for c in cast
+                    if (not c.get("is_generic"))
+                    and (c.get("key") or "").split("_")[0] not in _ADULT_KEYS
+                    and (CHAR_REGISTRY.get((c.get("key") or "").split("_")[0]) or {}).get("kind")
+                        not in ("pet", "brand", "family", "adult")
+                }):
+                # 双主角书（Mia+Tommy）且本页点名的具名孩子【全是系列主角】（如只点名 Tommy）→
+                #   补齐缺席的另一位兄妹（修 Book63 P3 只点名 Tommy 导致 cast 缺 Mia）。
+                #   有具名非主角朋友（Anna/Lucia）的页不触发（朋友不在 _lead_keys），保持既有行为。
+                cast = _inject_leads(cast)
+            elif _names_child:
+                # 本页已点名具体的孩子 → 以本页点名的在场名单为权威：不强行补齐缺席兄妹（防乱入）。
+                # 但【仅剔除与已具名孩子同性别的泛指主角】(同位语 girl/boy 多指代那个已点名的同性别孩子)，
+                # 绝不再无脑删掉所有 generic 主角——否则 "Anna and her brother"（brother→泛指 Tommy）
+                # 会把哥哥/Tommy 一并误删（修：内页漏画第二个孩子）。真正被点名的 Mia/Tommy 始终保留。
+                _named_child_genders = set()
+                for _c in cast:
+                    if _c.get("is_generic"):
+                        continue
+                    _b = (_c.get("key") or "").split("_")[0]
+                    if _b in _ADULT_KEYS:
+                        continue
+                    _ch = CHAR_REGISTRY.get(_b) or {}
+                    if _ch.get("kind") in ("pet", "brand", "family", "adult"):
+                        continue
+                    if _ch.get("gender") in ("girl", "boy"):
+                        _named_child_genders.add(_ch.get("gender"))
+
+                def _drop_coref_generic(c: dict) -> bool:
+                    if not c.get("is_generic"):
+                        return False
+                    base = (c.get("key") or "").split("_")[0]
+                    if base == "mia":
+                        return "girl" in _named_child_genders
+                    if base == "tommy":
+                        return "boy" in _named_child_genders
+                    return False
+
+                cast = [c for c in cast if not _drop_coref_generic(c)]
+            elif _book_leads and not _nf_body_page(page, outline):
+                # 双主角系列故事的【代词页/未点名页】（如 Book63 P2/P4、Book69 P3/P4/P6：只用 They/them
+                #   或只出现一次性成人/无 IP 人物）→ 强制让兄妹双主角到场并【挂新定妆锚图】，
+                #   不再因 cast 无 IP 人物而落到过期 trio 兜底图导致 Tommy 漂深蓝/Mia 脱模（根因一·2026-06-10）。
+                #   仅命中"以系列主角为中心的书"(_book_leads)，纯童话(_book_leads=False)不受影响。
                 cast = _inject_leads(cast)
             # else: 纯童话内页 —— 保留通用映射（girl→Mia / boy→Tommy），单主角即可，不强制第二位
+
+    # 1.9) 家长形象锁（用户拍板 2026-06-09）：页面是"和家人在家做饭/吃饭/团聚"等语境、
+    #   但 cast 里没有任何家长时，注入系列固定的【妈妈】IP（波浪长发成年女性 + 锚图 + 成人年龄锁），
+    #   避免模型自由发挥把家长画成扎马尾的陌生年轻女子（修 L3 #42 P7 妈妈形象不符）。
+    if (not is_cover and not _frame_fable
+            and _FAMILY_RE.search((cast_text or "").lower())
+            and not any((c.get("key") or "").split("_")[0] in _ADULT_KEYS for c in cast)):
+        _mom = _make_family_adult_entry("mom", ip_age)
+        if _mom and not any((c.get("key") or "") == "mom" for c in cast):
+            cast = (cast + [_mom])[:5]
+
+    # 1.95) NF 分页收口：封面/P1 双主角引子；正文内页(P2-P7)剔除主角
+    if _nf_body_page(page, outline):
+        cast = [c for c in cast if c.get("key") not in ("mia", "tommy")]
+    elif _nf_intro_page(page, outline) and not _frame_fable:
+        if not any(c.get("key") in ("mia", "tommy") for c in cast):
+            cast = _inject_leads(cast)
 
     # 2) 场景描述
     if is_cover:
@@ -1468,7 +1904,9 @@ def build_cn_page_prompt(
         theme = (getattr(outline, "theme", "") or "").strip()
         nf = _is_nonfiction(outline)
         cover_action = (
-            f"{who} 作为系列小小探索家，正投入地在与主题相关的真实场景中观察、指认或眺望眼前的事物"
+            f"{who} 作为系列小主角，正投入地置身与主题相关的真实场景中、专注参与本主题的活动"
+            "（动手做的事就动手操作、触碰、参与，观看/探索性质就专注地观察、指认或眺望眼前的事物；"
+            "自然投入其中，不是面向镜头并排呆站摆拍、也不是远远旁观的路人）"
             if nf else
             f"{who} 一起投入在与故事主题相关的一个生动瞬间里——在做某件具体的事/彼此互动，神情自然鲜活，"
             "绝不是面向镜头并排站着摆拍"
@@ -1478,7 +1916,7 @@ def build_cn_page_prompt(
             f"{cover_action}；用有设计感的电影式取景——人物七分身或全身、带自然角度"
             "（三四分之一侧身，或轻微俯视/仰视/越肩主角视角，绝不正面呆板平视），"
             "前景—中景—背景拉出清晰的远近层次与景深，画面通透、有空间纵深与故事氛围，像高级精印实体绘本的封面；"
-            "人物适度偏置于画面一侧，画面上方保留大片干净的浅色原生留白区域（天空/远景等）用于排书名标题。"
+            "人物适度偏置于画面一侧，画面上方保留约 20-25% 一条干净的浅色原生留白区域（天空/远景等）用于排书名标题，其余画面由主体与环境充实饱满地填满、不空旷。"
         )
     else:
         if official_has_scene:
@@ -1502,18 +1940,56 @@ def build_cn_page_prompt(
                 scene_cn = _vision_frame_wrapper(_scrub_leads_clause(scene_cn))
             elif _frame_fable and _frame_kind == "frame_close":
                 scene_cn = _vision_frame_close_wrapper(_scrub_leads_clause(scene_cn))
-        # Non-fiction：把双主角作为"小小探索家"自然织入画面（主人公视角贯穿全书）
-        if _is_nonfiction(outline) and cast:
+    # 2.4) 配角存在判定【必须在注入负向样板前快照】：下面的非虚构/连续性注入会往 scene_cn
+    #   追加"不要凭空添加陌生路人/围观人群…"等【负向指令文案】，其中"围观人群/路人"会被
+    #   _scene_has_nonlead_extras 的人群正则【误判成"本页真有配角"】，从而在纯双主角内页错误
+    #   触发"配角确定性配色轮 + 配角多元各异 + 封面/群像等高锁"整段噪声（修 2026-06-10）。
+    #   故此处对【未被污染的真实场景】快照 has_extras，再传给 _build_positive_concise。
+    _scene_extras_raw = (not is_cover) and _scene_has_nonlead_extras(scene_cn)
+    # 主题锁匹配【必须用未被示例词污染的原始场景】快照：下面 2.4 会往 scene_cn 追加
+    #   "(一起播种/采摘/清洗/搬运/挑选等)"这类示例动作词，其中"播种"含"种"会被 _THEME_SIGNATURE
+    #   的"种植/园艺"正则误命中，把花盆/铲子/浇水硬贴到警察/消防/医生页（Book66 根因·2026-06-10）。
+    #   故此处先存一份真实场景，专供 _scene_story_lock 做主题判定。
+    _raw_scene_for_theme = scene_cn
+    if not is_cover:
+        if _nf_body_page(page, outline):
+            scene_cn = (
+                scene_cn.rstrip("。") +
+                "。本页为科普知识画面：以本页科普对象/场景/过程为主体（占画面主要面积、清晰可辨），"
+                "专注呈现知识可视化（图解、实景、剖面、地图、工艺流程等），让观众直观理解本页知识点；"
+                "不出现系列主角 Mia/Tommy（他俩仅在封面/开篇登场作探索引子，内页不出场）；"
+                "未点名者不凭空新增路人；科普对象按真实比例样貌呈现。"
+            )
+        # Non-fiction 开篇(P1)：把双主角作为"小小探索家"自然织入画面
+        elif _is_nonfiction(outline) and cast:
             names = "和".join(c["name"] for c in cast if c.get("name"))
             if names:
-                scene_cn = (
-                    scene_cn.rstrip("。") +
-                    f"。画面以 {names} 作为系列小小探索员的主人公视角来呈现这页科普内容："
-                    f"{names} 一起在现场观察、用手指认、俯身细看或眺望眼前的事物，神情专注好奇、自然融入真实场景，"
-                    "带着小读者一起去发现（他们是贯穿全书的学习者/探索者视角）；"
-                    "科普对象（地理/动植物/自然现象等）按真实比例与真实科学样貌如实呈现，"
-                    "镜头随内容选取最能说明事物的角度（看地理/全貌用俯视或鸟瞰、看细节用特写或越肩主角视角），主角不喧宾夺主。"
-                )
+                # 用户拍板 2026-06-09（修克隆人根因）：当本页主体动作由【非主角成人】(农夫/工人/店员等)
+                #   执行时，Mia/Tommy 退为画面一角的【小观察者】，主体是那 1-2 位国际化成人；
+                #   并强制：除主角外不得再出现别的小孩、工人绝不能画成与主角雷同的人（防分身/克隆）。
+                if _scene_lead_is_nonlead_actor(scene_cn, names):
+                    # 用户拍板 2026-06-10（回退过度叠加）：不再写死"仅 1 位成年人/只 2 个孩子"——
+                    #   按本页 scene_cn 实际点名的人物来画（多位职业角色都可同框），让 Mia/Tommy 作为
+                    #   下场参与的主角与这些大人同框、一起做事或专注地看；未点名者不新增陌生路人。
+                    scene_cn = (
+                        scene_cn.rstrip("。") +
+                        f"。按本页点名人物来画：出现的成年人（可一位或多位，国际化多元、彼此各异，且与主角 {names} "
+                        "长相完全不同、绝不撞脸撞发色撞衣色)；"
+                        f"{names} 作为下场参与的小主角与大人同框、就在身旁——动手就一起动手、看讲就专注地看/指认；"
+                        f"{names} 始终是清晰主角之一（脸清晰、表情专注、正常 10 岁比例，成人与孩子约 4:3、孩子头顶到成人肩部），"
+                        f"不画过小/脸糊；画面里小孩只有 {names}（各一个），不再出现别的小孩；"
+                        "未点名者不凭空新增(不加路人/围观)，成年人不画成与主角雷同、背景不复制酷似主角的小孩；"
+                        "科普对象按真实比例样貌呈现。"
+                    )
+                else:
+                    scene_cn = (
+                        scene_cn.rstrip("。") +
+                        f"。本页主角与主体就是 {names}：作为下场参与的小主角全程在场、是画面焦点，专注参与本页这件事"
+                        "——动手就亲手操作/触碰/翻动(手上有真实动作)，观看/参观就专注地看、俯身细看或用手指认；"
+                        f"绝不被晾在远景当路人、也不并排呆站摆拍；默认整张画面只有 {names} 两个孩子，"
+                        "不为凑场景凭空加陌生路人/围观人群；科普对象按真实比例样貌呈现，"
+                        "让主角与该事物【正在发生的互动】成为画面焦点。"
+                    )
 
     # 2.5) 封面：官方封面文本作为校准参考注入（内页已把官方设为主场景，无需重复叠加）。
     if is_cover and official_has_scene:
@@ -1541,7 +2017,13 @@ def build_cn_page_prompt(
     if _sl and not is_cover:
         scene_cn = f"【本页画面·老师已确认·必须照此】{_sl.rstrip('。')}。" + scene_cn
 
+    # 2.9) 可读文字清洗：把"写着X的横幅/记分牌""引号内英文台词"等会诱导画英文字母的措辞，
+    #   改写成"抽象图案/色块装饰（无可辨认文字）/张嘴说话不画字母"（通用清洗，非逐书硬编码）。
+    scene_cn = _scrub_readable_text(scene_cn)
+
     # 3) 镜头 + 机位角度（v5）
+    # SOP 第4条：先做一次全书景别多样性收口（任意连续4页≥2种景别），幂等。
+    _ensure_shot_variety(outline)
     shot = (page.shot or DEFAULT_SHOT).strip().lower()
     if shot not in COMPOSITION_CN:
         shot = DEFAULT_SHOT
@@ -1549,11 +2031,14 @@ def build_cn_page_prompt(
     angle_cn = "" if is_cover else _angle_phrase(_resolve_camera_angle(page, outline))
     focus_cn = "" if is_cover else (getattr(page, "focus", "") or "").strip()
     hook_cn = "" if is_cover else (getattr(page, "hook", "") or "").strip()
+    # SOP 第7/二.5 条：本页情绪 → 固定面部细节词表（封面不强加；归并不到六类则留空）。
+    expr_face_cn = "" if is_cover else _emotion_face_cn(getattr(page, "expression", "") or "")
 
     # 4) 留白
     blank_cn = _blank_text(page.index) if not is_cover else (
         "利用画面上方场景原生的空旷区域（天空 / 明亮天花板 / 大片墙面等，保留真实色彩与纹理、其上无人物道具）"
-        "作为书名文字留白，禁止画纯白色块或空白方框"
+        "留出一块干净留白供后期软件叠加书名；这块区域只保留干净的原生背景，"
+        "作画时绝对不要在上面画任何文字 / 字母 / 书名 / 标题，也不要画纯白色块或空白方框"
     )
 
     # 5) 关键道具检测（v3 增强：从故事文本抓 hamster/eraser/books/cookies 等）
@@ -1562,43 +2047,62 @@ def build_cn_page_prompt(
     # 6) 环境推断（v2.0 新增）— 根据故事文本主动给"环境必须有 X/Y/Z"
     env_hint = "" if is_cover else _detect_environment((page.text or "") + " " + scene_cn)
 
-    # 7) ============ v3: 组装正向 prompt（火山风单段流畅自然语言）============
-    positive = _build_positive_v3(
-        is_cover=is_cover,
-        title=title,
-        scene_cn=scene_cn,
-        cast=cast,
-        ip_age=ip_age,
-        env_hint=env_hint,
-        key_props=key_props,
-        composition_cn=composition_cn,
-        blank_cn=blank_cn,
-        angle_cn=angle_cn,
-        focus_cn=focus_cn,
-        hook_cn=hook_cn,
-    )
+    # 7) 参考图策略（v2.2：本页 cast 里每人 1 张，最多 5 张）。
+    #   上限从 3→5（修 L3 #42 P7「全家餐桌」：一页含 Mia/Tommy/Mom/Dad 4 人时，
+    #   第 4 个人没参考图只靠文字 → 形象漂移。下游 build_reference_sheet 把多张横向拼成
+    #   1 张定妆合集，gpt-image-2 仍只收 1 张图，拼图只是更宽，不影响接口。
+    _REF_CAP = 5
+    refs: list[Path] = []
+    for c in cast:
+        if c.get("ref_path") and len(refs) < _REF_CAP:
+            refs.append(c["ref_path"])
 
-    # 8) ============ v3: 组装反向 prompt（分类禁忌）============
-    negative = _build_negative_v3(cast=cast, page_text=(page.text or ""), ip_age=ip_age)
+    # 7.5) 书内角色册（用户拍板 2026-06-07）：一次性/非 IP 角色的"书内锁"。
+    #   反复出场角色 → 注入全书统一外观描述（防跨页漂移）+ 挂书内定妆锚图（与 IP 同等锁死）。
+    #   先于正向段计算：concise 公式把该锁并入【3·主体角色】段（不再散落篇尾）。
+    extra_note, extra_refs, oneoff_cast = _apply_book_cast(
+        outline, page, official_raw, current_refs=len(refs))
+    for rp in extra_refs:
+        if len(refs) < _REF_CAP:
+            refs.append(rp)
+
+    # 8) 组装正向(1-19 段公式) + 反向(第 20 段)。
+    #   CONCISE_PROMPT=True（用户拍板 2026-06-09，实测验证）→ 结构化公式·正向写法；
+    #   False → 旧版冗长全锁写法（保留作回退）。
+    story_lock = _scene_story_lock(outline, page, _raw_scene_for_theme, is_cover)
+    if _CONCISE_PROMPT:
+        # leads_active：本页主角是否“正在动手参与”的实施者（用于 ★0 段措辞）。
+        #   框架寓言里 Mia/Tommy 是读者/旁观者，不能声称他们在做故事里的事 → 关闭该措辞。
+        _leads_active = not bool(_frame_fable) and not _nf_body_page(page, outline)
+        # 背景无关小动物默认关闭（用户拍板 2026-06-10）：本页无任何剧情动物时注入正向兜底。
+        _inject_anim = not _has_registered_story_animal(cast, oneoff_cast)
+        positive = _build_positive_concise(
+            is_cover=is_cover, title=title, scene_cn=scene_cn, cast=cast, ip_age=ip_age,
+            env_hint=env_hint, key_props=key_props, composition_cn=composition_cn,
+            blank_cn=blank_cn, angle_cn=angle_cn, focus_cn=focus_cn, hook_cn=hook_cn,
+            oneoff_note=extra_note, story_lock=story_lock, leads_active=_leads_active,
+            has_extras=_scene_extras_raw, expr_face_cn=expr_face_cn,
+            inject_anim_lock=_inject_anim,
+        )
+        negative = _build_negative_concise(cast=cast, page_text=(page.text or ""), ip_age=ip_age,
+                                           oneoff_cast=oneoff_cast)
+    else:
+        positive = _build_positive_v3(
+            is_cover=is_cover, title=title, scene_cn=scene_cn, cast=cast, ip_age=ip_age,
+            env_hint=env_hint, key_props=key_props, composition_cn=composition_cn,
+            blank_cn=blank_cn, angle_cn=angle_cn, focus_cn=focus_cn, hook_cn=hook_cn,
+        )
+        negative = _build_negative_v3(cast=cast, page_text=(page.text or ""), ip_age=ip_age)
 
     # 9) 最终 prompt = 正向 + 反向
     prompt_text = BuiltPromptCN.join(positive, negative)
-
-    # 10) 参考图策略（v2.1：本页 cast 里每人 1 张，最多 3 张）
-    refs: list[Path] = []
-    for c in cast:
-        if c.get("ref_path") and len(refs) < 3:
-            refs.append(c["ref_path"])
-
-    # 10.5) 书内角色册（用户拍板 2026-06-07）：一次性/非 IP 角色的"书内锁"。
-    #   反复出场角色 → 注入全书统一外观描述（防跨页漂移）+ 挂书内定妆锚图（与 IP 同等锁死）。
-    extra_note, extra_refs, oneoff_cast = _apply_book_cast(
-        outline, page, official_raw, current_refs=len(refs))
-    if extra_note:
+    # 回退(verbose v3)路径：一次性角色锁仍按旧方式追加（concise 已并入【3·主体角色】段）。
+    if not _CONCISE_PROMPT and extra_note:
         prompt_text = prompt_text + "\n\n" + extra_note
-    for rp in extra_refs:
-        if len(refs) < 3:
-            refs.append(rp)
+
+    # 11) 超长保护：去重精简重复套话；超 3800 字符打告警（防下游 4000 截断切掉尾部铁律）。
+    _tag = "封面" if is_cover else f"P{page.index}"
+    prompt_text = _enforce_prompt_budget(prompt_text, label=f"{title} {_tag}")
 
     return BuiltPromptCN(
         positive=positive,
@@ -1606,6 +2110,8 @@ def build_cn_page_prompt(
         prompt=prompt_text,
         references=refs,
         used_characters=cast + oneoff_cast,
+        scene_cn=scene_cn,
+        story_lock=story_lock,
     )
 
 
@@ -1618,8 +2124,14 @@ def _apply_book_cast(outline, page, official_raw: str, current_refs: int):
     if not book_cast:
         return "", [], []
     try:
-        from book_cast import roles_on_page
-        roles = roles_on_page(book_cast, official_raw)
+        from book_cast import (roles_on_page, is_adult_role, is_child_human_role,
+                               is_animal_role, is_story_dog_role, oneoff_child_color,
+                               STORY_DOG_LOCK_CN)
+        # 无官方文本（如 Book63）时回退本页正文/scene/scene_cn 文本，否则书内角色锚/外观锁每页都漏注入。
+        page_text = ((getattr(page, "text", "") or "") + " "
+                     + (getattr(page, "scene", "") or "") + " "
+                     + (getattr(page, "scene_cn", "") or ""))
+        roles = roles_on_page(book_cast, official_raw, page_text=page_text)
     except Exception:
         return "", [], []
     if not roles:
@@ -1633,18 +2145,391 @@ def _apply_book_cast(outline, page, official_raw: str, current_refs: int):
             tag += f"：{desc}"
         tag += ("（本故事内每次出现都必须是同一个角色：脸型/发型/发色/肤色/服装/配色完全一致；"
                 "儿童绘本风格，友善可爱、绝不凶恶吓人）")
+        # 成人/职业类一次性角色：即使只出现 1 页（无锚图）也注入成人锁，防被画成穿制服的小孩。
+        if is_animal_role(r):
+            if is_story_dog_role(r):
+                tag += STORY_DOG_LOCK_CN
+            else:
+                tag += ("（这是一只动物，按其真实物种外观绘制：四足、该物种的体型/毛色/耳型/尾巴，"
+                        "绝不拟人化为人类小孩、不穿人类衣服、不直立行走。）")
+        elif is_adult_role(r):
+            tag += ("【这是一位成年人】成熟成人脸庞与成人身材比例，明显高于 10 岁儿童、"
+                    "约为儿童身高的 4:3、孩子头顶大约到其肩部；绝不能画成小孩/儿童/青少年。")
+        # 人类儿童命名角色（如 Ben）：页面级也带【全新独立·国际化·反克隆主角】锁，
+        #   保证不仅锚图对、成图页也不会把 Ben 画成 Tommy/Mia 的翻版。颜色与锚图共用同一确定性指派。
+        elif is_child_human_role(r):
+            _c = oneoff_child_color(r.rid)
+            tag += (f"【{r.display} 是一个全新独立的国际化儿童角色】与主角 Mia、Tommy 完全不同的另一个孩子，"
+                    f"明确 10 岁学龄儿童比例（约 5.5-6 头身，绝不画成五六岁低龄/胖娃娃/Q版大头，也绝不画成 12 岁/青少年/成人），"
+                    f"与本书同款治愈系手绘水彩画风（不要跑成别的风格）；外貌国际化/可外籍、多元长相，"
+                    f"绝不撞 Tommy 的脸/棕色蓬松短发、绝不撞 Mia 的脸/发型；"
+                    f"上衣用【{_c}】，绝不穿蓝色(Tommy 专属)、绝不穿紫色(Mia 专属)。")
         lines.append(tag)
-        if r.anchor_path and (current_refs + len(extra_refs)) < 3:
+        if r.anchor_path and (current_refs + len(extra_refs)) < 5:
             ap = Path(r.anchor_path)
             if ap.exists():
                 extra_refs.append(ap)
-        dbg.append({"key": f"oneoff:{r.rid}", "name": r.display, "is_oneoff": True})
+        dbg.append({"key": f"oneoff:{r.rid}", "name": r.display, "is_oneoff": True,
+                    "species": getattr(r, "species", "human"),
+                    "is_story_dog": is_story_dog_role(r)})
     return ("\n".join(lines), extra_refs, dbg)
 
 
 # ============================================================
 #  v3 正向 prompt 构造（火山风单段流畅）
 # ============================================================
+
+# 场景里"主角之外的人"检测（用户拍板 2026-06-09）——
+#   科普绘本常出现农夫/工人/店员/路人等【非IP配角】。这些有脸配角需要：
+#   ① 成人:孩子 4:3 比例锁（哪怕没注册成 cast）；② 国际化/多元族裔、不撞主角、不默认中国人。
+_SCENE_ADULT_RE = _re.compile(
+    r"农夫|农民|工人|工匠|工厂工人|司机|店员|售货员|收银|服务员|厨师|面包师|医生|护士|"
+    r"警察|警官|消防员|邮递员|快递员|邮差|"
+    r"叔叔|阿姨|大人|成年|大叔|大妈|爷爷|奶奶|老人|路人|村民|顾客|"
+    r"\bfarmer|worker|driver|clerk|cashier|chef|cook|baker|vendor|grocer|"
+    r"police|officer|cop|firefighter|fire ?fighter|fireman|"
+    r"postman|mailman|mail ?carrier|mail ?man|"
+    r"adult|grown-?up|villager|customer|passer", _re.IGNORECASE)
+_SCENE_CROWD_RE = _re.compile(
+    r"人群|一群人|众人|路人们|同学们|大家|围观|crowd|people|villagers|customers", _re.IGNORECASE)
+# 非主角【儿童群体】语境（2026-06-09 新增）——足球/运动/课堂群像里的
+#   "其他小孩/队友/同学/球队/一群孩子"等。漏判会导致这类场景不触发"配角多元各异"，
+#   配角于是克隆主角脸型/发型、撞主角配色（男孩穿蓝=Tommy / 女孩穿紫=Mia）。
+#   注意：与成人/人群分开判定——这些是孩子，绝不能套用"成人:孩子 4:3"比例锁。
+_SCENE_KIDS_RE = _re.compile(
+    r"其他小孩|其他孩子|别的小孩|别的孩子|另一个(?:男孩|女孩|小孩|孩子)|"
+    r"小伙伴|小朋友|伙伴们|同伴|队友|队员|球队|球员|同队|对手|"
+    r"同学(?!们)|学生们?|孩子们|一群(?:孩子|小孩|小朋友|男孩|女孩)|几个(?:孩子|小孩|男孩|女孩)|"
+    r"\bteamm?mates?|\bteammates?|\bclassmates?|\bschoolmates?|"
+    r"other (?:kids?|children|child|boys?|girls?)|\bkids?\b|\bchildren\b|"
+    r"\bplayers?\b|\bteam\b|\bpeers?\b|group of (?:kids?|children)", _re.IGNORECASE)
+
+
+def _scene_has_nonlead_humans(scene_cn: str) -> bool:
+    """本页场景里是否出现了主角之外的【成人/人群】（农夫/工人/店员/路人/人群等）。
+
+    仅用于触发"成人:孩子 4:3 比例锁"，不含纯儿童群体（队友/同学）。
+    """
+    return bool(scene_cn and (_SCENE_ADULT_RE.search(scene_cn) or _SCENE_CROWD_RE.search(scene_cn)))
+
+
+def _scene_has_nonlead_kids(scene_cn: str) -> bool:
+    """本页场景里是否出现了主角之外的【其他小孩】（队友/同学/球队/一群孩子等）。"""
+    return bool(scene_cn and _SCENE_KIDS_RE.search(scene_cn))
+
+
+def _scene_has_nonlead_extras(scene_cn: str) -> bool:
+    """本页场景里是否出现【任何非 IP 配角】（成人/人群【或】其他小孩）。
+
+    用于触发"配角多元各异 + 主动指派异色 + 禁穿主角专属色"规则。
+    """
+    return bool(scene_cn and (_scene_has_nonlead_humans(scene_cn) or _scene_has_nonlead_kids(scene_cn)))
+
+
+def _scene_lead_is_nonlead_actor(scene_cn: str, kid_names: str) -> bool:
+    """本页【主体动作的执行者】是不是非主角（农夫/工人等），而 Mia/Tommy 只是旁观。
+
+    判定：场景里出现了非主角成人，且主体动作句（"…正在/蹲下/弯腰/俯身…"）不是由主角发出。
+    保守起见：只要场景明显以"农夫/工人在劳作"开头描述、且主角名没紧跟动作，就算非主角主体。
+    """
+    if not _scene_has_nonlead_humans(scene_cn):
+        return False
+    head = scene_cn[:120]
+    # 主体动作由非主角发出（农夫蹲下/工人弯腰/司机打开…），且开头没有先点主角名
+    actor_lead = bool(_SCENE_ADULT_RE.search(head))
+    names = [n for n in (kid_names or "").split("、") if n]
+    kid_first = any(n and n in head for n in names)
+    return actor_lead and not kid_first
+
+
+def _is_adult_cast_member(c: dict) -> bool:
+    return (c.get("kind") in ("family", "adult")
+            or c.get("key") in ("mom", "dad", "grandma", "grandpa",
+                                 "granny", "grandfather", "teacher_kim"))
+
+
+def _audience_cn(ip_age: int) -> str:
+    """受众标签（按 IP 年龄映射级别段）。"""
+    if ip_age <= 8:
+        return "约 6-8 岁学龄前/低年级儿童（L0-2）"
+    if ip_age <= 10:
+        return "约 8-10 岁学龄儿童（L3-4）"
+    return "约 10-12 岁学龄儿童（L5-6）"
+
+
+_TIME_PATS = [
+    (r"清晨|早晨|晨光|破晓|日出|一早", "清晨"),
+    (r"上午|午前", "上午"),
+    (r"正午|中午|当午", "正午"),
+    (r"午后|下午", "午后"),
+    (r"黄昏|傍晚|日落|夕阳|暮色", "黄昏"),
+    (r"夜晚|夜里|深夜|夜色|星空|月光|晚上", "夜晚"),
+]
+_WEATHER_PATS = [
+    (r"下雨|雨中|雨天|细雨|大雨|雨点|雨滴", "雨天"),
+    (r"下雪|雪天|雪花|白雪", "雪天"),
+    (r"阴天|乌云|灰云|阴沉", "阴天"),
+    (r"晴朗|阳光|蓝天|晴空|金色的?阳光", "晴天"),
+]
+
+
+def _detect_time_cn(scene_cn: str) -> str:
+    """从场景文本里轻量识别【时间/天气】（识别不到则留空，整段省略）。"""
+    if not scene_cn:
+        return ""
+    parts: list[str] = []
+    for pat, lab in _TIME_PATS:
+        if _re.search(pat, scene_cn):
+            parts.append(lab)
+            break
+    for pat, lab in _WEATHER_PATS:
+        if _re.search(pat, scene_cn):
+            parts.append(lab)
+            break
+    return "、".join(parts)
+
+
+def _build_positive_concise(
+    *, is_cover: bool, title: str, scene_cn: str, cast: list[dict], ip_age: int,
+    env_hint: str, key_props: list[str], composition_cn: str, blank_cn: str,
+    angle_cn: str = "", focus_cn: str = "", hook_cn: str = "", oneoff_note: str = "",
+    story_lock: str = "", leads_active: bool = True, has_extras: bool | None = None,
+    expr_face_cn: str = "", inject_anim_lock: bool = False,
+) -> str:
+    """【结构化公式·正向】prompt（2026-06-10 用户拍板"按公式重排 + 精简"）。
+
+    按固定 20 段顺序输出带中文标注的段落（缺省段省略、顺序不变），让 image_prompts.txt
+    一眼可读；所有"硬锁"（IP 形象锁/10 岁比例+同龄等高/配角确定性配色轮/Ben 反克隆/
+    防分身/禁文字/20-25% 留白/中低饱和暖中性）原样保留，只换位置 + 精简措辞。
+    """
+    kids = [c for c in cast if c.get("name") and c.get("kind") != "pet"
+            and not _is_adult_cast_member(c)]
+    adults = [c for c in cast if c.get("name") and _is_adult_cast_member(c)]
+    kid_names = "、".join(c.get("name", "") for c in kids)
+    # has_extras 优先用调用方在【注入负向样板前】快照好的真实值（避免"不要加围观人群"这类
+    #   负向指令被人群正则误判成真有配角）；未传入时回退到就地检测（保持其它潜在调用方安全）。
+    if has_extras is None:
+        has_extras = (not is_cover) and _scene_has_nonlead_extras(scene_cn)
+
+    sec: list[str] = []
+
+    # 1·类型
+    sec.append(f"【1·类型】童书绘本插画（连续性系列绘本{'封面' if is_cover else '内页'}）")
+    # 2·受众
+    sec.append(f"【2·受众】{_audience_cn(ip_age)}")
+
+    # ★ 0·本页核心画面（front-load【完整本页场景】，置于冗长 IP 外观锁之前抢占注意力）：
+    #   复刻 Book54 成功配方——把【完整 scene_cn 场景 + 本页谁在做什么】提到最前、最高优先级，
+    #   外貌锁(【3·主体角色】)移到其后；修“满足完人物锁就交差、退化成主角呆站空背景”根因。
+    #   注意：完整场景只在此处出一次，下面第 13 段内页不再重复（同义只留一处）。
+    if (not is_cover) and scene_cn.strip():
+        sec.append(
+            "【★0·本页核心画面·最高优先级·严格按此作画】" + scene_cn.rstrip("。") + "。"
+            + (story_lock.rstrip("。") + "。" if story_lock else "")
+            + "以上是画面【主体】、占主要面积、清晰有故事张力地演出来；绝不退化成主角呆站/摆拍/只露两张脸。"
+        )
+
+    # 3·主体角色（汇集所有【角色硬锁】：IP 形象锁 + 配色专属 + 宠物 + Ben 反克隆 +
+    #            配角确定性配色轮/多元 + 10 岁比例/同龄等高/防分身）
+    role_lines: list[str] = []
+    for c in cast:
+        d = (c.get("description_cn") or "").rstrip("。")
+        if d:
+            role_lines.append(f"· {c.get('name', '')}：{d}。")
+    color = [f"{c['name']}是画面里唯一穿{_signature_color_of(c['key'])}的人"
+             for c in cast if _signature_color_of(c["key"])]
+    if color:
+        role_lines.append("配色专属：" + "；".join(color) + "（其他任何人不得穿这些专属色）。")
+    if any(c.get("key") == "max" for c in cast):
+        role_lines.append("本页剧情需要的狗就是 Max（金棕色柯基犬），全图仅此一只狗，不要再画别的狗。")
+    if any(c.get("key") == "winnie" for c in cast):
+        role_lines.append("本页剧情需要的猫就是 Winnie（灰色虎斑小猫），全图仅此一只猫，不要再画别的猫。")
+    # 背景双锁·正向兜底（用户拍板 2026-06-10）：放在【3·主体角色】存活窗口内（防被 L3-6 下游 ~2119
+    #   字截断切掉尾部负向）。inject_anim_lock 由调用方按"本书无剧情动物"判定（剧情动物豁免，见
+    #   _has_registered_story_animal）；海报脸一句全书通用。措辞精简，不挤占 IP/比例额度。
+    if inject_anim_lock:
+        role_lines.append("背景不要画与剧情无关的装饰性小动物（猫/狗/鸟/松鼠/老鼠等乱入点缀）。")
+    role_lines.append("墙上/海报/画框里不要出现酷似主角(Mia/Tommy)的人脸。")
+    # Ben 类一次性命名角色【反克隆锁】（来自 book_cast，并入主体角色段，而非散落篇尾）
+    if oneoff_note:
+        for _ln in oneoff_note.split("\n"):
+            _ln = _ln.strip()
+            if _ln:
+                role_lines.append(_ln)
+    # 非 IP 配角：确定性配色轮 + 多元各异 + SOP 第6条数量/占比量化
+    if has_extras:
+        role_lines.append(_extra_color_assignment_cn())
+        role_lines.append(_extra_diversity_cn())
+        # SOP 第6条（配角量化）：配角总数 ≤2 名、画面视觉占比 ≤15%、仅背景氛围点缀不抢主角。
+        role_lines.append(
+            "【配角上限】生活化配角总数≤2、占比≤15%，仅背景点缀，不抢主角、不遮挡主线；未点名者不凭空新增。"
+        )
+    # 10 岁比例 + 同龄等高 + 防分身
+    if kids:
+        has_adult = bool(adults) or ((not is_cover) and _scene_has_nonlead_humans(scene_cn))
+        ratio = ("；画面出现成年人时，成人与孩子身高约 4:3、孩子头顶大约到成人肩部，"
+                 "成人是成人头身比、孩子是孩子头身比" if has_adult else "")
+        if has_extras:
+            others = ("允许出现其他小孩/队友/同学，但必须与主角【明显不同】"
+                      "（脸型/发型/发色/肤色/衣色各异），绝不撞主角脸/发/衣色，也不得彼此雷同。")
+        else:
+            others = (f"除 {kid_names} 外不再出现别的小孩，也不出现与主角撞脸/撞发/撞衣色的人；"
+                      "本页文字未点名其他人物时，绝不为凑场景凭空添加陌生路人/围观人群/成年配角。")
+        equal_height = ""
+        if is_cover or has_extras:
+            equal_height = (
+                "【等高锁】Mia/Tommy 与同龄孩子站同一水平面、头顶齐平、体型一致，主角绝不比同龄人矮半头；"
+                "透视缩小只用于明显更远的背景人影。"
+            )
+        # 精简（用户拍板 2026-06-10）：仅在有同龄队友/同学或封面群像时才补“同龄等高”整段，
+        #   纯双主角内页省去这段噪声，把注意力让给本页故事动作。
+        same_age_line = (
+            f"同框所有 {ip_age} 岁孩子身高体型一致、与主角一样高（绝不更高大或更矮小）。{equal_height}"
+        ) if (is_cover or has_extras) else ""
+        role_lines.append(
+            f"比例：孩子都是 {ip_age} 岁学龄期比例（{_head_body_ratio_lock(ip_age)}）{ratio}。"
+            f"{same_age_line}"
+            f"每个角色全图只出现一次（绝不分身/复制/双胞胎/镜像）；{others}"
+        )
+    who = kid_names or "、".join(c.get("name", "") for c in cast) or "系列主角 Mia、Tommy"
+    sec.append("【3·主体角色】本页出场：" + who + "。\n" + "\n".join(role_lines))
+
+    # 4·背景/环境
+    if env_hint:
+        sec.append(f"【4·背景/环境】{env_hint.rstrip('。')}。")
+    # 5·时间（识别不到则省略）
+    _t = _detect_time_cn(scene_cn)
+    if _t:
+        sec.append(f"【5·时间】{_t}")
+    # 6·情绪/表情（SOP 第7/二.5 条：禁抽象情绪词，统一用固定面部细节词表；归并不到六类则省略）
+    if expr_face_cn:
+        sec.append(f"【6·情绪/表情】主角面部按固定情绪词表表达：{expr_face_cn}"
+                   "（用具体面部细节呈现，绝不写抽象情绪形容词）")
+    # 7·材质
+    sec.append("【7·材质】纸上手绘水彩（柔和水痕、平滑渐变）")
+    # 8·视角/机位
+    if is_cover:
+        sec.append("【8·视角/机位】电影式取景，人物七分身或全身带自然角度"
+                   "（三四分之一侧身或轻微俯仰/越肩主角视角），绝不正面呆板平视")
+    elif angle_cn:
+        sec.append(f"【8·视角/机位】{angle_cn}")
+    # 9·构图（景别 + 本页主体动作）
+    _comp = composition_cn or ""
+    if (not is_cover) and focus_cn:
+        _act = f"本页主体动作：{focus_cn.rstrip('。')}——用动态有张力的姿态演出来"
+        _comp = (_comp + "；" + _act) if _comp else _act
+    if _comp:
+        sec.append(f"【9·构图】{_comp}")
+    # 10·主体位置
+    sec.append("【10·主体位置】主角偏置一侧、约占 55-65%、清晰够大、是视觉焦点；其余 75-80% 由主体与环境填满、不空旷")
+    # 11·留白（精简：英文 LAYOUT LOCK 已详述，这里只留中文核心锚点）
+    sec.append("【11·留白】留一整条约 20-25%（≥20%）文字区，必须是本页场景向上延伸（户外天空树梢/室内天花板线·书架顶·墙面），"
+               "有真实色彩质感，绝不是纯白/平涂纯色块或硬边方框；区内不放可识别人物/道具/文字")
+    # 12·层次/景深
+    sec.append("【12·层次/景深】前中后景拉开层次、浅景深聚焦主体，画面通透有纵深，绝非扁平平铺")
+    # 13·必须出现的细节（封面场景；内页完整场景已在 ★0 置顶，这里不再重复——同义只留一处）
+    if is_cover:
+        sec.append(f"【13·必须出现的细节·最高优先级】绘本封面《{title}》：{scene_cn.rstrip('。')}。"
+                   + (story_lock + "。" if story_lock else "")
+                   + "封面要有设计感与故事感、空间纵深，绝不是几人正面并排呆站的扁平合影")
+    # 14·文字（NO-TEXT 锁）
+    sec.append("【14·文字】无——全图不得出现任何文字/字母/单词/数字/书名/标题/水印/logo（NO-TEXT 锁）")
+    # 15·配饰/道具（SOP 第13条：贯穿多页的关键物件，造型/颜色/大小/材质全书逐页一致）
+    if key_props:
+        sec.append("【15·配饰/道具】画面中应出现：" + "；".join(key_props)
+                   + "。凡贯穿多页的关键道具/物件，其造型、颜色、大小、材质全书每页保持完全一致。")
+    # 16·参数
+    sec.append("【16·参数】生成尺寸 1536×1024，输出裁切为 4:3 横构图（绘本封面/内页）")
+    # 17·色彩（精简：英文画风段已详述清透轻水彩；这里只留中文一句锚点）
+    sec.append("【17·色彩】清透轻水彩——颜色像水彩自然晕开、柔和过渡、明亮通透不发灰，绝不是生硬色块/平涂色带/调色板拼贴")
+    # 18·风格（精简：英文画风段已详述；保留细墨线/纸纹/可爱脸的中文锚点）
+    sec.append("【18·风格】清透轻水彩绘本——细墨线（非黑硬线）、纸纹在水彩之下、明亮高调柔光，人物圆润可爱、脸颊干净，可高分辨率印刷")
+    # 19·参考画风（参考图＝定妆表·1:1 还原）
+    if cast:
+        sec.append("【19·参考画风】所附参考图＝白底角色定妆表，按其 1:1 还原五官/发型/服装与配色、只改姿势表情、全书一致；"
+                   "动作描述里若有冲突外观一律忽略，以形象锁与参考图为准")
+    else:
+        sec.append("【19·参考画风】贴合样图的清透轻水彩")
+
+    return "\n".join(sec)
+
+
+def _has_registered_story_animal(cast: list[dict], oneoff_cast: list[dict] | None) -> bool:
+    """本书/本页是否登记了【剧情需要的动物】（家养狗 Max / 剧情狗 Buddy / 猫 Winnie /
+    species=dog|animal 的一次性角色 / kind=pet 的 cast）。
+
+    用作"背景无关小动物默认关闭"的豁免开关：返回 True → 不注入该负向（避免误删 Buddy/Max/Winnie）；
+    返回 False → 本页无任何剧情动物 → 注入"无关装饰性小动物 off"。复用既有宠物按 cast 豁免机制。
+    """
+    _oneoff = oneoff_cast or []
+    return (
+        any((c.get("key") or "") in ("max", "winnie") for c in cast)
+        or any(c.get("kind") == "pet" for c in cast)
+        or any(c.get("is_story_dog") or c.get("species") in ("dog", "animal") for c in _oneoff)
+    )
+
+
+def _build_negative_concise(*, cast: list[dict], page_text: str, ip_age: int,
+                            oneoff_cast: list[dict] | None = None) -> str:
+    """【简短】反向 prompt：只保留 ~12 类最关键禁忌（对齐原生网页版的短负向表）。"""
+    neg = [
+        "任何文字/字母/数字/书名/水印/logo；",
+        "主角在空旷/无关背景里呆站、并排摆拍或被晾成远景路人而脱离本页关键道具/动作/场景；"
+        "画面跳题/省略本页情节；非虚构页缺少该主题标志道具/场景（退化成空泛无主题室内）；",
+        "为凑场景凭空添加、与本页剧情无关的陌生路人/围观人群/多余配角（未点名的人不应出现）；",
+        "细碎噪点、高频纹理、脏污颗粒、斑驳色块、密集小装饰、画面脏乱；",
+        "生硬色块/平涂色带/调色板色卡/色轮拼贴/突兀撞色块面（颜色应像水彩柔和过渡、不要硬边色块）；",
+        "纯白色块/白色方框/人工硬边留白；顶部大面积浅米/奶油/灰白平涂空色带、人物头顶被齐切、书架/墙/天花在头顶突变单色；",
+        "过度锐化、HDR 浓艳滤镜、色彩断层、发糊不通透、发灰发闷发暗、低分辨率、边缘发虚；",
+        "扁平平涂、缺层次景深、呆板正面证件照式摆拍；",
+        "畸形/不对称的脸或手、多指缺指、五官歪斜、头身比例失调；",
+        "明显腮红/红脸蛋/圆形红晕/脸颊红粉色块；",
+        "与主角撞脸/撞发/撞衣色的小孩、复制 Mia/Tommy 脸或发型的配角、同一角色分身/复制/双胞胎/镜像；",
+        "非 IP 配角穿主角专属色、配角千篇一律同一张脸（应多元各异）；",
+        "写实照片感/写实皮肤、3D 塑料、油画厚涂、粗黑墨线、强烈硬光影；",
+        "Q 版大头娃娃/4 头身幼态、把 10 岁画成青少年或幼儿；",
+        f"Mia 丸子头/发髻/half-up/披散/低马尾/侧马尾/双马尾/戴眼镜、Mia 颅顶超高马尾、Mia 用非紫色发圈"
+        f"（Mia 必须后脑中高位马尾+紫发圈：{MIA_HAIR_LOCK}）；Tommy 长发/马尾/戴眼镜；主角被画成成人或幼儿；",
+        "配角超过 2 名、配角占比过大（>15%）喧宾夺主；",
+        "反光塑料/玻璃高光、拥挤街道人潮、高耸现代高楼、夸张手势、漂浮断裂肢体；",
+        "Dino 吉祥物入画（永久禁止）；",
+    ]
+    # Tommy 浅天蓝硬锁（用户拍板 2026-06-10：以 Age10 定妆表为准，三档统一浅天蓝，全年龄加权）：
+    #   旧的"深蓝polo=12岁专属"已废弃，Tommy 任何年龄都不穿深蓝/navy/polo/牛仔。
+    if any((c.get("key") or "").split("_")[0] == "tommy" for c in cast):
+        neg.append(
+            "Tommy 穿深蓝/藏青/navy/钴蓝/靛蓝/teal 上衣、Tommy 穿短袖 polo 翻领、Tommy 穿牛仔裤、"
+            "Tommy 上衣比卡其裤更深或接近成人警服藏青——均禁（Tommy 任何年龄都必须【浅天蓝】长袖圆领卫衣 #5FA8D6~#8EC0ED）；"
+        )
+    # 宠物负向锁与剧情宠物对打修复（用户拍板 2026-06-09，2026-06-10 扩展剧情狗）：
+    #   本页 cast 含 Max(狗)/Winnie(猫)，【或】书内登记了剧情狗(oneoff:dog / is_story_dog) 时，
+    #   不再静态禁"狗/猫"——剧情狗=Buddy（由正向 Buddy 锁约束）、家养狗=Max、剧情猫=Winnie。
+    #   只在"无任何已登记狗"时才禁狗，避免误删本页的 Buddy。
+    _oneoff = oneoff_cast or []
+    _has_story_dog = any(c.get("is_story_dog") or c.get("species") == "dog" for c in _oneoff)
+    _has_dog = any(c.get("key") == "max" for c in cast) or _has_story_dog
+    _has_cat = any(c.get("key") == "winnie" for c in cast)
+    _banned_pets = [p for p, present in (("猫", _has_cat), ("狗", _has_dog)) if not present]
+    if _banned_pets:
+        neg.append("、".join(_banned_pets) + "等无关宠物；Dino 吉祥物（除非剧情明确需要）。")
+    else:
+        neg.append("剧情之外的多余宠物；Dino 吉祥物（除非剧情明确需要）。")
+    # 背景双锁（用户拍板 2026-06-10）：
+    #   ① 装饰性小动物默认关闭——修 Book66 背景乱入猫/鸟/松鼠/狗；复用剧情动物豁免：
+    #      本书 cast/oneoff 登记了任何剧情动物（狗 Buddy/Max、猫 Winnie、species=dog/animal 等）时
+    #      不注入，避免误删 Buddy 这类剧情需要的动物；只在“无任何已登记剧情动物”时才锁。
+    #   ② 海报脸——墙上/背景海报或画框里酷似主角(Mia/Tommy)的人脸（Book72 验证发现），全书通用。
+    #   注：L3-6 下游会把中文 body 截到 ~2119 字、本负向段在尾部多被切掉，故这两锁同时在
+    #      _build_positive_concise 的【3·主体角色】段（存活窗口内）以正向短句兜底，确保真正生效。
+    if not _has_registered_story_animal(cast, _oneoff):
+        neg.append("与剧情无关的装饰性小动物乱入背景（猫/狗/鸟/松鼠/老鼠/兔子等点缀）；")
+    neg.append("墙上/背景的海报、画框或招贴里出现酷似主角(Mia/Tommy)的人脸；")
+    excl = [f"除 {c['name']} 外任何人穿{_signature_color_of(c.get('key',''))}"
+            for c in cast if _signature_color_of(c.get("key", ""))]
+    if excl:
+        neg.append("；".join(excl) + "。")
+    return "".join(neg)
+
 
 def _build_positive_v3(
     *, is_cover: bool, title: str, scene_cn: str, cast: list[dict], ip_age: int,
@@ -1660,14 +2545,29 @@ def _build_positive_v3(
     """
     parts: list[str] = []
     names = "、".join(c.get("name", "") for c in cast if c.get("name"))
-    n_kids = len([c for c in cast if c.get("name")])
+
+    # 区分孩子 / 成人(家人/老师) / 宠物：年龄锁只能套在孩子身上，
+    # 成人(妈妈/爸爸/爷爷/奶奶/老师)绝不能被当成 ip_age 岁的小孩来画（2026-06-08 修 IP 串龄 bug）。
+    def _is_adult_cast(c: dict) -> bool:
+        return (c.get("kind") in ("family", "adult")
+                or c.get("key") in ("mom", "dad", "grandma", "grandpa",
+                                     "granny", "grandfather", "teacher_kim"))
+    kids = [c for c in cast if c.get("name") and c.get("kind") != "pet" and not _is_adult_cast(c)]
+    adults = [c for c in cast if c.get("name") and _is_adult_cast(c)]
+    kid_names = "、".join(c.get("name", "") for c in kids)
+    adult_names = "、".join(c.get("name", "") for c in adults)
+    n_kids = len(kids)
 
     # ① 本页画面（核心，最高权重，绝对置顶）
     if is_cover:
         parts.append(
             f"【画面 · 绘本封面 · 最高优先级】{(scene_cn or '').rstrip('。')}。"
             "封面要高级、有设计感、有故事感与空间纵深，绝不是几个人正面并排呆站摆拍的扁平合影；"
-            "镜头自然带角度、画面分前中后景，人物生动投入在情境里、神情自然友好；画面上方保留干净留白用于排书名。"
+            "镜头自然带角度、画面分前中后景，人物生动投入在情境里、神情自然友好；"
+            "画面上方保留【约 20-25%（至少 20%）的一整条横带】供后期叠加书名——但这条带【绝不能是纯白/惨白的空色块或硬边方块】，"
+            "必须是本页场景在顶部的自然延续、有色彩有质感（晴天蓝天淡云 / 暖金黄昏 / 柔灰阴雨 / 有肌理的墙面天花板等，随场景天气来画，低饱和莫兰迪质感、与下方同一光源自然过渡）；"
+            "这条带里只禁止【可识别的人物/动物/关键道具/文字，以及杂乱探入的树枝枝叶/招牌建筑】，但允许柔和的云、光晕、远处树梢顶端、墙面肌理等低饱和氛围元素；"
+            "其余画面要由主体与环境充实饱满地填满、不空旷；作画时这条带里绝对不要画任何文字/字母/书名/标题。"
         )
     else:
         parts.append(
@@ -1675,11 +2575,25 @@ def _build_positive_v3(
             f"请严格按这段描述的动作、姿势、视线与站位作画——这是本页最重要、绝不能画错的内容。"
         )
 
-    # ①.2 焦点/高潮（把本页最有张力的那一下做成画面主体，居中、动态、有层次）
+    # ①.1 硬性留白（高优先级·紧跟画面）——用户拍板 2026-06-09：
+    #   顶部留【≥20%、约 20-25%】文字区，但【绝不能是纯白/惨白的空色块】——
+    #   必须是有色彩、有质感、随本页场景与天气自然延续的【原生场景带】（蓝天白云/暖金黄昏/柔灰阴雨天/有肌理的墙面或天花板）。
+    #   该带只禁止"可识别的角色/动物/关键道具/文字"与杂乱探入的枝叶；允许云、光晕、远处树梢顶端、墙面肌理等低饱和氛围元素。
+    if not is_cover:
+        # 精简 2026-06-09：英文 NEGATIVE-SPACE LOCK 已在首尾完整描述留白规则，这里只留一句中文锚定，
+        #   把额度让给"比例/防分身/国际化"等关键铁律（避免它们被 4000 字截断切掉）。
+        parts.append(
+            "【顶部文字区】画面最上方留一整条横带（约 20-25%、至少 20%）供后期叠字——"
+            "这条带绝不能是纯白空色块，必须是本页场景在顶部的自然延续（随天气画蓝天淡云/暖金黄昏/柔灰阴雨/有肌理的室内墙面或天花板），"
+            "带里不出现可识别的人物/动物/关键道具/文字；其余 75-80% 由主体人物与环境充实饱满地填满，中景/中近景，主角清晰够大、不要缩太小四周空一片。"
+        )
+
+    # ①.2 焦点/高潮（把本页最有张力的那一下做成画面主体，动态、有层次）
     if not is_cover and focus_cn:
         parts.append(
             f"【画面焦点 · 主体动作】本页的视觉主体与高潮是：{focus_cn.rstrip('。')}。"
-            "把这个动作作为画面的中心主体来构图——主角居中偏前、占据最大视觉权重，"
+            "把这个动作作为画面主体来构图——主角是视觉焦点、明显偏置画面一侧（不要居中、不要铺满整框，"
+            "另一侧/顶部留出上述干净留白），"
             "用动态有张力的姿态（伸手/俯身/奔跑/惊喜等）把这一刻演出来，表情到位、情绪鲜活；"
             "并拉开前景—中景—背景的清晰层次、用浅景深把焦点落在这个主体动作上（主体清晰、背景柔和虚化），"
             "让孩子一翻到这页就立刻被这一下抓住，绝不是呆板平铺、人物呆站。"
@@ -1707,19 +2621,80 @@ def _build_positive_v3(
         )
         # 全本一致性硬规则（跨页/跨书身份与配色锁定 + 统一光影色温）——之前写好但未启用
         parts.append("【全本一致】" + consistency_prompt_cn())
+        # 配色专属锁上移（精简 2026-06-09）：紧跟 IP 锁，确保不被 4000 截断切掉——
+        #   "只有 Mia 穿紫 / 只有 Tommy 穿蓝"能直接阻止配角/路人撞主角配色（防伪克隆）。
+        _color_locks_early = [
+            f"{c['name']}是画面里唯一穿{_signature_color_of(c['key'])}的人"
+            for c in cast if _signature_color_of(c["key"])
+        ]
+        if _color_locks_early:
+            parts.append("配色专属锁：" + "；".join(_color_locks_early)
+                         + "；其他任何人（配角/路人）都不得穿这些专属色。")
+        # 非 IP 配角【主动指派异色】——紧跟 IP 锁、靠前防截断（修足球/运动群像里
+        #   "男孩穿蓝=Tommy / 女孩穿紫=Mia"的性别制服化克隆）。
+        if (not is_cover) and _scene_has_nonlead_extras(scene_cn):
+            parts.append(_extra_color_assignment_cn())
 
     # ③ 人数 + 年龄锁 + 比例 + 同尺度（合并成一句精炼硬约束）
     if cast:
-        line = (
-            f"人物与年龄（硬约束·绝不能错）：画面里的儿童只能是 {names}，"
-            f"且每个孩子都必须是【{ip_age} 岁】的样子——身高、脸型、身材比例都要符合 {ip_age} 岁"
-            f"（{'12 岁是青春期前的少年/少女，身形修长、个子较高，绝不是矮小幼态的低龄小童' if ip_age >= 12 else ('10 岁是学龄期儿童' if ip_age >= 10 else '8 岁是低龄学童')}）；"
-            f"不要出现有清晰五官/发型的陌生同学或路人；"
-            "如剧情确需人群，只允许【远景、虚化、看不清脸】的多元族裔人影剪影做国际化氛围，"
-            "且必须高度多样（不同年龄/身高/体型/发型/衣色，以成年人与不同长相为主），"
-            f"绝不能出现与 {names} 雷同的小孩——尤其严禁背景里出现紫色高马尾女孩、蓝色上衣蓬松短发男孩等酷似主角的身影（那会变成分身）；"
-            "背景人物一律不得抢主体、不得与主角同款形象；不要凭空新增别的小孩；"
-            f"主角（群体）是画面视觉焦点、明显偏置画面一侧、占画面高度约 45-55%，另一侧留出排文字空间；"
+        age_desc = ('12 岁是青春期前的少年/少女，身形修长、个子较高，绝不是矮小幼态的低龄小童'
+                    if ip_age >= 12 else
+                    ('10 岁是学龄期儿童' if ip_age >= 10 else '8 岁是低龄学童'))
+        if kids:
+            line = (
+                f"人物与年龄（硬约束·绝不能错）：画面里的【儿童】只能是 {kid_names}，"
+                f"且每个孩子都必须是【{ip_age} 岁】同龄、身高相近的样子——身高、脸型、身材比例都要符合 {ip_age} 岁"
+                f"（{age_desc}）；{kid_names} 是同龄的兄妹/同学，彼此身高体型相近，"
+                "绝不能一个画成幼儿(3-5岁)、另一个画成大孩子或青少年；"
+            )
+        else:
+            line = "人物（硬约束·绝不能错）："
+        # 成人/老人单独锁（关键修复：家人不是 ip_age 岁的小孩！）
+        # 分两类：①成人/人群 → 触发 4:3 比例；②任何配角（含其他小孩）→ 触发多元/异色。
+        scene_has_adult_extras = (not is_cover) and _scene_has_nonlead_humans(scene_cn)
+        scene_has_extras = (not is_cover) and _scene_has_nonlead_extras(scene_cn)
+        if adults:
+            line += (
+                f"画面里的【成年人/老人】是 {adult_names}，他们必须是成熟的大人或白发老人——"
+                "妈妈/爸爸是 30 多岁的成年家长（成熟脸庞与成人体型，绝不是小孩、绝不是青少年/teenager、绝不是大学生模样），"
+                "爷爷/奶奶是明显年长的老人（白/银发、慈祥皱纹）；"
+                f"成年人与 {ip_age} 岁孩子的身高比例约为【4:3】——即孩子身高约为成人的四分之三、【孩子头顶大约到成人的肩部/上胸位置】，"
+                "成人是成熟的成人头身比、孩子是孩子头身比，绝不能把大人和孩子画成同龄同高、也不要夸张到孩子只到大人腰部；"
+            )
+        elif kids and scene_has_adult_extras:
+            # 场景里出现农夫/工人/店员/路人等【非注册成人】——同样必须锁成人:孩子 4:3 比例，
+            #   修 P2-P5 这类"孩子站在弯腰大人旁却被放大成12岁"的漂移。
+            line += (
+                f"画面里若出现成年人（农夫/工人/店员/司机/路人等），他们都是【成熟的成年人】，"
+                f"与 {ip_age} 岁孩子的身高比例约为【4:3】——孩子身高约为成人的四分之三、【孩子头顶大约到成人的肩部/上胸位置】，"
+                "成人是成熟成人头身比、孩子是孩子头身比，绝不能把成年配角画得和孩子同龄同高、也绝不能把 10 岁孩子拔高成12岁青少年；"
+            )
+        # 非IP配角【国际化·多元族裔】铁律（用户拍板 2026-06-09）——
+        #   除主角与已锁定家人外，其余人物必须是多元族裔的不同长相，不默认中国/亚洲面孔、不撞主角。
+        if scene_has_extras:
+            line += (
+                f"【非IP配角·国际化多元且各异】画面里除 {names} 外的所有其他人物（其他小孩/队友/同学/球队成员/农夫/工人/店员/路人/其他大人），"
+                "必须是【国际化、多元族裔】、彼此【各不相同】的不同长相——不同的肤色、发色、发型、脸型、五官、体型与服装，自然多样；"
+                "明显区别于主角，绝不复制 Mia/Tommy 的脸或发型，多个配角也绝不长成同一个模子；"
+                "绝不要默认画成中国人/亚洲面孔，也绝不能与主角撞脸、撞发型、撞衣色；不抢主体；"
+            )
+        # 软化（2026-06-09）：剧情需要"一群队友/同学"时不再一律禁止其他小孩，
+        #   改为"允许出现但必须与主角明显不同"；只保留对【撞主角/分身】的硬禁。
+        if scene_has_extras:
+            line += (
+                "本页剧情需要其他小孩/队友/同学时，他们可以清晰出现，但每个都必须与主角【明显不同】"
+                "（不同脸型/发型/发色/肤色/衣色），且彼此各异、各自多元；"
+            )
+        else:
+            line += (
+                "不要出现有清晰五官/发型、与主角雷同的陌生同学或小孩；"
+                "如剧情确需人群，只允许【远景、虚化、看不清脸】的多元族裔人影剪影做国际化氛围，"
+                "且必须高度多样（不同年龄/身高/体型/发型/衣色，以成年人与不同长相为主）；不要凭空新增别的小孩；"
+            )
+        line += (
+            f"绝不能出现与主角 {kid_names or names} 雷同的小孩——尤其严禁出现紫色上衣高马尾女孩、蓝色上衣蓬松短发男孩等酷似主角的身影（那会变成分身）；"
+            "背景人物一律不得抢主体、不得与主角同款形象；"
+            f"主角是画面视觉焦点、偏置画面一侧、占画面高度约 55-65%（画得清晰饱满、不要缩太小），仅在另一侧/顶部留出约 20-25% 排文字空间；"
             f"{_head_body_ratio_lock(ip_age)}；每只手 5 根手指、关节自然、双眼对称、五官端正不歪斜；"
             "头部与脖颈结构自然正确、头型圆润对称、头发与头部自然衔接（马尾/发辫根部连接处准确），"
             "侧脸或侧头视角下轮廓与五官也要准确、不变形不重叠。"
@@ -1728,6 +2703,13 @@ def _build_positive_v3(
         line += _furniture_scale_lock(ip_age)
         if n_kids >= 2:
             line += "多个同龄主角必须同尺度、同景深、站在同一水平面，谁都不能比旁边的人明显大一圈。"
+        if is_cover or scene_has_extras or n_kids >= 2:
+            line += (
+                "【封面/群像等高锁】Mia/Tommy 与所有同龄队友/同学/背景清晰儿童必须站在同一水平面、"
+                "到镜头同一距离、头顶大致齐平、体型尺度一致；主角绝不比身后/身旁的同龄孩子矮半头，"
+                "背景里的同龄队友/同学也绝不能比主角更高更大一圈；透视缩小只用于【明显更远】的背景人影，"
+                "不得用于与主角同层、同框的同龄人。"
+            )
         # 反分身铁律（用户反馈 Goldilocks 出现“两个一模一样的 Mia”）
         line += (
             "【绝不分身】同一个角色在整张画面里只能出现一次——"
@@ -1751,57 +2733,29 @@ def _build_positive_v3(
             "要可爱温馨、贴合剧情，小巧精致地点缀（小道具/小动物/小动作），绝不抢占主角的视觉焦点。"
         )
 
-    # ⑥ 配色锁定（每个有专属色的角色）
-    color_locks = [
-        f"{c['name']}是画面里唯一穿{_signature_color_of(c['key'])}的人"
-        for c in cast if _signature_color_of(c["key"])
-    ]
-    if color_locks:
-        parts.append("配色锁定：" + "；".join(color_locks) + "。")
+    # ⑥ 配色锁定已上移到 IP 锁紧后（防被截断）；此处不再重复。
 
     # ⑥.5 儿童向柔化（动物/反派一律 friendly 可爱，去獠牙/凶相/恐怖）
     _soft = _child_safe_softening(scene_cn)
     if _soft:
         parts.append(_soft)
 
-    # ⑦ 画风（细腻治愈水彩 + 柔和层次景深 + 暖米低饱和 + 明亮柔光 + 高级感可打印）
+    # ⑥.8 构图 + 比例硬规则 + 留白 + 禁文字（优先级重排 2026-06-08：构图/镜头/留白属第 4 优先级，
+    #   置于"画质/画风"块之前——scene+IP(最高) → 构图留白 → 画质画风(配合 seedream 首尾英文画风指令)）。
+    # ⑥.8 构图 + 留白 + 禁文字（精简：主角占比/同尺度/4:3 已在 ③ 年龄块写过，这里不再重复 composition_prompt_cn）
     parts.append(
-        "【画风】" + STYLE_CN.split("。")[0] + "。"
-        "干净细腻的治愈水彩（柔和晕染、克制而精致的明暗体积，前中后景有空间层次与景深：近景清晰精致、远景柔和虚化）、"
-        "精致清晰的细墨线；暖米低饱和主调 + 柔和莫兰迪点缀，明亮柔光、阴影浅淡干净；"
-        "画面细腻干净、过渡自然、颜色匀净，细腻而不细碎——无脏色斑、无破碎色块、无噪点颗粒，边缘线条清晰锐利、可高分辨率印刷不模糊；"
-        "背景精致整洁、适度留白，主体人物干净突出、边缘清晰、上色细腻有层次；"
-        "笔触干净利落、色面洁净均匀——绝无脏点、污渍、墨点、杂色斑、灰扑扑的脏块或可见颗粒，整体清透高级；"
-        "人物穿着得体的日常服装、适合儿童，画面像高品质精印实体绘本的内页，阳光健康温暖、高级耐看。"
+        f"构图：{composition_cn.rstrip('。')}。{blank_cn}。{FORBID_CN}。"
     )
 
-    # ⑦.1 立体感/反扁平（用户反复强调"更高级、更立体、别全是扁平平视"）— 仍锁死水彩、不滑向塑料3D
+    # ⑦ 画风（精简 2026-06-09 · 用户拍板"提示词必须瘦身"）：
+    #   出图端 seedream_client 已在【首+尾】各注入一整段英文画风指令(GPT_CLEAN_STYLE_DIRECTIVE/ECHO)，
+    #   覆盖了"治愈水彩/平滑色块/极简纹理/干净脸颊/无噪点色斑/可印刷"等全部画风约束；
+    #   故中文正向此处只保留【一句】核心锚定，不再重复 STYLE_CN 长段 + 印刷优化长段(原约1500字冗余)，
+    #   把宝贵的 4000 字额度让给"场景/IP/比例/防分身"等关键铁律，避免后段被截断。
     parts.append(
-        "【立体层次·反扁平】画面要有明确的空间纵深与体积感（高级绘本质感，绝不是扁平贴纸/单层平涂）："
-        "用柔和水彩的明暗渐层为人物与主体塑出轻盈而清晰的体积与受光面、暗面，"
-        "前景—中景—背景分出清晰的远近层次与景深（近实远虚），加一点点环境投影/地面接触阴影让人物稳稳落在场景里；"
-        "镜头取景错落有致、有纵深引导，避免呆板正面平视与所有元素挤在同一平面。"
-        "（注意：是水彩式的柔和体积与景深，不是厚重油画、不是塑料3D渲染、不是强烈硬光影。）"
-    )
-
-    # ⑦.2 画质精修（用户拍板提示词 2026-06-06，原样注入正向）：
-    #   补强 gpt-image-2 的成片质感——细节丰富、质感细腻、干净高级、通透，材质完整自然、
-    #   顺滑均匀；主体清晰、背景层次分明；避免过锐化/过度调色/色彩断层；构图干净通透、
-    #   细节饱满无断变无噪点，视觉舒适。
-    parts.append(
-        "【画质精修】细节丰富、质感细腻、干净高级，画面干净通透；材质完整自然、质感顺滑均匀；"
-        "主体清晰锐利、背景层次分明（主次分明、前后景拉开）；避免过度锐化、避免过度调色、"
-        "避免色彩断层(banding)与色阶断裂；构图干净通透、细节质感饱满、无突兀断变、无噪点颗粒，"
-        "整体观感舒适饱满、高级耐看。"
-    )
-
-    # ⑦.5 印刷级平滑/大色块叙事（用户拍板提示词，原样注入正向）
-    parts.append("【印刷优化】" + smoothness_prompt_cn())
-
-    # ⑧ 构图 + 比例硬规则 + 留白 + 禁文字（composition_prompt_cn 之前写好但未启用）
-    parts.append(
-        f"构图：{composition_cn.rstrip('。')}。{composition_prompt_cn().rstrip('。')}。"
-        f"{blank_cn}。{FORBID_CN}。"
+        "【画风】干净通透的治愈水彩：平滑柔和的色块与渐变塑形、细节克制、纹理极简、纤细描边为辅；"
+        "配色统一目标：中低饱和、通透不发灰、暖中性白平衡，既不过饱和刺眼、也不发灰发闷；明亮柔光、阴影浅淡干净，边缘清晰可高分辨率印刷；"
+        "保留适度景深与轻盈体积(反扁平)，但绝非油画厚涂/3D塑料/强烈硬光影；无色斑噪点碎纹理、脸颊干净。"
     )
 
     return "\n".join(parts)
@@ -1822,11 +2776,14 @@ def _build_negative_v3(*, cast: list[dict], page_text: str, ip_age: int = 12) ->
     # 1) 全局禁忌
     parts.append(_GLOBAL_NEGATIVE)
 
-    # 1.5) v3.3 构图/比例禁忌（主角过小、配角/动物过大等）
-    parts.append(composition_negative_cn())
-
-    # 1.6) v3.4 平滑控制禁忌（细碎噪点/高频纹理/脏污颗粒/杂线乱纹等）
-    parts.append(smoothness_negative_cn())
+    # 1.5) 构图/比例禁忌（精简 2026-06-09）：只留"主角过小/留白被遮挡/顶部文字区不达标"等关键几条，
+    #   细碎噪点/纹理类已由出图端英文画风指令(ECHO: "absolutely no noise/grain/texture/blotchy...")覆盖，
+    #   composition_negative_cn / smoothness_negative_cn 长段不再重复注入，给关键 IP/比例禁忌腾出额度。
+    parts.append(
+        "主角被画得过小（主角应占画面 50–60%）；配角或动物比主角还大；同框同龄人身高差异过大；"
+        "预留的文字区被可识别的人物/动物/关键道具或杂乱枝叶遮挡；顶部文字区是纯白/惨白空色块、不连续或不足20%；"
+        "留白过多、主体缩太小四周空一大片；贴脸大特写或紧裁构图"
+    )
 
     # 1.7) v3.6 儿童内容安全红线 + 画风/色彩禁忌 + IP 唯一性
     parts.append(child_safety_negative_cn())
@@ -1839,35 +2796,44 @@ def _build_negative_v3(*, cast: list[dict], page_text: str, ip_age: int = 12) ->
                 "圆脸大头的幼儿头身比；身材矮小不符合12岁少年比例"
             )
         elif ip_age >= 10:
-            parts.append("孩子被画成低龄幼儿/婴幼儿；年龄明显小于10岁；幼态大头矮小比例")
+            parts.append(
+                "孩子被画成低龄幼儿/婴幼儿；年龄明显小于10岁；幼态大头矮小比例；"
+                "大头娃娃/Q版chibi比例、4头身、头部相对身体过大；身体/腿过短显得矮小，"
+                "应是约5.5-6头身、腿身修长、接近少年的10岁学龄期比例"
+            )
 
-    # 1.85) 主角【错龄服装】禁穿锁（用户拍板 2026-06-07）——
-    #   深蓝/藏青短袖polo是【12岁】Tommy专属；L0-2(8)/L3-4(10) 绝不能出现。
-    #   防止"孩子没锚图→默认画成12岁深蓝大男孩"那类漂移。
+    # 1.85) 主角服装统一锁（用户拍板 2026-06-10：以 Age10 定妆表为准，三档同一形象、衣色发型一致）——
+    #   Tommy 任何年龄都是浅天蓝长袖圆领卫衣+卡其裤；Mia 任何年龄都是紫色长袖卫衣+浅灰白裤+紫色发圈马尾。
     _base_keys = {(c.get("key") or "").split("_")[0] for c in cast}
-    if "tommy" in _base_keys and ip_age and ip_age < 12:
-        if ip_age <= 8:
-            parts.append(
-                "Tommy穿深蓝/藏青色polo衫或短袖polo（那是12岁定妆，8岁绝不可以）；"
-                "Tommy穿长袖卫衣（8岁是蓝白横条纹短袖T恤）；Tommy身材被画成青少年比例"
-            )
-        else:  # 10
-            parts.append(
-                "Tommy穿深蓝/藏青色短袖polo翻领衫或牛仔裤（那是12岁定妆，10岁绝不可以）；"
-                "Tommy上衣是深蓝色（10岁必须【浅蓝】长袖圆领卫衣+【卡其】裤）；"
-                "Tommy被画成12岁青少年的偏高身材"
-            )
-    if "mia" in _base_keys and ip_age and ip_age < 12:
+    if "tommy" in _base_keys:
         parts.append(
-            "Mia穿白色阔腿裤或翻领针织衫（那是12岁定妆）；Mia被画成12岁青少年偏高身材；"
-            "Mia扎侧马尾或散发披肩（必须高马尾·脑后正中）"
+            "Tommy穿深蓝/藏青/navy/钴蓝/teal上衣、短袖polo翻领、牛仔裤、或条纹短袖T（均废弃，"
+            "Tommy 任何年龄都必须【浅天蓝】长袖圆领卫衣 #5FA8D6~#8EC0ED +【卡其】直筒裤）；"
+            "Tommy上衣比卡其裤更深或接近成人警服藏青"
+        )
+    if "mia" in _base_keys:
+        parts.append(
+            "Mia穿白色阔腿裤/翻领针织衫/牛仔裤/短袖T（均废弃，Mia 任何年龄都必须【紫色长袖圆领卫衣+浅灰白直筒裤】）；"
+            f"Mia丸子头/发髻/top-knot/half-up半扎/只扎上层下半披散/低马尾/侧马尾/双马尾/脏辫乱团/头发糊成一团；"
+            f"Mia颅顶或头顶正中超高马尾/发髻在头顶正上方/仅短马尾穗；用非紫色发圈；"
+            f"Mia头发完全散开不扎或大量披散散发（必须是后脑中高位马尾+紫色发圈+中长辫垂至肩/上背：{MIA_HAIR_LOCK}）"
+        )
+    if "mom" in _base_keys:
+        parts.append(
+            "妈妈被画成扎马尾/丸子头/盘发/把头发扎起来（妈妈必须是披散的长波浪卷发）；"
+            "妈妈被画成放大版的小女孩 Mia、和 Mia 撞脸撞发型；妈妈被画成小孩或青少年/teenager；"
+            "妈妈五官身材过于幼态、不像成熟成年女性"
         )
     parts.append(
-        "凭空新增陌生小孩/路人同学（有清晰五官发型的多余儿童）；"
-        "背景出现与主角雷同的小孩（紫色高马尾女孩、蓝色上衣蓬松短发男孩等酷似 Mia/Tommy 的身影）；"
+        "凭空新增与主角雷同的陌生小孩（剧情需要的其他小孩/队友/同学可出现，但须与主角明显不同、彼此各异，不要一律删光）；"
+        "背景出现与主角雷同的小孩（紫色上衣高马尾女孩、蓝色上衣蓬松短发男孩等酷似 Mia/Tommy 的身影）；"
+        "非 IP 配角穿紫色系或蓝色系（紫=Mia专属/蓝=Tommy专属，配角禁用）；"
+        "把农夫/工人/店员/其他小孩等配角画成与主角同款长相/同脸；多个长得几乎一样的配角；"
+        "非IP配角全画成同一种中国/亚洲面孔或彼此长成同一个模子（应国际化、多元族裔、各不相同）；"
         "背景人群清晰可辨的脸/与主角同款发型衣色；"
         "同一角色出现多个分身/复制/双胞胎/镜像；两个 Mia、两个 Tommy、同一主角同时出现在前景和背景；"
         "duplicate character, cloned person, twins, two identical girls, two identical boys, same character appearing twice, mirrored duplicate；"
+        "明显的腮红/红脸蛋/红扑扑的脸颊/圆形红晕/脸颊上的红粉色块或腮红色斑（脸颊应干净、至多极淡一点点红润）；"
         "色斑、杂色斑块、噪点颗粒、脏污纹理、拼贴补丁、破碎割裂的色块；同一色块颜色不均匀的脏块；"
         "可见笔触/水彩纸纹理/颗粒感；厚重立体的体积塑形、强烈明暗阴影、写实光影渐变；"
         "打印模糊、发糊、低分辨率、边缘发虚、细节糊成一团；冰冷生硬的3D塑料渲染、塑料磨皮感"

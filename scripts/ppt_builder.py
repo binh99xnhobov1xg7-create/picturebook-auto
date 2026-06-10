@@ -202,11 +202,21 @@ def _build_story(slide, page: PageSpec, image_path: Path, page_number: int) -> N
 
 
 # ---------- 元信息页（p9 封底）----------
+# 标准模板（c:\Users\Jered\Desktop\sample 尾页.pptx）规范：
+#   细深色边框白底框 ≈4.40"×2.37"，位于 (0.98, 1.62)，文字垂直居中；
+#   每行【标签 Poppins SemiBold 15pt + 数值 Poppins 14pt】同行（标签加粗、数值不加粗）；
+#   Vocabulary 标签单独一行，词表换行用 Poppins 14pt；字段顺序 Level/Book/CEFR/Lexile/Word count/Vocabulary。
+_META_LABEL_FONT = "Poppins SemiBold"
+_META_VALUE_FONT = "Poppins"
+_META_LABEL_PT = 15
+_META_VALUE_PT = 14
+
+
 def _build_metadata(slide, outline: BookOutline) -> None:
-    # 左侧大框
-    frame_left, frame_top = Inches(0.7), Inches(0.7)
-    frame_w, frame_h = Inches(6.0), Inches(6.0)
-    box = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, frame_left, frame_top, frame_w, frame_h)
+    # L0-2 词表分 2 行（每行 4 词）→ 比 L3-6 多一行，框略加高；并开启自适应让 PPT 精确贴合。
+    box_h = 2.72 if outline.is_dual_vocab_level else 2.37
+    box = slide.shapes.add_shape(
+        MSO_SHAPE.RECTANGLE, Inches(0.98), Inches(1.62), Inches(4.40), Inches(box_h))
     box.fill.solid()
     box.fill.fore_color.rgb = RGBColor(*WHITE)
     box.line.color.rgb = RGBColor(*LIGHT_GRAY_BORDER)
@@ -215,42 +225,57 @@ def _build_metadata(slide, outline: BookOutline) -> None:
 
     tf = box.text_frame
     tf.word_wrap = True
-    tf.margin_left = tf.margin_right = Inches(0.3)
-    tf.margin_top = Inches(0.3)
+    try:
+        tf.auto_size = MSO_AUTO_SIZE.SHAPE_TO_FIT_TEXT
+    except Exception:
+        pass
+    tf.vertical_anchor = MSO_ANCHOR.MIDDLE
+    tf.margin_left = tf.margin_right = Inches(0.12)
+    tf.margin_top = tf.margin_bottom = Inches(0.06)
 
-    def line(text: str, *, head: bool, indent: int = 0) -> None:
-        p = tf.add_paragraph() if tf.paragraphs[0].text else tf.paragraphs[0]
-        p.level = indent
-        size = Pt(FONT_SIZE_META_HEAD if head else FONT_SIZE_META_BODY)
-        _set_run(_ensure_run(p), text, size, BLACK)
+    def _para():
+        p0 = tf.paragraphs[0]
+        return p0 if (not p0.runs and not p0.text) else tf.add_paragraph()
 
-    line(f"Level: {_clean_num(outline.level) or 'Smart'}", head=True)
-    line(f"Book: {_clean_num(outline.book_number)}", head=True)
-    line(f"CEFR: {outline.cefr or '-'}", head=True)
-    line(f"Lexile: {outline.lexile or '-'}", head=True)
-    line(f"Word count: {outline.total_words}", head=True)
-    if outline.phonics:
-        line(f"Phonics: {outline.phonics}", head=True)
-    if outline.grammar_focus:
-        line(f"Grammar: {outline.grammar_focus}", head=True)
-    if outline.reader_type:
-        line(f"Reader Type: {outline.reader_type}", head=True)
-    line("Vocabulary:", head=True)
+    def _run(p, text: str, *, label: bool) -> None:
+        r = p.add_run()
+        r.text = text
+        r.font.name = _META_LABEL_FONT if label else _META_VALUE_FONT
+        r.font.bold = False
+        r.font.size = Pt(_META_LABEL_PT if label else _META_VALUE_PT)
+        r.font.color.rgb = RGBColor(*BLACK)
 
-    # L0/L1/L2/Smart → 双行 Mastery + Exposure（每行 3-4 词）
-    # L3-L6        → 单行 Vocabulary 4 词（lemma 原型）
+    def kv(label: str, value: str) -> None:
+        p = _para()
+        p.alignment = PP_ALIGN.LEFT
+        _run(p, label, label=True)
+        if value:
+            _run(p, value, label=False)
+
+    def value_line(text: str) -> None:
+        p = _para()
+        p.alignment = PP_ALIGN.LEFT
+        _run(p, text, label=False)
+
+    # Level：0 / Smart 级别显示 "Smart"，其余 1-6 显示数字（用户拍板 2026-06-08）
+    level_disp = "Smart" if outline.level_key in ("smart", "0") else (_clean_num(outline.level) or "Smart")
+    kv("Level: ", level_disp)
+    kv("Book: ", _clean_num(outline.book_number))
+    kv("CEFR: ", outline.cefr or "-")
+    kv("Lexile: ", outline.lexile or "-")
+    kv("Word count: ", str(outline.total_words))
+    kv("Vocabulary: ", "")
+
+    # 词表：L0-2 → 每行 4 词、分多行（通常 8 词 → 2 行）；L3-6 → 单行
+    words = [w for w in outline.vocabulary_for_display if w]
     if outline.is_dual_vocab_level:
-        if outline.has_double_vocab:
-            line(f"Mastery:  {', '.join(outline.vocabulary_mastery) or '-'}",
-                 head=False, indent=1)
-            line(f"Exposure: {', '.join(outline.vocabulary_exposure) or '-'}",
-                 head=False, indent=1)
+        if words:
+            for i in range(0, len(words), 4):
+                value_line(", ".join(words[i:i + 4]))
         else:
-            line(", ".join(outline.vocabulary_for_display) or "-",
-                 head=False, indent=1)
+            value_line("-")
     else:
-        words = outline.vocabulary_for_display[:4]
-        line(", ".join(words) or "-", head=False, indent=1)
+        value_line(", ".join(words) or "-")
 
 
 # ---------- 通用 ----------

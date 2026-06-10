@@ -129,6 +129,8 @@ def parse_l36(ws, level: str) -> dict[str, dict]:
         return {}
     h = _hmap(rows[0])
     c_bookno = _find(h, "book no")
+    if c_bookno < 0:
+        c_bookno = _find(h, exact="book")
     c_genre = _find(h, "虚构")
     c_title = _find(h, "课文标题")
     c_pattern = _find(h, "句型")

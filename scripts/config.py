@@ -62,8 +62,9 @@ TEXT_MODEL = os.getenv("TEXT_MODEL", "claude-opus-4-7")
 EXTRACT_MODEL = os.getenv("EXTRACT_MODEL", "claude-sonnet-4-6")
 IMAGE_MODEL = os.getenv("IMAGE_MODEL", "gpt-image-2")
 
-REQUEST_TIMEOUT = int(os.getenv("REQUEST_TIMEOUT", "240"))
-REQUEST_RETRIES = int(os.getenv("REQUEST_RETRIES", "2"))
+# 2026-06-08 供应商反馈 gpt-image-2 任务偶发超时/闪断 → 单次请求超时与重试次数双双放大。
+REQUEST_TIMEOUT = int(os.getenv("REQUEST_TIMEOUT", "300"))
+REQUEST_RETRIES = int(os.getenv("REQUEST_RETRIES", "4"))
 
 # ---------- 生图（gpt-image-2 via imarouter，异步任务）----------
 JIMENG_API_KEY = IMAROUTER_API_KEY                # 兼容旧名
@@ -88,11 +89,190 @@ IMAGE_SELF_REVIEW = os.getenv("IMAGE_SELF_REVIEW", "true").lower() in ("1", "tru
 # 注意：本账号 imarouter「vipkid」分组下 gpt-4o/gpt-5/gemini 等无渠道，可用的是 Claude 系（已支持图片输入）。
 VISION_REVIEW_MODEL = os.getenv("VISION_REVIEW_MODEL", "claude-sonnet-4-6")
 
-# 按 level 选出图后端：jimeng_refine = 即梦出图+GPT修图（L0-2）；gpt = 纯 gpt-image-2（L3-6）
+# L3-6（纯 gpt-image-2）专用·简明英文画风指令（用户拍板 2026-06-08：治"色斑/碎纹理"）。
+# gpt-image-2 对【前置 + 英文】指令遵循度更高；又因最终 prompt 会被截断到 4000 字符，
+# 故把这组画风词【首尾双置】：作为最高优先级前缀拼在最前(GPT_CLEAN_STYLE_DIRECTIVE)，
+# 再在文末放一段简短回声(GPT_CLEAN_STYLE_ECHO)，防止中段大量场景/角色描述把画风词稀释掉。
+# 用户原始画风词（这组关键词务必原样保留，是本指令的 SSOT）：
+#   正向: clean illustration, smooth shading, soft lighting, controlled details,
+#         minimal texture, high clarity, refined edges, smooth gradients
+#   负向: noise, grain, artifacts, high frequency detail, dirty texture, oversharpen,
+#         blotchy, chaotic details
+GPT_STYLE_POSITIVE = (
+    "clean illustration, smooth shading, soft lighting, controlled details, "
+    "minimal texture, high clarity, refined edges, smooth gradients"
+)
+GPT_STYLE_NEGATIVE = (
+    "noise, grain, artifacts, high-frequency detail, dirty texture, oversharpen, "
+    "blotchy color patches, chaotic details, "
+    # 即梦逐图反推补充负向（2026-06-08 同事反馈：人物偏写实/大龄、线偏硬、背景偏满）：
+    "hard black ink outlines, thick black linework, semi-realistic or photorealistic faces, "
+    "older teenage or adult-like face proportions, heavy detailed rendering, busy cluttered background"
+)
+# 画风目标锚（2026-06-08 逐图反推即梦4.6 样书校准）：柔和手绘水彩治愈绘本——
+#   细软的棕/赭描边（非黑硬线）+ 柔水彩渐变 + 暖粉彩配色 + 明亮高调暖光 + 极少纸纹 + 淡而通透的低细节背景大留白。
+GPT_STYLE_TARGET = (
+    "Target look (match the reference style closely): a soft hand-painted watercolor children's "
+    "storybook illustration, warm, cozy and gentle. Thin SOFT brown/sepia hand-drawn outlines "
+    "(never hard black ink lines), smooth soft watercolor gradients with soft visible watercolor "
+    "washes; a harmonious medium-low saturation color scheme where colors blend and transition softly "
+    "like wet watercolor washes on paper (NOT separate hard color blocks, NOT a color palette/swatch chart) "
+    "— clean and luminous, never greyish/muddy and never oversaturated, with a warm-neutral white balance; "
+    "bright high-key warm lighting, "
+    "minimal paper texture; keep backgrounds airy and low-detail with generous bright negative space"
+)
+# 即梦人物渲染（核心差距点：人物要低龄可爱、不能写实大龄）：
+GPT_STYLE_CHARACTER = (
+    "Character rendering: soft, cute, friendly storybook children with softly rounded faces, "
+    "warm expressive dark eyes with small white catchlights, a tiny soft button nose, "
+    "a gentle warm smile, and clean smooth cheeks with at most a VERY faint soft cheek tint "
+    "(NO strong rosy/red/pink blush, NO round blush circles or blush patches on the cheeks); "
+    "fluffy hair painted with soft brushy strokes; thin soft brown/sepia outlines on the characters "
+    "(never hard black ink); keep faces gentle and storybook-stylized, never semi-realistic or photorealistic"
+)
+# 画风前缀（精简 2026-06-09 · 用户拍板"提示词必须瘦身"）：
+#   原 DIRECTIVE/ECHO 合计约 3900 字，在 4000 上限下几乎把中文正文(场景/IP/比例/防分身)全部挤掉，
+#   是"出图不可控/IP漂移/克隆/比例错"的真正根因。这里把英文画风首尾两段大幅压缩到约 700+850，
+#   只保留画风核心 + 禁文字锁 + 留白锁，把宝贵额度让给中文关键铁律。
+#
+# 2026-06-10 用户给定永久"绘本提示词 SOP"，新增可切换画风（见 SOP_STYLE_MODE）：
+#   现行【柔和水彩】画风 = 默认（_WATERCOLOR_STYLE_DIRECTIVE/ECHO）；
+#   SOP【墨水轮廓+纹理纸+莫兰迪】新画风 = SOP_STYLE_MODE=true 时启用（_SOP_STYLE_DIRECTIVE/ECHO）。
+# 两套都保留同一份【禁文字锁 NO-TEXT LOCK + 留白锁 NEGATIVE-SPACE LOCK】，不破坏 PPT 排文流程；
+# 安全 IP 锁（Tommy 浅天蓝圆领卫衣 / Mia 后脑中高马尾+紫发圈 / 按级别年龄）由 cn_prompt_builder
+# 的 cast 锁注入，两套画风通用、互不影响。
+
+# 两套画风共用的【禁文字锁 + 留白锁】（PPT 排文流程依赖，绝不可丢）：
+# 2026-06-10 精简（防 4000 截断）：保留核心语义，删冗长举例，从 ~1420 压到 ~430。
+_NO_TEXT_AND_LAYOUT_LOCK = (
+    "NO-TEXT LOCK: absolutely no text/letters/words/numbers/caption/signage/handwriting/watermark/logo anywhere; "
+    "keep the reserved area as clean background.\n\n"
+    "LAYOUT LOCK: reserve ONE continuous ~20-25% band (top or one side) for later text — NOT a flat white/blank box, "
+    "but the page's real scene continuing into it with soft matching color and depth (clear sky / warm sunset / soft "
+    "gray rain / indoor wall or ceiling), no people/animals/key props/text inside it; indoors keep ceiling/shelf tops/"
+    "wall extending up, never a flat paint strip or a crop above the heads. Fill the other ~75-80% richly with the "
+    "subject; main characters clear and large, medium or medium-close shot, never tiny in empty space."
+)
+
+# ---------- 现行【柔和水彩】画风（默认） ----------
+_WATERCOLOR_STYLE_DIRECTIVE = (
+    "Art-style directive (HIGHEST priority, overrides any conflicting style wording later): "
+    "soft clean hand-painted healing watercolor children's storybook illustration — warm, cozy, gentle; "
+    "thin SOFT brown/sepia outlines (never hard black ink), smooth soft watercolor gradients, "
+    "a harmonious medium-low saturation color scheme where colors blend and transition softly like wet "
+    "watercolor washes on paper (NOT a color palette/swatch chart, NOT separate hard color blocks) "
+    "— clean and luminous, never greyish/muddy and never oversaturated, "
+    "with a warm-neutral white balance; bright high-key lighting, minimal paper texture, "
+    "airy low-detail backgrounds with generous bright negative space; "
+    "characters: soft cute friendly children with softly rounded faces, warm dark eyes with small catchlights, "
+    "a tiny button nose, gentle warm smile, clean smooth cheeks with at most a VERY faint natural cheek tint (no strong rosy/red/pink blush circles or patches), fluffy soft hair; "
+    "keep faces storybook-stylized, never semi-realistic or photorealistic. "
+    "Absolutely avoid: noise, grain, artifacts, dirty/high-frequency texture, oversharpen, blotchy color patches, "
+    "hard-edged color-block patches, flat color bands, a color-palette/swatch/color-wheel look, "
+    "hard black ink, thick linework, semi-realistic/photorealistic faces, older/adult-like child proportions, "
+    "heavy detailed rendering, busy cluttered background.\n\n"
+)
+# 文末画风回声（精简）：放在末尾再压一遍画风 + 禁文字锁 + 留白锁。
+_WATERCOLOR_STYLE_ECHO = (
+    "\n\nFinal style lock (highest priority): soft clean healing watercolor with colors that blend and transition "
+    "softly and harmoniously like watercolor washes on paper (never hard color blocks, never a color palette/swatch), "
+    "smooth shading, minimal texture, "
+    "thin soft brown outlines, cute storybook faces with clean cheeks (at most a very faint natural tint, no strong rosy blush circles); "
+    "no noise, grain, dirty texture, blotchy patches, hard-edged color blocks, flat color bands, color-palette/swatch look, "
+    "hard black ink, semi-realistic faces, adult-like child proportions.\n\n"
+    + _NO_TEXT_AND_LAYOUT_LOCK
+)
+
+# ---------- SOP【细墨线 + 纸纹 + 清透轻水彩】正式画风（SOP_STYLE_MODE=true 启用） ----------
+# 对齐官方水彩参考素材（VIPKID 场景图）：明亮、通透、纯净的轻水彩——纸白透气、wet-on-wet 轻水痕、
+# 细墨线、低-中饱和干净不灰。2026-06-10 用户拍板【彻底去掉莫兰迪/muted/dusty/grey】，绝不发灰发闷发厚。
+# 保留：细墨线轮廓 + 纸纹在水彩之下 + 可爱低龄脸 + 安全 IP 锚 + 禁文字/留白锁。提示词刻意精简（防 4000 截断）。
+_SOP_STYLE_DIRECTIVE = (
+    "Art-style (HIGHEST priority, override conflicting style later): bright, airy, clean children's storybook in "
+    "CLEAR TRANSPARENT LIGHT WATERCOLOR — soft, elegant, gentle; fresh pure luminous colors, thin translucent washes, "
+    "soft wet-on-wet blooms, white paper glowing through; smooth soft low-detail backgrounds, soft lighting, high "
+    "clarity, minimal texture; delicate fine ink outlines (never heavy black ink), subtle paper grain; clean "
+    "light-to-medium saturation, NOT dusty/grey/muted/muddy/dark/heavy, never neon. Characters: cute young kids, "
+    "rounded faces, warm dark eyes, small nose, gentle smile, clean cheeks (no rosy circles), fluffy hair; storybook, "
+    "never realistic. IP: Tommy in a pale sky-blue crew-neck sweatshirt; Mia with a mid-high ponytail tied with a "
+    "purple hair tie, in purple; both age 10.\n\n"
+)
+_SOP_STYLE_ECHO = (
+    "\n\nFinal style lock: bright airy CLEAR TRANSPARENT LIGHT WATERCOLOR — pure luminous colors, thin translucent "
+    "washes, white paper glowing through, delicate fine ink outlines (never heavy black ink), clean light-to-medium "
+    "saturation (never dusty/grey/muted/dark/neon); cute storybook faces; no noise, dirty texture, blotchy patches, "
+    "hard color blocks, realistic/adult-like faces.\n\n"
+    + _NO_TEXT_AND_LAYOUT_LOCK
+)
+
+# 画风开关（用户拍板 2026-06-10）：SOP_STYLE_MODE=true → SOP 新画风（B：经典墨线+纹理纸+莫兰迪）；
+#   false → 旧版柔和水彩。2026-06-10 用户拍板【以 SOP 新画风 B 为正式默认】→ 默认改 true。
+#   如需临时回退旧水彩画风，设 SOP_STYLE_MODE=false 即可。
+SOP_STYLE_MODE = os.getenv("SOP_STYLE_MODE", "true").strip().lower() in ("1", "true", "yes")
+
+if SOP_STYLE_MODE:
+    GPT_CLEAN_STYLE_DIRECTIVE = _SOP_STYLE_DIRECTIVE
+    GPT_CLEAN_STYLE_ECHO = _SOP_STYLE_ECHO
+else:
+    GPT_CLEAN_STYLE_DIRECTIVE = _WATERCOLOR_STYLE_DIRECTIVE
+    GPT_CLEAN_STYLE_ECHO = _WATERCOLOR_STYLE_ECHO
+
+# 提示词模式（用户拍板 2026-06-09，经实测验证）：
+#   True  = 【简短·正向】提示词（对齐原生 GPT 网页版："短而干净"）——实测我们后端 + 简短正向提示词
+#           即可出干净、可印刷的图；冗长密集的"几百条负向墙"反而会注入噪点、稀释主体、把画面搞糊。
+#   False = 旧版【冗长·全锁】提示词（4000 字密集，易被截断且噪点多）。
+CONCISE_PROMPT = os.getenv("CONCISE_PROMPT", "true").strip().lower() in ("1", "true", "yes")
+
+# 提示词超长保护（用户拍板 2026-06-09）：API 端把最终 prompt 硬截到 4000 字符（含首尾英文画风段
+#   GPT_CLEAN_STYLE_DIRECTIVE/ECHO 约 1550 字），中文正文若超长，尾部"画风/留白/防分身"会被悄悄切掉。
+#   这里给一个软上限 + 去重精简 + 告警，供 cn_prompt_builder 与 seedream_client 共用同一策略。
+PROMPT_SOFT_LIMIT = int(os.getenv("PROMPT_SOFT_LIMIT", "3800"))
+
+
+def dedupe_prompt_sentences(text: str) -> str:
+    """去掉完全重复的【长句】（按中英句末标点/换行切），保留首次出现，降冗余套话。
+
+    只去较长(>8 字)的精确重复句，短连接词/标点不动，安全无损（重复句对模型无额外信息）。
+    """
+    if not text:
+        return text
+    import re as _re
+    pieces = _re.split(r"(?<=[。！？!?\n])", text)
+    seen: set[str] = set()
+    out: list[str] = []
+    for p in pieces:
+        key = p.strip()
+        if not key:
+            out.append(p)
+            continue
+        if len(key) > 8 and key in seen:
+            continue
+        seen.add(key)
+        out.append(p)
+    return "".join(out)
+
+
+def enforce_prompt_budget(text: str, label: str = "", soft_limit: int | None = None) -> str:
+    """去重精简提示词；超软上限时打告警（提示下游可能被 4000 截断）。返回精简后的文本。"""
+    limit = PROMPT_SOFT_LIMIT if soft_limit is None else soft_limit
+    s = dedupe_prompt_sentences(text)
+    if len(s) > limit:
+        print(f"[prompt-budget] 警告：{label or '某页'} 提示词 {len(s)} 字符 > {limit}"
+              f"（去重后仍偏长，下游 4000 截断可能切掉尾部画风/留白/防分身锁）", flush=True)
+    return s
+
+# 按 level 选出图后端（用户拍板 2026-06-08：A/B 对比后选定【全级别统一纯 GPT】）：
+#   gpt = 纯 gpt-image-2（画风更干净、内容/人物遵循度高）。L0-2 不再走"即梦换皮"。
+#   如需临时回退某级别到即梦双段，改这里或用 IMAGE_BACKEND_OVERRIDE=jimeng_refine。
 LEVEL_IMAGE_BACKEND: dict[str, str] = {
-    "smart": "jimeng_refine", "0": "jimeng_refine", "1": "jimeng_refine", "2": "jimeng_refine",
+    "smart": "gpt", "0": "gpt", "1": "gpt", "2": "gpt",
     "3": "gpt", "4": "gpt", "5": "gpt", "6": "gpt",
 }
+
+# L0-2 出图流程（用户拍板 2026-06-08）：
+#   "gpt_then_jimeng"（默认·新）= gpt-image-2 先出底图(内容/人物/构图遵循度高) → 即梦图生图只换皮成治愈水彩 → GPT自审；
+#   "jimeng_then_gpt"（旧）      = 即梦直出 → GPT自审定向修图。
+L02_PIPELINE = os.getenv("L02_PIPELINE", "gpt_then_jimeng").strip().lower()
 
 
 def resolve_image_backend(level: str) -> str:
@@ -112,6 +292,10 @@ def resolve_image_backend(level: str) -> str:
 # 绘本正文页：gpt-image-2 仅支持 1024x1024 / 1024x1536 / 1536x1024（不支持 4:3 直出）
 # 方案A：先出 3:2(1536x1024) → 居中裁 4:3 → 升 4K，详见 IMAGE_TARGET_* 常量
 IMAGE_SIZE = os.getenv("IMAGE_SIZE", "1536x1024")
+# 出图清晰度参数（用户拍板 2026-06-09）：gpt-image 系列支持 quality=low/medium/high/auto。
+#   此前我们【完全没设】这个参数 → 走默认档，画面偏软/不够清晰。设为 high 显著提升清晰度与细节锐度。
+#   置空字符串则不发送该参数（兼容不支持 quality 的接口/回退）。
+IMAGE_QUALITY = os.getenv("IMAGE_QUALITY", "high").strip().lower()
 # 目标交付比例与分辨率（绘本幻灯片 10x7.5 = 4:3）
 # 美工口径（2026-06-03）：精细印刷 2000×1500（正好 4:3）。出图后居中裁 4:3 → 放大到此尺寸。
 IMAGE_TARGET_RATIO = (4, 3)
@@ -136,11 +320,26 @@ IMAGE_DELIVER_PDF = os.getenv("IMAGE_DELIVER_PDF", "true").lower() in ("1", "tru
 IMAGE_CMYK_PROFILE = os.getenv("IMAGE_CMYK_PROFILE", "")
 # 放大后做轻度 USM 锐化，弥补插值发虚（印刷无模糊）
 IMAGE_PRINT_UNSHARP = os.getenv("IMAGE_PRINT_UNSHARP", "true").lower() in ("1", "true", "yes")
+
+# ---------- 放大锐化/降噪后处理（用户拍板 2026-06-10：治"色斑/磕碎感"）----------
+# 背景：ESRGAN 未装时回退 Lanczos + 全图 USM，USM 会把水彩底颗粒在大片渐变/平滑区放大成色斑、
+#   制造斑驳割裂感。修复策略：① 优先探测 Real-ESRGAN（自带高质量超分，无需 USM）；
+#   ② 不可用时【显著弱化 USM】（降 percent、提高 threshold）且默认【仅对边缘锐化】（EDGE_ONLY），
+#   平滑/渐变区不锐化 → 不再放大颗粒成色斑；③ 可选对平滑区做轻度降噪，消除斑驳色斑、保留均匀细纸纹。
+# 全部可调。把 IMAGE_USM_EDGE_ONLY=false 可回退旧式全图锐化。
+IMAGE_USM_PERCENT = int(os.getenv("IMAGE_USM_PERCENT", "22"))        # 旧值 45 → 22，显著弱化
+IMAGE_USM_RADIUS = float(os.getenv("IMAGE_USM_RADIUS", "1.0"))       # 旧值 1.2 → 1.0
+IMAGE_USM_THRESHOLD = int(os.getenv("IMAGE_USM_THRESHOLD", "6"))     # 旧值 3 → 6，平滑区不动
+IMAGE_USM_EDGE_ONLY = os.getenv("IMAGE_USM_EDGE_ONLY", "true").lower() in ("1", "true", "yes")
+IMAGE_USM_EDGE_GAIN = float(os.getenv("IMAGE_USM_EDGE_GAIN", "2.6")) # 边缘掩膜增益（越大锐化区越宽）
+# 平滑区轻度降噪（仅作用于非边缘区）：消除背景斑驳色斑/磕碎感；默认开、强度很轻。
+IMAGE_FLAT_DENOISE = os.getenv("IMAGE_FLAT_DENOISE", "true").lower() in ("1", "true", "yes")
+IMAGE_FLAT_DENOISE_RADIUS = float(os.getenv("IMAGE_FLAT_DENOISE_RADIUS", "0.7"))
 IMAGE_WATERMARK = os.getenv("IMAGE_WATERMARK", "false").lower() in ("1", "true", "yes")
 # gpt-image-2 异步轮询参数
 IMAGE_POLL_INTERVAL = float(os.getenv("IMAGE_POLL_INTERVAL", "5"))
-# 轮询更耐心：慢任务给到 ~7.5 分钟再判失败（接口慢时减少误判），失败后还会自动补跑
-IMAGE_POLL_MAX_TRIES = int(os.getenv("IMAGE_POLL_MAX_TRIES", "90"))
+# 轮询更耐心：慢任务给到 ~15 分钟再判失败（供应商反馈 gpt-image-2 偶发任务超时），失败后还会自动补跑
+IMAGE_POLL_MAX_TRIES = int(os.getenv("IMAGE_POLL_MAX_TRIES", "180"))
 # 参考图托管（gpt-image-2 只收 URL，本地图需先托管；临时图床即可，生成时拉取一次）
 IMAGE_HOST_PROVIDER = os.getenv("IMAGE_HOST_PROVIDER", "tmpfiles")
 
@@ -240,20 +439,24 @@ def rr_question_distribution(level: str) -> list[int]:
 #  ⚠️ 这些不是“仅展示”，会真正注入每页正向/反向提示词。
 # ============================================================
 COMPOSITION_POLICY: dict[str, str] = {
-    "protagonist_pct": "45–55%",
+    "protagonist_pct": "55–65%",
     "background_pct": "40–50%",
     "text_safe_pct": "约 20–25%",
     "perspective": "默认平视（与儿童视线齐平）",
     "style": "温暖治愈水彩童书风（低饱和、柔和晕染、圆润线条）",
     "protagonist_rule": (
-        "主角（单人或主角群体）是画面视觉焦点、清晰饱满，整体占画面高度约 45–55%；"
-        "主体明显偏置画面一侧（不要居中铺满），在另一侧（约 20–25%）留出干净的排文字空间"
+        "主角（单人或主角群体）是画面视觉焦点、清晰饱满，整体占画面高度约 55–65%（画得够大、不要缩太小显空）；"
+        "主体偏置画面一侧（不要居中铺满），仅在另一侧或顶部留出约 20–25% 干净的排文字空间，其余区域由主体与环境充实饱满地填满"
     ),
     "scale_rule": (
         "同框其他人物按真实身高比例（同龄人身高相近，成人比儿童高），"
         "任何人都不能比同框同龄人明显大一圈；"
         "多个同等重要的人物必须按同一尺度绘制、到镜头距离相同、站在同一水平面，"
-        "作为一个群体共同占据主体，禁止任何一个人物被放大或拉近"
+        "作为一个群体共同占据主体，禁止任何一个人物被放大或拉近；"
+        "【封面/群像等高锁】封面及群像页里，Mia/Tommy 与所有同龄队友/同学/背景清晰儿童必须"
+        "站在同一水平面、到镜头同一距离、头顶大致齐平、体型尺度一致；主角绝不比身后/身旁的同龄孩子矮半头，"
+        "背景里的同龄人也绝不能更高更大一圈；透视缩小只用于【明显更远】的背景人影，"
+        "不得用于与主角同层、同框的队友/同学"
     ),
     "animal_rule": "动物按真实比例（仓鼠≈成人手掌大小，不能画成猫狗大小）",
     "background_rule": "背景占画面 40–50%，有清晰可辨的环境元素，但不喧宾夺主",
@@ -275,7 +478,12 @@ def composition_negative_cn() -> str:
         "主角被画得过小（主角应占画面 50–60%）；"
         "配角或动物比主角还大；同框同龄人身高差异过大；"
         "多个同等重要人物尺寸不一（某个人物明显比旁边同龄人大一圈、被放大或拉近、到镜头距离不同）；"
-        "动物体型失真（仓鼠被画成猫狗大小）；主角偏离画面视觉中心"
+        "动物体型失真（仓鼠被画成猫狗大小）；主角偏离画面视觉中心；"
+        "画面被主体/背景元素铺满堵死、完全没有给文字留出区域；预留的文字区被可识别的人物/动物/关键道具，或杂乱探入的树枝枝叶/招牌/建筑/家具遮挡；"
+        "顶部文字区是纯白/惨白/无质感的空色块或硬边方块、没有场景色彩与质感、与下方画面割裂；顶部文字区不连续/不足20%；"
+        "留白过多、留出大半张空荡荡的画面、主体缩得太小四周空一大片、画面冷清空旷；"
+        "贴脸的大特写或紧裁构图；人物头顶上方没有留出空白、头部顶到画面上边缘；"
+        "画面顶部被天花板/货架/相框/窗户/树叶/招牌等占满"
     )
 
 
@@ -444,8 +652,8 @@ FONT_RULES: list[tuple[str, str]] = [
 
 # 三、固定 IP 人物 + 年龄映射（L0-2=8 / L3-4=10 / L5-6=12）
 IP_ROSTER: list[tuple[str, str]] = [
-    ("MIA（主角·女孩）", "好奇乐观；扎马尾、紫色上衣；跨页 100% 一致"),
-    ("TOMMY（主角·男孩）", "爱玩伙伴；棕色短发、蓝色上衣；与 Mia 年龄感匹配"),
+    ("MIA（主角·女孩）", "好奇乐观；后脑【中高位】马尾·用【紫色发圈】束发（发髻在后脑中上部·非颅顶顶髻也非低位、马尾辫中长略带波浪垂至肩/上背，绝不丸子头/发髻/half-up、绝不颅顶超高马尾）、紫色长袖卫衣+浅灰白裤；跨页 100% 一致"),
+    ("TOMMY（主角·男孩）", "爱玩伙伴；棕色蓬乱短发、【浅天蓝】长袖圆领卫衣 #5FA8D6~#8EC0ED +卡其裤（绝不深蓝/navy/polo/牛仔）；与 Mia 年龄感匹配"),
     ("TEACHER KIM（成人女老师）", "温暖有创造力（Ms. Frizzle 风），成年女性形象统一"),
     ("WINNIE（猫）", "常驻软萌猫咪，偶尔客串，画风与主角匹配"),
     ("Dino（品牌吉祥物）", "VIPKID 官方形象，造型/配色/比例不得修改"),
