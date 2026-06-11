@@ -7,12 +7,13 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from functools import lru_cache
 from pathlib import Path
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+from config import ROOT as PROJECT_ROOT
+
 IP_DIR = PROJECT_ROOT / "assets" / "ip_library"
 MANIFEST_PATH = IP_DIR / "_manifest.json"
+_lib_cache: tuple[float, list["IPEntry"]] | None = None
 
 
 @dataclass
@@ -31,10 +32,14 @@ class IPEntry:
         return self.name.split(" (")[0].strip()
 
 
-@lru_cache(maxsize=1)
 def load_library() -> list[IPEntry]:
+    """读取 manifest；按 mtime 轻量缓存，避免旧版 exists() 过滤后 lru_cache 永久空列表。"""
+    global _lib_cache
     if not MANIFEST_PATH.exists():
         return []
+    mtime = MANIFEST_PATH.stat().st_mtime
+    if _lib_cache and _lib_cache[0] == mtime:
+        return _lib_cache[1]
     data = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
     out: list[IPEntry] = []
     for d in data:
@@ -44,7 +49,15 @@ def load_library() -> list[IPEntry]:
             gender=d.get("gender", ""), age=int(d.get("age", 0)),
             desc=d.get("desc", ""), image_path=img,
         ))
+    _lib_cache = (mtime, out)
     return out
+
+
+def reload_library() -> list[IPEntry]:
+    """强制重载 IP 库（部署后 / 调试）。"""
+    global _lib_cache
+    _lib_cache = None
+    return load_library()
 
 
 def get_ip(key: str) -> IPEntry | None:

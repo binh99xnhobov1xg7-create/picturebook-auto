@@ -258,6 +258,7 @@ def _mia_hair_style() -> str:
 def _mia_hair_ref_for_age(age: int, style: str | None = None) -> Path | None:
     """按年龄档 + 发型返回 Mia 参考图路径（ip_library 优先，回退 characters）。"""
     from config import CHARACTERS_DIR
+    from ip_library import get_ip
 
     style = style or _mia_hair_style()
     age = int(age)
@@ -265,7 +266,9 @@ def _mia_hair_ref_for_age(age: int, style: str | None = None) -> Path | None:
     if style == "halfup":
         candidates = [
             ip_dir / f"mia_{age}.halfup.bak.png",
+            ip_dir / f"mia_{age}.halfup.png",
             CHARACTERS_DIR / f"mia_age{age}.halfup.bak.png",
+            CHARACTERS_DIR / f"mia_age{age}.halfup.png",
         ]
     else:
         candidates = [
@@ -276,7 +279,17 @@ def _mia_hair_ref_for_age(age: int, style: str | None = None) -> Path | None:
     for p in candidates:
         if p.exists():
             return p
-    return None
+    ip = get_ip(f"mia_{age}")
+    return ip.image_path if ip and ip.image_path.exists() else None
+
+
+def _ip_card_image_path(entry, book_ip_age: int) -> Path:
+    """IP 网格缩略图路径；Mia 行按当前发型锁定展示。"""
+    if entry.key.startswith("mia_"):
+        alt = _mia_hair_ref_for_age(entry.age or book_ip_age)
+        if alt:
+            return alt
+    return entry.image_path
 
 
 def _is_mia_ref_path(p: Path) -> bool:
@@ -3889,8 +3902,8 @@ def _render_ip_cast_panel(detected_chars: list[dict], detected_generic: list[dic
          st.session_state['generic_overrides'] (dict role→key)，
          供 cn_prompt_builder 使用。
     """
-    from ip_library import list_by_kind, get_ip, resolve_registry_key, format_age_label
-    from config import resolve_ip_age
+    from ip_library import list_by_kind, get_ip, resolve_registry_key, format_age_label, reload_library
+    from config import resolve_ip_age, ROOT
 
     # 当前 outline 的 IP age（用于挑年龄档）
     outline = st.session_state.get("outline")
@@ -3937,7 +3950,16 @@ def _render_ip_cast_panel(detected_chars: list[dict], detected_generic: list[dic
         ("👥 同学 · 朋友 · 老师",          ["supporting", "adult"],  True),
         ("🦖 Dino",                        ["brand"],                False),
     ]
+    reload_library()
     grouped = list_by_kind()
+    total_entries = sum(len(v) for v in grouped.values())
+    if total_entries == 0:
+        st.error(
+            "⚠️ **IP 库未能加载**（网格为空）。请确认仓库已包含 "
+            "`assets/ip_library/_manifest.json` 与对应 PNG；"
+            f"部署根目录：`{ROOT}`"
+        )
+        return
 
     new_selected: set[str] = set()
     for label, kinds, expanded in sections:
@@ -3952,7 +3974,11 @@ def _render_ip_cast_panel(detected_chars: list[dict], detected_generic: list[dic
                     with cols[j]:
                         age_lbl = format_age_label(e)
                         cap = f"{e.name_base} · {age_lbl}" if age_lbl != "—" else e.name
-                        _ip_thumbnail(e.image_path, key=f"ip{e.key}", caption=cap)
+                        _ip_thumbnail(
+                            _ip_card_image_path(e, int(target_age)),
+                            key=f"ip{e.key}",
+                            caption=cap,
+                        )
                         auto_tag = " ☑️" if e.key in auto_keys else ""
                         is_checked = st.checkbox(
                             f"{e.name}{auto_tag}",
@@ -4057,10 +4083,7 @@ def _render_mia_hair_selector(target_age: int) -> None:
         _refresh_mia_refs_in_page_prompts(target_age)
     ref = _mia_hair_ref_for_age(target_age, chosen)
     if ref:
-        try:
-            _zoom_image(str(ref), key="mia_hair_preview", caption=f"Mia {target_age}y · {labels[sel]}")
-        except Exception:
-            st.caption(f"预览：{ref.name}")
+        _ip_thumbnail(ref, key="mia_hair_preview", caption=f"Mia {target_age}y · {labels[sel]}", width=160)
     else:
         st.warning("未找到对应发型参考图，将使用默认定妆图。")
 
@@ -6147,11 +6170,15 @@ def _img_data_uri(path) -> str | None:
     return f"data:{mime};base64,{base64.b64encode(data).decode('ascii')}"
 
 
-def _ip_thumbnail(path, key: str, caption: str = "", width: int = 120) -> None:
+def _ip_thumbnail(path, key: str, caption: str = "", width: int | None = 120) -> None:
     """IP 库网格缩略图：用 st.image 直读文件，避免大图 base64 在 Cloud 上渲染失败。"""
+    _ = key  # Streamlit 组件 key 由调用方 checkbox 等承担；此处保留签名兼容
     p = Path(path) if path else None
     if p and p.exists():
-        st.image(str(p), caption=caption or None, width=width)
+        if width is not None:
+            st.image(str(p), caption=caption or None, width=width)
+        else:
+            st.image(str(p), caption=caption or None, use_container_width=True)
     else:
         st.caption(f"⚠️ 缺参考图{caption and f' · {caption}' or ''}")
 
