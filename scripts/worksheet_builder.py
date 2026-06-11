@@ -21,6 +21,7 @@
 """
 from __future__ import annotations
 
+import hashlib
 import random
 import re
 from pathlib import Path
@@ -553,6 +554,16 @@ def _dominant_tense(outline: BookOutline) -> str:
 # ============================================================
 #  分级出题：词汇/句型按 Level 选型（用户拍板 2026-06-04）
 # ============================================================
+def _ws_seed(outline: BookOutline) -> int:
+    """由书名+级别派生稳定轮换种子（同书恒定、不同书各异）——用于在【版式恒定】的前提下
+    跨书轮换题型，告别"每本雷同"。与 ai_extractor._pool_seed 同套路，保证确定性。"""
+    parts = [str(getattr(outline, "title", "") or ""), str(getattr(outline, "level", "") or "")]
+    s = "|".join(p for p in parts if p)
+    if not s:
+        return 0
+    return int(hashlib.md5(s.encode("utf-8")).hexdigest()[:8], 16)
+
+
 def _lvl_band(lvl_n: int) -> str:
     """L0-2→'l02'，L3-4→'l34'，L5-6→'l56'。"""
     if lvl_n <= 2:
@@ -1008,6 +1019,109 @@ def _reading_subtitle(kind: str) -> str:
     return "Read the passage and answer the questions."
 
 
+def _reading_ext_items(outline: BookOutline, data: dict, exclude: set[str],
+                       max_n: int = 4) -> list[dict]:
+    """L4 第②阅读页【综合理解延伸】题（判断 / 简答 / 填空，紧扣原文，绝不与第①页重复）。
+
+    取材优先级：① AI 已抽的 tf/short 阅读题 → ② RR 阅读表达题(作简答) → ③ 原文原句生成
+    True/False（交替"原句=True"与"反义句=False"）→ ④ 本文完形填空兜底。各项去重、去与第①页
+    重复，最多 max_n 条；不足 3 条时调用方回退 SWBST 复述。"""
+    import re as _re
+    items: list[dict] = []
+    seen: set[str] = set(exclude or set())
+
+    def _add(it: dict) -> None:
+        key = (it.get("q") or "").strip().lower()
+        if key and key not in seen and len(items) < max_n:
+            seen.add(key)
+            items.append(it)
+
+    # ① AI 已抽 tf/short
+    for q in (getattr(outline, "_reading_questions", []) or []):
+        if q.get("kind") in ("tf", "short") and (q.get("q") or "").strip():
+            _add({"kind": q["kind"], "q": q["q"].strip(), "page": q.get("page")})
+    # ② RR 表达题 → 简答
+    for q in (getattr(outline, "_rr_questions", []) or []):
+        text = (q.get("q") or q.get("question") or "").strip()
+        if text:
+            _add({"kind": "short", "q": text, "page": q.get("page")})
+    # ③ 原文原句 → True/False（交替真/反义）
+    story = capitalize_names(_to_us_spelling(str(data.get("reading_text") or "")))
+    sents = [s.strip() for s in _re.split(r"(?<=[.!?])\s+", story)
+             if 20 <= len(s.strip()) <= 100]
+    tf_count = 0
+    for s in sents:
+        if len(items) >= max_n:
+            break
+        core = s.rstrip(".!?").strip()
+        if not core:
+            continue
+        if tf_count % 2 == 0:
+            _add({"kind": "tf", "q": core + "."})
+        else:
+            neg = core[0].lower() + core[1:] if core else core
+            _add({"kind": "tf", "q": f"It is not true that {neg}."})
+        tf_count += 1
+    # ④ 完形填空兜底（已规整的 fill_blanks）
+    for f in (data.get("fill_blanks") or []):
+        s = (f.get("sentence") or "").strip()
+        if "____" in s:
+            _add({"kind": "short", "q": s})
+    return items[:max_n]
+
+
+def _build_l4_vocab2(new_page, brand_rgb: tuple, data: dict,
+                     images: Optional[list[Path]], seed: int) -> None:
+    """L4 词汇②页：在 4 种词汇题型间【按书轮换】（每种版式自身恒定、内容紧扣本书词汇），
+    解决"几乎每本都用同一道原文挖空/占位填空"的单调问题：
+      0 → 原文/词义挖空      (fill in the blank, _build_p2_fill)
+      1 → 看义选词           (choose the correct word, 四选一)
+      2 → 看义写词           (write the word, 首字母提示)
+      3 → 选词补全句         (use the word in context, 句子四选一)
+    每种先校验可用题量阈值，不足则顺延到必定 ≥2 题的挖空页，杜绝单题/空页（Problem 1 兜底）。"""
+    pairs = data.get("match_pairs") or []
+    fills = data.get("fill_blanks") or []
+    bank = data.get("word_bank") or []
+
+    riddles = _riddle_mc_items(pairs, max_n=4)            # 看义选词
+    meaning = _word_fill_meaning_items(pairs, max_n=6)    # 看义写词
+    cloze_mc = _cloze_mc_items(fills, bank, max_n=4)      # 选词补全句
+
+    def _do_riddle() -> bool:
+        if len(riddles) >= 3:
+            _build_mcq_page(new_page(), brand_rgb, "Vocabulary",
+                            "Read each clue and circle the correct word.", riddles,
+                            answer_paren=False)
+            return True
+        return False
+
+    def _do_meaning() -> bool:
+        if len(meaning) >= 2:
+            _build_word_fill_page(new_page(), brand_rgb, meaning, "Vocabulary",
+                                  "Read the meaning and write the word. The first letter is given.")
+            return True
+        return False
+
+    def _do_cloze_mc() -> bool:
+        if len(cloze_mc) >= 3:
+            _build_mcq_page(new_page(), brand_rgb, "Vocabulary",
+                            "Choose the correct word to complete each sentence.", cloze_mc)
+            return True
+        return False
+
+    choice = seed % 4
+    if choice == 1 and _do_riddle():
+        return
+    if choice == 2 and _do_meaning():
+        return
+    if choice == 3 and _do_cloze_mc():
+        return
+    # choice == 0，或所选题型可用题量不足 → 回退链（仍尽量换一种花样），最后落到必 ≥2 的挖空页
+    if choice != 0 and (_do_meaning() or _do_riddle()):
+        return
+    _build_p2_fill(new_page(), brand_rgb, fills, bank, images)
+
+
 def build_worksheet(
     outline: BookOutline,
     out_path: Path,
@@ -1118,8 +1232,8 @@ def build_worksheet(
                             answer_paren=False)
         else:
             _build_p2_fill(new_page(), brand_rgb, data["fill_blanks"], data["word_bank"], images)
-    else:  # l34（L4）→ 原文挖空
-        _build_p2_fill(new_page(), brand_rgb, data["fill_blanks"], data["word_bank"], images)
+    else:  # l34（L4）词汇②：跨书轮换 4 种词汇题型（版式各自恒定 → 内容多样），告别"每本都原文挖空"
+        _build_l4_vocab2(new_page, brand_rgb, data, images, _ws_seed(outline))
 
     # ===== 2 句型页（考点 = 本课语法焦点；学什么考什么）=====
     # 时态自适应（用户拍板 2026-06-06）：现在时为主的文本（如非虚构科普）→ 现在时考点
@@ -1268,6 +1382,16 @@ def build_worksheet(
         #   · 虚构(故事)   → 【看图回想 + 补全句子】引导式小结(fill-in + 词库)。
         _is_nonfic_l3 = "non" in (getattr(outline, "fiction_type", "") or "").lower()
         mode = "l3bubble" if _is_nonfic_l3 else "l3summary"
+
+    # L4 第②阅读页跨书轮换（Problem 3：减少"每本都 SWBST 复述"）：仅当调用方未显式指定模式
+    # （auto，batch 默认）时生效，按书在 4 种读后形式间轮换：
+    #   reading2  综合理解题（判断 / 简答 / 填空，紧扣原文）
+    #   mindmap   SWBST 五步复述（保留 ~1/4）
+    #   l3bubble  关键信息气泡图（"我学到了什么"，非复述）
+    #   l3summary 看故事补全句（fill-in 式小结）
+    if (second_reading_mode or "auto").strip().lower() == "auto" and lvl_n == 4:
+        mode = ["reading2", "mindmap", "l3bubble", "l3summary"][_ws_seed(outline) % 4]
+
     if mode == "reading":
         ordered = rq_uni
         half = max(4, (len(ordered) + 1) // 2)
@@ -1314,6 +1438,17 @@ def build_worksheet(
             _build_l3_summary_page(new_page(), brand_rgb, data, outline, title="Reading")
         elif mode == "l3bubble":
             _build_l3_bubble_map(new_page(), brand_rgb, data, outline, title="Reading")
+        elif mode == "reading2":
+            # 综合理解延伸页（判断 / 简答 / 填空）；题量不足时回退 SWBST 复述，杜绝空页。
+            _used = {(q.get("q") or "").strip().lower() for q in first_q}
+            ext = _reading_ext_items(outline, data, _used, max_n=4)
+            if len(ext) >= 3:
+                _build_reading_fill_page(
+                    new_page(), brand_rgb, "Reading",
+                    "Read the story again and answer the questions.",
+                    ext, start_no=1)
+            else:
+                _build_p6_mindmap(new_page(), data["mind_map"])
         else:  # mindmap
             _build_p6_mindmap(new_page(), data["mind_map"])
 
@@ -4070,6 +4205,43 @@ def _is_generic_fill(f: dict) -> bool:
     return ("when i see" in s) or ("see story" in s) or ("goes here" in s)
 
 
+def _definition_fill_items(pairs: list[dict], words: list, max_n: int = 4) -> list[dict]:
+    """词义→写词 兜底填空（扣住词义，绝不再用 'I feel ____ when I see this' 占位）。
+
+    用真实释义造句：'<释义>: ____'，答案=目标词。优先用 match_pairs 自带释义，
+    没有释义的词再用 _KID_DICT 兜底；都没有则跳过。保证每条都是有意义的词汇练习，
+    且与第①页"连线匹配"版式不同（这里是看义写词），多样且不空洞。"""
+    out: list[dict] = []
+    used: set[str] = set()
+    # 词→释义 速查（match_pairs 优先，其次离线词典）
+    def_map: dict[str, str] = {}
+    for p in (pairs or []):
+        w = str(p.get("word", "")).strip()
+        d = str(p.get("def", "")).strip()
+        if w and d and not _is_placeholder_def(d, w):
+            def_map[w.lower()] = d
+    # 候选词序：先 word_bank/words，再 pairs
+    cand: list[str] = []
+    for w in list(words or []) + [p.get("word", "") for p in (pairs or [])]:
+        ww = str(w or "").strip()
+        if ww and ww.lower() not in used:
+            cand.append(ww)
+            used.add(ww.lower())
+    out_seen: set[str] = set()
+    for w in cand:
+        wl = w.lower()
+        d = def_map.get(wl) or _KID_DICT.get(wl, "")
+        if not d or wl in out_seen:
+            continue
+        clue = d.strip().rstrip(".")
+        clue = clue[0].upper() + clue[1:] if clue else clue
+        out.append({"sentence": f"{clue}: ____", "answer": w})
+        out_seen.add(wl)
+        if len(out) >= max_n:
+            break
+    return out
+
+
 def _normalize_worksheet_data(data: dict) -> dict:
     out = dict(data)
     # v2.0：reading_q_count 在 data 上可配置（4/6/8），默认 4
@@ -4144,6 +4316,29 @@ def _normalize_worksheet_data(data: dict) -> dict:
             out["word_bank"] = _clean_word_bank(
                 [format_word_answer(c["answer"]) for c in cloze]
             )
+
+    # 题量硬保证（修复 Book06/18/27/33/39/42 第②页只有 1 题）：
+    # 故事完形对抽象非虚构常常只挖到 0-1 句（目标词不在原文/句子过长），导致 fill_blanks
+    # 仍 <2 或残留 "I feel ____ when I see this" 占位。此处统一用【看义写词】兜底补齐到 ≥3，
+    # 既杜绝单题/占位，又让填空题始终扣住本书词汇（任何级别、任何书都生效）。
+    _good = [f for f in (out.get("fill_blanks") or [])
+             if (f.get("sentence") or "").strip() and not _is_generic_fill(f)]
+    if len(_good) < 3:
+        def_items = _definition_fill_items(out.get("match_pairs") or [], fill_words, 4)
+        seen = {(f.get("answer") or "").strip().lower() for f in _good}
+        for it in def_items:
+            ans = (it.get("answer") or "").strip().lower()
+            if ans and ans not in seen:
+                _good.append({"sentence": format_sentence_answer(it["sentence"]),
+                              "answer": format_word_answer(it["answer"])})
+                seen.add(ans)
+            if len(_good) >= 4:
+                break
+        # 仅在能凑到 ≥2 条"有意义"题时才覆盖（否则保留原数据，绝不让题量比原来更少）。
+        if len(_good) >= 2:
+            out["fill_blanks"] = _good
+            if not out["word_bank"]:
+                out["word_bank"] = _clean_word_bank([f.get("answer") for f in _good])
     # 词库兜底：用填空答案凑齐（清洗后为空时），并打乱顺序避免与题目逐行对应
     if not out["word_bank"] and out.get("fill_blanks"):
         out["word_bank"] = _clean_word_bank([f.get("answer") for f in out["fill_blanks"]])

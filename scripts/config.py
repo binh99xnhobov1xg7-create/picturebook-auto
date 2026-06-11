@@ -190,11 +190,12 @@ _WATERCOLOR_STYLE_ECHO = (
 _SOP_STYLE_DIRECTIVE = (
     "Art-style (HIGHEST priority, override conflicting style later): bright, airy, clean children's storybook in "
     "CLEAR TRANSPARENT LIGHT WATERCOLOR — soft, elegant, gentle; fresh pure luminous colors, thin translucent washes, "
-    "soft wet-on-wet blooms, white paper glowing through; smooth soft low-detail backgrounds, soft lighting, high "
-    "clarity, minimal texture; delicate fine ink outlines (never heavy black ink), subtle paper grain; clean "
+    "soft wet-on-wet blooms, white paper glowing through; simple uncluttered backgrounds kept in SHARP focus "
+    "(deep depth of field — foreground AND background equally clear and readable, never blurred, no bokeh, no shallow "
+    "depth of field), soft lighting, high clarity, minimal texture; delicate fine ink outlines (never heavy black ink), subtle paper grain; clean "
     "light-to-medium saturation, NOT dusty/grey/muted/muddy/dark/heavy, never neon. Characters: cute young kids, "
     "rounded faces, warm dark eyes, small nose, gentle smile, clean cheeks (no rosy circles), fluffy hair; storybook, "
-    "never realistic. IP: Tommy in a pale sky-blue crew-neck sweatshirt; Mia with a mid-high ponytail tied with a "
+    "never realistic. IP: Tommy, brown-haired, in a pale sky-blue crew-neck sweatshirt; Mia, brown-haired, with a mid-high ponytail tied with a "
     "purple hair tie, in purple; both age 10.\n\n"
 )
 _SOP_STYLE_ECHO = (

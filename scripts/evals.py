@@ -199,6 +199,43 @@ def check_picturebook(outline: Any, *, category: str = "绘本",
 
 _BAD_WS_TYPES = ("color", "colour", "draw", "circle only", "圈画", "涂色")
 
+# ai_extractor 题型 → 三大类归并（worksheet_questions 用的是这套 type 命名，
+# 与 worksheet_question_types 的 id 不同；这里按渲染语义归类，仅用于信息性统计）。
+_WS_TYPE_CATEGORY: dict[str, str] = {
+    # 词汇
+    "color_match": "vocab", "circle_match": "vocab", "word_to_pic": "vocab",
+    "fill_blank_simple": "vocab", "fill_blank": "vocab", "fill_blank_advanced": "vocab",
+    "match_definition": "vocab", "unscramble": "vocab", "emotion_fill": "vocab",
+    # 句型
+    "word_order_simple": "sentence", "word_order": "sentence", "story_sequence": "sentence",
+    "true_false_simple": "sentence", "true_false": "sentence",
+    "rewrite_tense": "sentence", "rewrite_voice": "sentence",
+    # 阅读 / 表达
+    "inference": "reading", "plot_chart": "reading", "plot_chart_pbl": "reading",
+    "compare_contrast": "reading", "personal_simple": "reading", "personal_write": "reading",
+    "draw_favorite": "reading", "essay_short": "reading", "open_ended_pbl": "reading",
+    "research_pbl": "reading",
+}
+
+
+def _ws_category_counts(worksheet_questions: list[dict]) -> dict[str, int]:
+    """把题型池按 type 归三大类计数（type 缺失时退回 title 子串启发）。"""
+    counts = {"vocab": 0, "sentence": 0, "reading": 0}
+    for q in worksheet_questions or []:
+        qtype = str(q.get("type") or "").strip().lower()
+        cat = _WS_TYPE_CATEGORY.get(qtype)
+        if cat is None:
+            t = (q.get("title") or q.get("page_title") or "").strip().lower()
+            if "vocab" in t:
+                cat = "vocab"
+            elif "sentence" in t:
+                cat = "sentence"
+            elif "read" in t:
+                cat = "reading"
+        if cat in counts:
+            counts[cat] += 1
+    return counts
+
 
 def check_worksheet(worksheet_questions: list[dict], level: str, *,
                     category: str = "Worksheet", report: Optional[Report] = None) -> Report:
@@ -207,30 +244,30 @@ def check_worksheet(worksheet_questions: list[dict], level: str, *,
         report.warn(category, "无 Worksheet 题目数据，跳过")
         return report
 
-    titles = [(q.get("title") or q.get("page_title") or "").strip().lower()
-              for q in worksheet_questions]
-    n_vocab = sum(1 for t in titles if "vocab" in t)
-    n_sent = sum(1 for t in titles if "sentence" in t)
-    n_read = sum(1 for t in titles if "read" in t)
-
-    if n_vocab < 2:
-        report.warn(category, f"Vocabulary 页 {n_vocab}（标准 2）")
-    if n_sent < 2:
-        report.warn(category, f"Sentence 页 {n_sent}（标准 2）")
-    if n_read < 2:
-        report.warn(category, f"Reading 页 {n_read}（标准 2）")
-    if n_vocab >= 2 and n_sent >= 2 and n_read >= 2:
-        report.ok(category, f"页面结构正确（词汇{n_vocab}+句型{n_sent}+阅读{n_read}）")
+    # 页面结构（2 词汇 + 2 句型 + 2 阅读）由 build_worksheet 渲染时按固定 6 页强制产出，
+    # 与此处传入的"题型池"(worksheet_questions) 不是同一回事——题型池是按 level 槽位抽的
+    # 6 道可互换题，其 type/title 用的是另一套分类法（match_definition / true_false /
+    # inference / unscramble …），且阅读页内容另取自 reading_questions/rr_questions。
+    # 旧逻辑用题池 title 里是否含 "vocab"/"sentence"/"read" 子串来数"页数"，永远数不到
+    # （title 是 "Match the Words…"/"True or False"/"Read & Infer"），导致每本都误报
+    # "Vocabulary 0 / Reading 0（标准 2）"。结构既由渲染器保证，这里改为按题型归类后做
+    # 信息性统计，不再据此误报。
+    _cat = _ws_category_counts(worksheet_questions)
+    report.ok(category,
+              f"题型池分布：词汇{_cat['vocab']}+句型{_cat['sentence']}+阅读{_cat['reading']}"
+              f"（页面结构 2+2+2 由渲染器强制保证）")
 
     for i, q in enumerate(worksheet_questions, 1):
         items = q.get("items") or q.get("questions") or []
         qtype = str(q.get("type") or "").lower()
-        # 题数下限
-        if isinstance(items, list) and 0 < len(items) < 3:
-            report.warn(category, f"第 {i} 页只有 {len(items)} 题（建议 ≥3）")
+        # 题量下限：注意这里数的是【题型池第 i 项的 item 数】，不是渲染后的页题数——
+        # 渲染器（build_worksheet）已对每页做"必 ≥2 题"的硬兜底（看义写词/选词/原文完形等），
+        # 所以这里只对【完全空/单 item】的退化题型给提示，不再用 <3 误报（很多题型本就 1-2 item）。
+        if isinstance(items, list) and len(items) < 1:
+            report.warn(category, f"题型池第 {i} 项 `{qtype or '?'}` 没有 item（渲染将走兜底题）")
         # color-only 题型
         if any(bad in qtype for bad in _BAD_WS_TYPES):
-            report.error(category, f"第 {i} 页题型 `{qtype}` 是涂色/圈画类，应替换为有语言输出的题型")
+            report.error(category, f"题型池第 {i} 项 `{qtype}` 是涂色/圈画类，应替换为有语言输出的题型")
     return report
 
 

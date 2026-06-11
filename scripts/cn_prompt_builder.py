@@ -58,7 +58,7 @@ from parser import BookOutline, PageSpec
 STYLE_CN = (
     "高级精致的经典儿童图画书插图风格，干净清新的【治愈水彩】——通透柔和的水彩晕染，大面积色块干净通透："
     "色块干净不脏、以细腻柔和的水彩过渡做克制而精致的明暗与体积（轻盈不厚重），"
-    "讲究前中后景的空间层次与景深（近景清晰精致、远景柔和虚化），画面层次干净耐看、高级；"
+    "讲究前中后景的空间层次与纵深【但全画面同清·深景深】——前景与远景同样锐利清晰、同等细节可读，绝不背景虚化/散景，画面层次干净耐看、高级；"
     "以平滑柔和的色块与渐变(smooth shading/gradients)塑形为主，线条以柔和简洁的描边为辅（克制、纤细、可有可无，绝不喧宾、不要粗重墨线），"
     "形体简洁完整、细节克制(controlled details)、纹理极简(minimal texture)；画面干净洁净、精致考究而不杂乱、不细碎。"
     "【细腻而不细碎·无噪点无颗粒·无脏块无碎块】上色细腻柔和、过渡干净自然、颜色分布匀净；"
@@ -283,7 +283,11 @@ _GENERIC_ROLE_MAP: list[tuple[str, str]] = [
     # "parents/父母/爸妈" → 同时带出妈妈+爸爸（两条独立规则各按 key 去重命中）
     (r"\bparents\b|\bmom and dad\b|父母|爸妈", "mom"),
     (r"\bparents\b|\bmom and dad\b|父母|爸妈", "dad"),
-    (r"\b(?:a |an |the )?woman\b|阿姨|女老师", "teacher_kim"),
+    # 用户拍板 2026-06-07 同款决定的延伸（2026-06-11 修 L4·SYMPTOM2 根因）：裸词 "woman/阿姨/
+    #   女老师" 不再映射成金发 IP Teacher Kim——否则任何含无名成年女性的故事（科学家/织布婆婆/
+    #   讲解员…）都被画成 Teacher Kim，且与 book_cast 一次性女角并存导致逐页漂移。Teacher Kim 只认
+    #   专名 Ms./Teacher Kim/Kim（仍由显式 IP 检测命中）；无名成年女性交给 book_cast【一次性成人锚】
+    #   （全书统一外观 + 书内锚图）保持跨页一致，或由场景成人锁兜底。
     (r"\b(?:a |an |the )?cat\b|kitten|猫", "winnie"),
 ]
 
@@ -1288,8 +1292,20 @@ def _is_frame_fable(outline: BookOutline) -> bool:
     if _is_nonfiction(outline):
         return False
     bc = getattr(outline, "book_cast", None) or {}
-    if not any(getattr(r, "needs_anchor", False) for r in bc.values()):
+    _anchored = [r for r in bc.values() if getattr(r, "needs_anchor", False)]
+    if not _anchored:
         return False
+    # 框架寓言的【反复出场主角】必须是非人类动物（狐狸/蚂蚁/羊驼…）。若锚定角色全是【人类】
+    #   （如《The Library》里的真人馆员 Ms. Lee），这是普通真人故事，绝不是发光魔法书寓言——
+    #   否则正文里满篇 "book / reading the / the book" 会被 _FRAME_MARKER 误判成寓言框架，
+    #   把 Mia/Tommy 错当成"读者"、并经 _scrub_leads_clause 把含主角的场景句删成残句
+    #   （Book09《The Library》整本误框 + P3/P5 场景被毁的根因·2026-06-10）。
+    try:
+        from book_cast import is_animal_role as _is_animal_role
+        if not any(_is_animal_role(r) for r in _anchored):
+            return False
+    except Exception:
+        pass
     oip = getattr(outline, "official_image_prompt", None)
     txt = (outline.title or "")
     if oip is not None:
@@ -1347,13 +1363,52 @@ def _frame_page_kind(outline: BookOutline, page: PageSpec, mode: str) -> str:
     return "pure"
 
 
+# 英文称谓缩写里的句点（Ms./Mr./Mrs./Dr./St./Prof. 等）绝不能当成句末——
+#   否则按句号切句时会把 "Ms. Lee 俯身……，Mia 看着" 切成 ["……Ms.", " Lee……Mia……"]，
+#   前半截不含 Mia/Tommy 被保留、后半截被当"读者句"删掉，整页场景退化成 "……Ms." 残句
+#   （Book09《The Library》P3/P5 根因·2026-06-10）。切句前先把缩写句点临时遮蔽，切完再还原。
+_TITLE_ABBR_RE = _re.compile(r"\b(Mrs|Mr|Ms|Dr|St|Prof|Sr|Jr|Mt|vs|etc)\.", _re.IGNORECASE)
+_ABBR_DOT = "\u0001"  # 占位符（正文不会出现的控制符）
+
+
+def _protect_abbrev_dots(s: str) -> str:
+    return _TITLE_ABBR_RE.sub(lambda m: m.group(0)[:-1] + _ABBR_DOT, s)
+
+
+def _restore_abbrev_dots(s: str) -> str:
+    return s.replace(_ABBR_DOT, ".")
+
+
 def _scrub_leads_clause(s: str) -> str:
     """从寓言场景文本里删掉提及 Tommy/Mia 的句子（读者不进故事幻象内容）。"""
     if not s:
         return s
-    parts = _re.split(r"(?<=[。.!?！？\n])", s)
+    protected = _protect_abbrev_dots(s)
+    parts = _re.split(r"(?<=[。.!?！？\n])", protected)
     kept = [p for p in parts if not _re.search(r"\b(tommy|mia)\b", p, _re.IGNORECASE)]
-    out = "".join(kept).strip()
+    out = _restore_abbrev_dots("".join(kept).strip())
+    return out or s
+
+
+def _scrub_leads_fine(s: str) -> str:
+    """【小句级】删掉提及 Tommy/Mia(或中文"米娅/汤米")的小句，但保留同句里其它角色/场景小句。
+
+    用于【科普内页】(NF body)：AI 生成的 scene_cn 常把 Mia/Tommy 误写成动作执行者
+    （"Mia 踮脚抽书…旁边 Tommy 蹲着…柜台后图书管理员阿姨…"），而科普内页规则是【主角不出场】。
+    原 _scrub_leads_clause 只按句末标点切，会把整句(连同图书管理员)一起删光。这里按
+    【，、；。.!?！？\n】更细地切，仅剔除含主角的小句，把动作归还给真正的科普对象（图书管理员等）。
+    根治 Book18 P4 根因（2026-06-11·SYMPTOM3）：内页"主角不出场"与"Mia 抽书"自相矛盾 → 出错。
+    """
+    if not s:
+        return s
+    protected = _protect_abbrev_dots(s)
+    parts = _re.split(r"(?<=[，,、；;。.!?！？\n])", protected)
+    kept = [p for p in parts
+            if not _re.search(r"\b(tommy|mia)\b", p, _re.IGNORECASE)
+            and not _re.search(r"米娅|米雅|汤米|汤姆", p)]
+    out = _restore_abbrev_dots("".join(kept).strip())
+    # 收尾标点清理（避免删后留下孤立的 ，、；）
+    out = _re.sub(r"^[，,、；;。\s]+", "", out).strip()
     return out or s
 
 
@@ -1713,6 +1768,40 @@ def _cast_from_official(official_raw: str, ip_age: int) -> list[dict]:
     return out[:5]
 
 
+# ============================================================
+#  未成年安全·机位/姿态硬伤净化（2026-06-11 · L3 Book27 Morning Chaos P4 修复沉淀）
+#  根因：未成年角色"趴地/钻床底 + 屁股撅起/撅臀" 与 "仰视(从下往上)低机位" 组合，
+#  会触发图像 API 的未成年安全过滤（HTTP 400 拒绝 → 退化成 mock 占位）。
+#  本函数只【软化/中性化既有措辞】，不新增任何对儿童身体的描述：
+#    1) 一律删除"屁股撅起/撅起屁股/翘起屁股/撅臀"等措辞；
+#    2) 当本页同时含"趴地/钻床底"类俯身线索时，把"仰视(从下往上)低机位"降为"平视机位"。
+#  仅在命中危险组合时改写，其余页面零影响、不可回退误伤。
+# ============================================================
+_MINOR_BUTT_RE = _re.compile(r"[，,、；;\s]*(?:屁股撅起|撅起屁股|翘起屁股|撅臀)[^，。,.；;]*")
+_MINOR_PRONE_HINTS = ("趴在地", "趴在床", "趴地", "钻进床底", "头钻进床", "把头探向床底",
+                      "把头钻进床", "床底下", "探进床底")
+_LOW_ANGLE_HINTS = ("仰视", "从下往上看", "low-angle", "low angle", "from below")
+
+
+def _sanitize_minor_safety(text: str) -> str:
+    """软化未成年"撅臀+低机位俯身"危险组合（防 API 未成年安全 400）。只中性化既有措辞。"""
+    if not text:
+        return text
+    low = text.lower()
+    has_butt = bool(_MINOR_BUTT_RE.search(text))
+    has_prone = any(h in text for h in _MINOR_PRONE_HINTS)
+    has_low = ("仰视" in text or "从下往上看" in text
+               or "low-angle" in low or "low angle" in low or "from below" in low)
+    out = text
+    # 1) 永久剔除"撅臀"类措辞（未成年安全红线）
+    if has_butt:
+        out = _MINOR_BUTT_RE.sub("", out)
+    # 2) 俯身趴地/钻床底 + 低机位仰视 → 机位降为平视（精确替换 CAMERA_ANGLE_CN['low'] 整句）
+    if (has_prone or has_butt) and has_low:
+        out = out.replace(CAMERA_ANGLE_CN["low"], CAMERA_ANGLE_CN["eye"])
+    return out
+
+
 def build_cn_page_prompt(
     page: PageSpec,
     outline: BookOutline,
@@ -1953,6 +2042,10 @@ def build_cn_page_prompt(
     _raw_scene_for_theme = scene_cn
     if not is_cover:
         if _nf_body_page(page, outline):
+            # 科普内页【主角不出场】：先把 AI 误塞的"Mia/Tommy 在做某事"小句删掉，把动作归还给
+            #   真正的科普对象（图书管理员/工人等），避免"内页不出现主角"与"Mia 抽书"自相矛盾
+            #   （Book18 P4 根因·2026-06-11·SYMPTOM3）。
+            scene_cn = _scrub_leads_fine(scene_cn)
             scene_cn = (
                 scene_cn.rstrip("。") +
                 "。本页为科普知识画面：以本页科普对象/场景/过程为主体（占画面主要面积、清晰可辨），"
@@ -2030,6 +2123,12 @@ def build_cn_page_prompt(
     composition_cn = COMPOSITION_CN[shot]
     angle_cn = "" if is_cover else _angle_phrase(_resolve_camera_angle(page, outline))
     focus_cn = "" if is_cover else (getattr(page, "focus", "") or "").strip()
+    # 科普内页【主角不出场】：本页主体动作若由 Mia/Tommy 执行，清掉它（动作归还给科普对象），
+    #   避免 image_prompts 的"本页主体动作：Mia 抽书"与"内页不出现主角"矛盾（SYMPTOM3·2026-06-11）。
+    if focus_cn and _nf_body_page(page, outline) and (
+            _re.search(r"\b(tommy|mia)\b", focus_cn, _re.IGNORECASE)
+            or _re.search(r"米娅|米雅|汤米|汤姆", focus_cn)):
+        focus_cn = ""
     hook_cn = "" if is_cover else (getattr(page, "hook", "") or "").strip()
     # SOP 第7/二.5 条：本页情绪 → 固定面部细节词表（封面不强加；归并不到六类则留空）。
     expr_face_cn = "" if is_cover else _emotion_face_cn(getattr(page, "expression", "") or "")
@@ -2083,6 +2182,7 @@ def build_cn_page_prompt(
             oneoff_note=extra_note, story_lock=story_lock, leads_active=_leads_active,
             has_extras=_scene_extras_raw, expr_face_cn=expr_face_cn,
             inject_anim_lock=_inject_anim,
+            nf_body_no_leads=_nf_body_page(page, outline) and not is_cover,
         )
         negative = _build_negative_concise(cast=cast, page_text=(page.text or ""), ip_age=ip_age,
                                            oneoff_cast=oneoff_cast)
@@ -2099,6 +2199,12 @@ def build_cn_page_prompt(
     # 回退(verbose v3)路径：一次性角色锁仍按旧方式追加（concise 已并入【3·主体角色】段）。
     if not _CONCISE_PROMPT and extra_note:
         prompt_text = prompt_text + "\n\n" + extra_note
+
+    # 10.5) 未成年安全净化：剔除"撅臀"类措辞、把"趴地/钻床底+低机位仰视"降为平视
+    #   （2026-06-11·防 L3 Book27 P4 那类未成年安全 400 拒绝再次发生）。在预算裁剪前做，
+    #   这样净化后的措辞也参与去重/预算统计。scene_cn 同步净化，供自审/定向修图复用。
+    prompt_text = _sanitize_minor_safety(prompt_text)
+    scene_cn = _sanitize_minor_safety(scene_cn)
 
     # 11) 超长保护：去重精简重复套话；超 3800 字符打告警（防下游 4000 截断切掉尾部铁律）。
     _tag = "封面" if is_cover else f"P{page.index}"
@@ -2126,7 +2232,7 @@ def _apply_book_cast(outline, page, official_raw: str, current_refs: int):
     try:
         from book_cast import (roles_on_page, is_adult_role, is_child_human_role,
                                is_animal_role, is_story_dog_role, oneoff_child_color,
-                               STORY_DOG_LOCK_CN)
+                               oneoff_adult_appearance, STORY_DOG_LOCK_CN)
         # 无官方文本（如 Book63）时回退本页正文/scene/scene_cn 文本，否则书内角色锚/外观锁每页都漏注入。
         page_text = ((getattr(page, "text", "") or "") + " "
                      + (getattr(page, "scene", "") or "") + " "
@@ -2153,8 +2259,16 @@ def _apply_book_cast(outline, page, official_raw: str, current_refs: int):
                 tag += ("（这是一只动物，按其真实物种外观绘制：四足、该物种的体型/毛色/耳型/尾巴，"
                         "绝不拟人化为人类小孩、不穿人类衣服、不直立行走。）")
         elif is_adult_role(r):
-            tag += ("【这是一位成年人】成熟成人脸庞与成人身材比例，明显高于 10 岁儿童、"
-                    "约为儿童身高的 4:3、孩子头顶大约到其肩部；绝不能画成小孩/儿童/青少年。")
+            _g = getattr(r, "gender", "")
+            _gcn = "男性" if _g == "male" else "女性" if _g == "female" else ""
+            _sex = (f"【这是一位成年{_gcn}】（成年{'男士' if _gcn=='男性' else '女士' if _gcn=='女性' else '人'}）"
+                    if _gcn else "【这是一位成年人】")
+            # 无官方外观文本 → 注入确定性稳定外观（与书内锚图共用同一句），全书每页一致防漂移。
+            if not desc:
+                tag += oneoff_adult_appearance(r) + "。"
+            tag += (f"{_sex}成熟成人脸庞与成人身材比例，明显高于 10 岁儿童、"
+                    "约为儿童身高的 4:3、孩子头顶大约到其肩部；绝不能画成小孩/儿童/青少年。"
+                    + (f"性别锁：必须是成年{_gcn}，绝不画成另一性别。" if _gcn else ""))
         # 人类儿童命名角色（如 Ben）：页面级也带【全新独立·国际化·反克隆主角】锁，
         #   保证不仅锚图对、成图页也不会把 Ben 画成 Tommy/Mia 的翻版。颜色与锚图共用同一确定性指派。
         elif is_child_human_role(r):
@@ -2294,7 +2408,7 @@ def _build_positive_concise(
     env_hint: str, key_props: list[str], composition_cn: str, blank_cn: str,
     angle_cn: str = "", focus_cn: str = "", hook_cn: str = "", oneoff_note: str = "",
     story_lock: str = "", leads_active: bool = True, has_extras: bool | None = None,
-    expr_face_cn: str = "", inject_anim_lock: bool = False,
+    expr_face_cn: str = "", inject_anim_lock: bool = False, nf_body_no_leads: bool = False,
 ) -> str:
     """【结构化公式·正向】prompt（2026-06-10 用户拍板"按公式重排 + 精简"）。
 
@@ -2312,6 +2426,35 @@ def _build_positive_concise(
         has_extras = (not is_cover) and _scene_has_nonlead_extras(scene_cn)
 
     sec: list[str] = []
+
+    # ★铁律·最高优先（front-load·必存活）：把【IP 身份锁 + 防分身 + 防山寨脸 + 防多余路人 + 配色专属】
+    #   压成最短一段置于全文最前。根因（2026-06-10 修）：下游英文画风前缀≈1550 字 + 4000 硬截断，
+    #   中文正文只剩 ~2100 字可用，原本排在篇尾的负向段（防分身/防山寨脸/防乱入）被整段切掉 →
+    #   出现 Mia/Tommy 分身、山寨脸、凭空多出的路人。把这几条核心锁前置即可绝不被截掉。
+    _lock_bits: list[str] = []
+    # 发色锁前置（2026-06-11 修 L4 根因·SYMPTOM1）：原 front-load 只锁"马尾+紫色/蓝衣"却漏掉
+    #   【发色】，4000 截断时后段棕发锁虽多在存活窗口内，但 highest-priority 行不含发色 → 模型
+    #   弱化发色、把 Mia 漂成红/橙/金色卷发。把【棕色发 + 反红橙金/反卷发蓬散】并入这一行，永不被截。
+    if any((c.get("key") or "").split("_")[0] == "mia" for c in cast):
+        _lock_bits.append(
+            f"Mia＝{ip_age}岁女孩·【棕色头发(brown hair)】后脑中高位单束马尾+紫色发圈·穿紫色·"
+            "发色绝不红/橙/金/banana黄·绝不卷发蓬乱/大片披散·全书同一人")
+    if any((c.get("key") or "").split("_")[0] == "tommy" for c in cast):
+        _lock_bits.append(
+            f"Tommy＝{ip_age}岁男孩·【棕色(brown)】蓬松短发·穿浅天蓝长袖·"
+            "发色绝不红/橙/金·全书同一人")
+    _front = (
+        "【★铁律·最高优先·必须遵守】"
+        + ("；".join(_lock_bits) + "。" if _lock_bits else "")
+        + "每个角色全图只出现一次，严禁分身/复制/双胞胎/镜像；"
+        "除本页点名的主角外，禁止出现长得像 Mia/Tommy 的小孩（紫色马尾女孩、浅天蓝衣男孩）或任何山寨脸；"
+        "不得为凑画面凭空添加未点名的陌生路人/围观人群/多余配角。"
+    )
+    _front_color = [f"只有 {c['name']} 穿{_signature_color_of(c['key'])}"
+                    for c in cast if _signature_color_of(c.get("key", ""))]
+    if _front_color:
+        _front += "配色专属：" + "；".join(_front_color) + "（其他任何人不得穿这些专属色）。"
+    sec.append(_front)
 
     # 1·类型
     sec.append(f"【1·类型】童书绘本插画（连续性系列绘本{'封面' if is_cover else '内页'}）")
@@ -2391,7 +2534,11 @@ def _build_positive_concise(
             f"{same_age_line}"
             f"每个角色全图只出现一次（绝不分身/复制/双胞胎/镜像）；{others}"
         )
-    who = kid_names or "、".join(c.get("name", "") for c in cast) or "系列主角 Mia、Tommy"
+    # 科普内页【主角不出场】时，绝不再把 fallback 写成"系列主角 Mia、Tommy"（会与"内页不含主角"
+    #   矛盾、并诱导模型把动作画到 Mia 身上）——改为中性的"本页科普对象/场景"（SYMPTOM3·2026-06-11）。
+    _who_fallback = ("本页科普对象/场景主体（内页不含 Mia、Tommy）"
+                     if nf_body_no_leads else "系列主角 Mia、Tommy")
+    who = kid_names or "、".join(c.get("name", "") for c in cast) or _who_fallback
     sec.append("【3·主体角色】本页出场：" + who + "。\n" + "\n".join(role_lines))
 
     # 4·背景/环境
@@ -2426,7 +2573,8 @@ def _build_positive_concise(
     sec.append("【11·留白】留一整条约 20-25%（≥20%）文字区，必须是本页场景向上延伸（户外天空树梢/室内天花板线·书架顶·墙面），"
                "有真实色彩质感，绝不是纯白/平涂纯色块或硬边方框；区内不放可识别人物/道具/文字")
     # 12·层次/景深
-    sec.append("【12·层次/景深】前中后景拉开层次、浅景深聚焦主体，画面通透有纵深，绝非扁平平铺")
+    sec.append("【12·层次/景深】前中后景拉开层次、画面通透有纵深；【全画面同清·深景深】前景与远景同样锐利清晰、同等细节可读，"
+               "绝不背景虚化/散景bokeh/浅景深（绝非前景清晰后景糊成一片），也绝非扁平平铺")
     # 13·必须出现的细节（封面场景；内页完整场景已在 ★0 置顶，这里不再重复——同义只留一处）
     if is_cover:
         sec.append(f"【13·必须出现的细节·最高优先级】绘本封面《{title}》：{scene_cn.rstrip('。')}。"
@@ -2595,7 +2743,7 @@ def _build_positive_v3(
             "把这个动作作为画面主体来构图——主角是视觉焦点、明显偏置画面一侧（不要居中、不要铺满整框，"
             "另一侧/顶部留出上述干净留白），"
             "用动态有张力的姿态（伸手/俯身/奔跑/惊喜等）把这一刻演出来，表情到位、情绪鲜活；"
-            "并拉开前景—中景—背景的清晰层次、用浅景深把焦点落在这个主体动作上（主体清晰、背景柔和虚化），"
+            "并拉开前景—中景—背景的清晰层次、用构图与动势把焦点落在这个主体动作上（主体突出，但前景与远景同样锐利清晰·深景深，绝不背景虚化/散景），"
             "让孩子一翻到这页就立刻被这一下抓住，绝不是呆板平铺、人物呆站。"
         )
 

@@ -58,6 +58,14 @@ _ANIMATE = re.compile(
     r"\b(man|woman|boy|girl|lady|gentleman|king|queen|prince|princess|"
     r"nurse|doctor|farmer|teacher|baker|shopkeeper|mailman|postman|firefighter|"
     r"police|officer|cop|driver|chef|cook|waiter|clerk|guard|pilot|sailor|knight|"
+    # 反复出场的非 IP 成人职业/身份名（2026-06-11 新增·修 L4 SYMPTOM2：科学家/护林员/织布婆婆等
+    #   原先不在角色词表 → 不登记为一次性角色 → 无锚无统一外观 → 逐页漂移）。单复数都收。
+    r"scientists?|researchers?|rangers?|guides?|vets?|veterinarians?|biologists?|"
+    r"zoologists?|botanists?|explorers?|zookeepers?|keepers?|inventors?|mayors?|"
+    r"governors?|councou?ncillors?|professors?|principals?|coach(?:es)?|conductors?|"
+    r"weavers?|painters?|sculptors?|carpenters?|tailors?|fishermen|fisherman|"
+    r"merchants?|engineers?|reporters?|journalists?|photographers?|librarians?|"
+    r"curators?|gardeners?|volunteers?|workers?|helpers?|visitors?|"
     r"fox|wolf|bear|bears|pig|pigs|goat|goats|cow|horse|sheep|duck|hen|rooster|"
     r"mouse|mice|rat|rabbit|bunny|hare|tortoise|turtle|lion|tiger|monkey|"
     r"elephant|frog|snake|owl|crow|bird|deer|eagle|cat|dog|goose|"
@@ -99,7 +107,23 @@ _COMMON_NONNAME = re.compile(
     # 场所/概念名词（非虚构书名常大写，绝不是角色）：Libraries/Museums/Sports…
     r"library|libraries|museum|museums|sport|sports|game|games|exercise|exercises|"
     r"park|parks|school|schools|store|stores|shop|shops|hospital|hospitals|"
-    r"neighborhood|neighbourhood|community|communities|nature|world|earth)$",
+    r"neighborhood|neighbourhood|community|communities|nature|world|earth|"
+    # 抽象/活动/计数名词（2026-06-11 新增·修 L4 SYMPTOM1：标题/正文里的 Step/Steps/Way/Ways/Wind
+    #   被句首或标题大写后误判成"专名儿童"，生成 role_step.png 这类垃圾一次性儿童、再撞主角）：
+    r"step|steps|way|ways|wind|winds|sunshine|sunlight|breeze|cloud|clouds|"
+    r"moment|moments|idea|ideas|plan|plans|reason|reasons|fact|facts|tip|tips|"
+    r"five|four|three|two|one|first|second|third|fourth|fifth|"
+    # 食谱/说明书祈使动词 + 食物词（科普/食谱类绘本里 "Add…/Stir…/Grill…/Drink…/Check…" 句首大写
+    #   被误当人名儿童——Book21 根因）：
+    r"add|stir|grill|drink|check|mix|pour|bake|boil|chop|slice|serve|cook|wash|peel|"
+    r"taste|choose|blend|steam|fry|heat|fruit|fruits|vegetable|vegetables|snack|snacks|"
+    r"meal|meals|juice|bread|rice|salad|soup|"
+    # 生境/自然地貌（科普书的小节标题大写：Forests/Deserts/Oceans/Plants/Grasslands——Book42 根因）：
+    r"forest|forests|grassland|grasslands|desert|deserts|ocean|oceans|plant|plants|"
+    r"jungle|jungles|rainforest|rainforests|tundra|wetland|wetlands|reef|reefs|pond|ponds|"
+    r"valley|valleys|meadow|meadows|prairie|prairies|savanna|savannah|habitat|habitats|"
+    r"ecosystem|ecosystems|river|rivers|mountain|mountains|lake|lakes|sea|seas|hill|hills|"
+    r"field|fields|island|islands|cave|caves|sky|soil)$",
     re.I,
 )
 
@@ -165,6 +189,8 @@ class OneOffRole:
     anchor_path: str | None = None  # 书内定妆锚图（生成后回填）
     aliases: set[str] = field(default_factory=set)  # 别名（如 Officer Buckle 的裸名 "buckle"），供本页命中
     species: str = "human"          # "human" / "dog" / "animal"——动物走犬种/物种锁，不套人类儿童反克隆锁
+    gender: str = ""                # "male" / "female" / ""——成人/具名角色性别锁（防把男老师画成女）
+    is_adult: bool = False          # 显式成人标记（按称谓 Mr./Mrs. 或全名归并出的具名成人，如 Mr. Johnson）
 
     @property
     def count(self) -> int:
@@ -221,8 +247,15 @@ _ADULT_ROLE_RE = re.compile(
     r"chefs?|cooks?|waiters?|waitress(?:es)?|drivers?|pilots?|sailors?|guards?|clerks?|shopkeepers?|"
     r"vendors?|grocers?|captains?|sergeants?|mayors?|kings?|queens?|princes?|princess(?:es)?|knights?|"
     r"volunteers?|cleaners?|workers?|helpers?|visitors?|librarians?|curators?|gardeners?|painters?|"
+    # 2026-06-11 新增·修 L4 SYMPTOM2（与 _ANIMATE 对齐，确保这些一次性成人走【成人锁+成人锚】）：
+    r"scientists?|researchers?|rangers?|guides?|vets?|veterinarians?|biologists?|zoologists?|botanists?|"
+    r"explorers?|zookeepers?|keepers?|inventors?|governors?|councou?ncillors?|professors?|principals?|"
+    r"coach(?:es)?|conductors?|weavers?|sculptors?|carpenters?|tailors?|fishermen|fisherman|merchants?|"
+    r"engineers?|reporters?|journalists?|photographers?|"
     r"man|woman|men|women|lady|ladies|gentleman|gentlemen|adults?|grandpa|grandma|grandmother|grandfather|"
     r"警察|警官|消防员|邮递员|医生|护士|农夫|农民|司机|店员|厨师|面包师|志愿者|清洁工|工人|管理员|讲解员|馆员|"
+    r"科学家|研究员|护林员|向导|导游|兽医|生物学家|动物学家|植物学家|探险家|饲养员|发明家|市长|议员|教授|校长|"
+    r"教练|画家|雕刻家|木匠|裁缝|渔夫|商人|工程师|记者|摄影师|织布|婆婆|"
     r"老师|队长|国王|王后|王子|公主|大人|成年|叔叔|阿姨)\b",
     re.I,
 )
@@ -230,8 +263,20 @@ _ADULT_ROLE_RE = re.compile(
 
 def is_adult_role(role: "OneOffRole") -> bool:
     """该一次性角色是否为【成人/职业类】（决定锚图是否加成人锁、是否避开儿童风格参考）。"""
+    if getattr(role, "is_adult", False):           # 显式成人（按称谓/全名归并出的具名成人）
+        return True
     blob = " ".join([role.rid or "", role.display or "", role.desc_en or ""])
     return bool(_ADULT_ROLE_RE.search(blob))
+
+
+def _gender_cn(role: "OneOffRole") -> str:
+    """成人性别中文词：用于锚图/页面成人锁，避免把男角色画成女、女画成男。"""
+    g = getattr(role, "gender", "")
+    if g == "male":
+        return "男性"
+    if g == "female":
+        return "女性"
+    return ""
 
 
 # 动物类一次性角色（fox/rabbit…）——不适用"国际化儿童/不撞主角"这套人类儿童锁。
@@ -278,6 +323,8 @@ def is_child_human_role(role: "OneOffRole") -> bool:
     这类角色需要在锚图与页面 prompt 里加【全新独立·国际化·绝不撞主角(Mia/Tommy)】锁，
     根治"命名儿童(如 Ben)被画成 Tommy 12 岁翻版"。成人、动物不适用。
     """
+    if getattr(role, "is_adult", False):
+        return False
     if is_adult_role(role):
         return False
     if getattr(role, "species", "human") != "human":
@@ -303,6 +350,40 @@ def oneoff_child_color(rid: str) -> str:
     """按 rid 确定性指派一个【非蓝非紫】服装色——锚图与页面 prompt 共用，保证全书一致。"""
     h = sum(ord(c) for c in (rid or "x"))
     return _ONEOFF_CHILD_COLORS[h % len(_ONEOFF_CHILD_COLORS)]
+
+
+# 一次性【成人】确定性外观池（2026-06-11·修 L4 SYMPTOM2：科学家/织布婆婆等具名/反复出场成人
+#   没有官方外观文本时会逐页随机漂移。这里按 rid 哈希【确定性】指派一套稳定外观（发色+发型+衣色+
+#   体格），锚图与每一页 prompt 共用同一句 → 做到与主角同等的全书跨页一致）。
+#   服装色刻意避开主角专属色：紫=Mia / 蓝=Tommy / 绿=Anna / 粉=Cate。发色用成人常见色（成人不会
+#   与儿童 Mia/Tommy 混淆）。仅用于【非 IP 成人】，绝不改写任何儿童/主角的外观锁。
+_ADULT_HAIR_STYLES = [
+    "深棕色齐肩直发", "黑色利落短发", "栗棕色低马尾", "深金棕色短卷发",
+    "灰白色短发", "黑色盘起的发髻", "棕色中长波浪发", "深褐色寸头短发",
+]
+_ADULT_TOP_COLORS = [
+    "赭石橙色", "暖棕色", "砖红色", "米白色", "焦糖棕色",
+    "深灰色", "芥末黄色", "酒红色",
+]
+_ADULT_BUILDS = ["中等身材", "高挑清瘦身材", "敦实结实身材", "匀称偏瘦身材"]
+
+
+def oneoff_adult_appearance(role: "OneOffRole") -> str:
+    """为一次性【成人】角色按 rid 生成一句【确定性·全书每页一致】的稳定外观（成人，非儿童）。
+
+    用于：① 该成人无官方外观文本(desc_en 为空)时的兜底锁；② 书内定妆锚图描述。
+    两处共用同一句 → 锚图与各页完全一致，根治"科学家/织布婆婆逐页换脸换衣"。
+    """
+    h = sum(ord(c) for c in (role.rid or "x"))
+    hair = _ADULT_HAIR_STYLES[h % len(_ADULT_HAIR_STYLES)]
+    top = _ADULT_TOP_COLORS[(h // 3) % len(_ADULT_TOP_COLORS)]
+    build = _ADULT_BUILDS[(h // 7) % len(_ADULT_BUILDS)]
+    g = getattr(role, "gender", "")
+    sex = "成年女性" if g == "female" else "成年男性" if g == "male" else "成年人"
+    return (
+        f"固定外观（全书每页务必完全一致）：一位{sex}，{hair}，穿【{top}】上衣，{build}，"
+        "亲切温和的成熟成年人面容；服装绝不用紫色(Mia专属)/蓝色(Tommy专属)/绿色(Anna专属)/粉色(Cate专属)"
+    )
 
 
 def _is_character_token(token: str) -> bool:
@@ -364,6 +445,26 @@ _PLAIN_STOP = {
     "library", "libraries", "museum", "museums", "sport", "sports",
     "game", "games", "park", "school", "store", "shop", "hospital",
     "neighborhood", "community", "nature",
+    # 抽象/活动/计数名词（2026-06-11 新增·修 L4 SYMPTOM1，与 _COMMON_NONNAME 对齐）：
+    "step", "steps", "way", "ways", "wind", "winds", "sunshine", "sunlight",
+    "breeze", "cloud", "clouds", "moment", "moments", "idea", "ideas",
+    "plan", "plans", "reason", "reasons", "fact", "facts", "tip", "tips",
+    "five", "four", "three", "two", "one", "first", "second", "third",
+    "fourth", "fifth",
+    # 食谱祈使动词 + 食物（Book21 根因）：
+    "add", "stir", "grill", "drink", "check", "mix", "pour", "bake", "boil",
+    "chop", "slice", "serve", "cook", "wash", "peel", "taste", "choose", "blend",
+    "steam", "fry", "heat", "fruit", "fruits", "vegetable", "vegetables",
+    "snack", "snacks", "meal", "meals", "juice", "bread", "rice", "salad", "soup",
+    # 生境/自然地貌（Book42 根因）：
+    "forest", "forests", "grassland", "grasslands", "desert", "deserts",
+    "ocean", "oceans", "plant", "plants", "jungle", "jungles", "rainforest",
+    "rainforests", "tundra", "wetland", "wetlands", "reef", "reefs", "pond",
+    "ponds", "valley", "valleys", "meadow", "meadows", "prairie", "prairies",
+    "savanna", "savannah", "habitat", "habitats", "ecosystem", "ecosystems",
+    "river", "rivers", "mountain", "mountains", "lake", "lakes", "sea", "seas",
+    "hill", "hills", "field", "fields", "island", "islands", "cave", "caves",
+    "sky", "soil",
 }
 
 
@@ -424,6 +525,94 @@ def _plain_text_tokens(text: str, confirmed: set[str] | None = None) -> list[str
     return toks
 
 
+# 称谓 → 性别（用于把 "Mr. Johnson" / "Mrs. Lee" 锁成正确性别的成年人）。
+_TITLE_GENDER = {
+    "mr": "male", "mister": "male", "sir": "male", "master": "male",
+    "mrs": "female", "ms": "female", "miss": "female",
+    "madam": "female", "madame": "female", "lady": "female",
+}
+# 称谓 + 大写名（"Mr. Johnson" / "Mrs Lee" / "Ms. Kim"）——抓【姓】并定性别。
+_TITLE_NAME_GENDER_RE = re.compile(
+    r"\b(mr|mister|mrs|ms|miss|madam|madame|sir|master|lady)\.?\s+([A-Z][a-z]+)\b", re.I)
+# 句中【男/女】第三人称代词——用于在无称谓时按上下文给具名成人/老师定性别。
+_MALE_PRON_RE = re.compile(r"\b(he|him|his|himself)\b", re.I)
+_FEMALE_PRON_RE = re.compile(r"\b(she|her|hers|herself)\b", re.I)
+
+
+def _infer_text_gender(text: str) -> str:
+    """按整段文本里 he/his 与 she/her 的多寡推断主导性别（差距≥2 倍才判，否则留空）。"""
+    m = len(_MALE_PRON_RE.findall(text or ""))
+    f = len(_FEMALE_PRON_RE.findall(text or ""))
+    if m >= 2 * max(1, f) and m > f:
+        return "male"
+    if f >= 2 * max(1, m) and f > m:
+        return "female"
+    return ""
+
+
+def _detect_adult_persons(text: str) -> dict[str, tuple[str, str]]:
+    """从全文识别【具名成年人】（按称谓 Mr./Mrs. 或与之同姓的全名 Bob Johnson）。
+
+    根治 Book03 根因：代课老师自我介绍 "I'm Bob Johnson" + 后文 "Mr. Johnson"——
+    旧逻辑把 Bob / Johnson 各登记成一个【全新国际化儿童】，于是男代课老师被拆成两个小孩。
+    这里把 Bob / Johnson / "Bob Johnson" 统一归并成同一个【成年男士】（canonical=姓），定性别。
+
+    返回 {name_low: (canonical_surname_low, gender)}，覆盖姓、名、全名三种叫法。
+    gender 取自称谓；称谓缺省时按该姓/名附近的 he/his vs she/her 推断。
+    """
+    t = text or ""
+    # 1) 称谓 + 姓 → 该姓是成年人，性别取自称谓
+    surname_gender: dict[str, str] = {}
+    surname_title: dict[str, str] = {}
+    for m in _TITLE_NAME_GENDER_RE.finditer(t):
+        title = m.group(1).lower().rstrip(".")
+        surname = m.group(2).lower()
+        if surname in _IP_NAMES:
+            continue
+        g = _TITLE_GENDER.get(title, "")
+        if g and not surname_gender.get(surname):
+            surname_gender[surname] = g
+        surname_title.setdefault(surname, title.capitalize())
+    if not surname_gender and not surname_title:
+        return {}
+
+    # 2) 全名 "Given Surname"：把名链接到已知成年姓（Bob Johnson → bob 归并到 johnson）
+    out: dict[str, tuple[str, str]] = {}
+    for surname, g in {**{s: surname_gender.get(s, "") for s in surname_title}}.items():
+        # 性别兜底：用包含该姓的句子里的代词推断
+        if not g:
+            sents = [s for s in re.split(r"(?<=[.!?])\s+", t) if surname in s.lower()]
+            g = _infer_text_gender(" ".join(sents)) or _infer_text_gender(t)
+        out[surname] = (surname, g)
+        out[f"{surname_title.get(surname, '').lower()} {surname}".strip()] = (surname, g)
+    for m in re.finditer(r"\b([A-Z][a-z]+)\s+([A-Z][a-z]+)\b", t):
+        given, surname = m.group(1).lower(), m.group(2).lower()
+        if surname in out:                       # 姓是已知成年人 → 名同属该成年人
+            if given in _IP_NAMES or _PLAIN_STOP.__contains__(given):
+                continue
+            g = out[surname][1]
+            out[given] = (surname, g)
+            out[f"{given} {surname}"] = (surname, g)
+    return out
+
+
+def _adult_display(surname: str, text: str) -> str:
+    """给具名成年人挑一个展示名：优先 "Mr./Mrs. 姓"（取全文首次出现的称谓），否则首字母大写姓。"""
+    for m in _TITLE_NAME_GENDER_RE.finditer(text or ""):
+        if m.group(2).lower() == surname:
+            return f"{m.group(1).capitalize().rstrip('.')}. {m.group(2)}"
+    return surname.capitalize()
+
+
+# 职业/身份类【成人】通用名词（teacher/officer…）——用于把"泛指成人职业角色"与同书唯一的
+#   具名成人归并（如 Book03：泛指 "teacher" 与具名 "Mr. Johnson" 其实是同一个男代课老师）。
+_GENERIC_ADULT_RID_RE = re.compile(
+    r"^(teacher|teachers|sub|substitute|substitute teacher|officer|police|policeman|"
+    r"nurse|doctor|farmer|baker|chef|cook|driver|clerk|shopkeeper|vendor|librarian|"
+    r"curator|guard|waiter|waitress|pilot|sailor|captain|principal|coach|"
+    r"man|woman|lady|gentleman|adult)$", re.I)
+
+
 def build_book_cast(outline) -> dict[str, OneOffRole]:
     """扫描全书，登记【反复出场的非 IP 一次性角色】。
 
@@ -454,6 +643,10 @@ def build_book_cast(outline) -> dict[str, OneOffRole]:
     _dog_names = _detect_story_dog_names(whole)
     _has_dog_ctx = bool(_STORY_DOG_CTX_RE.search(whole))
 
+    # 具名成年人（按称谓 Mr./Mrs. 或同姓全名归并，如 Bob Johnson / Mr. Johnson）：把名/姓/全名
+    #   统一成同一个【成年男/女】角色，根治"男代课老师被拆成 Bob、Johnson 两个国际化儿童"。
+    _adult_persons = _detect_adult_persons(whole)
+
     for page in outline.pages:
         if use_official:
             try:
@@ -474,6 +667,14 @@ def build_book_cast(outline) -> dict[str, OneOffRole]:
                 continue
             rid = _norm_rid(tok)
             rid, aliases = _canon_rid(rid)                 # 双词职业专名归一（Officer Buckle→officer）
+            # 具名成年人归并：Bob / Johnson / "Bob Johnson" → 同一个【成年人】(canonical=姓)，定性别。
+            _adult_hit = _adult_persons.get(rid)
+            _gender = ""
+            if _adult_hit:
+                _canon, _gender = _adult_hit
+                if _canon != rid:
+                    aliases = set(aliases) | {rid}
+                    rid = _canon
             if not rid or rid in _IP_NAMES or rid in seen_on_page:
                 continue
             seen_on_page.add(rid)
@@ -485,12 +686,20 @@ def build_book_cast(outline) -> dict[str, OneOffRole]:
                     _species = "animal"
                 else:
                     _species = "human"
-                r = OneOffRole(rid=rid, display=tok.strip().strip("*").rstrip(":").strip(),
-                               desc_en=_extract_desc(pos, tok), species=_species)
+                _disp = tok.strip().strip("*").rstrip(":").strip()
+                if _adult_hit:                              # 具名成人：展示名用 "Mr. Johnson" 风格的称谓+姓
+                    _disp = _adult_display(rid, whole) or _disp
+                r = OneOffRole(rid=rid, display=_disp,
+                               desc_en=_extract_desc(pos, tok), species=_species,
+                               is_adult=bool(_adult_hit), gender=_gender)
                 roles[rid] = r
             # 已登记角色若后续确认是剧情狗（专名出现在 dog 上下文），补标 species。
             if r.species == "human" and (rid in {"dog", "puppy", "doggy"} or rid in _dog_names):
                 r.species = "dog"
+            if _adult_hit:
+                r.is_adult = True
+                if _gender and not r.gender:
+                    r.gender = _gender
             r.aliases |= aliases
             if page.index not in r.page_indexes:
                 r.page_indexes.append(page.index)
@@ -515,7 +724,73 @@ def build_book_cast(outline) -> dict[str, OneOffRole]:
             if len(dup.desc_en) > len(tgt.desc_en):
                 tgt.desc_en = dup.desc_en
             tgt.aliases |= dup.aliases
+            tgt.is_adult = tgt.is_adult or dup.is_adult
+            tgt.gender = tgt.gender or dup.gender
             del roles[rid]
+
+    # 具名成人 ←→ 泛指职业成人 归并（Book03 根因）：当全书恰有【一个具名成人】(如 Mr. Johnson)
+    #   且存在泛指职业成人角色(如 teacher)时，它们其实是同一个人——把泛指角色并入具名成人，
+    #   避免同页同时锁出"具名男老师 + 另一个泛指老师"两个成年人。归并时把泛指 rid 作别名，
+    #   使含 "teacher" 的页面也命中这个具名老师。
+    named_adults = [r for r in roles.values() if r.is_adult]
+    generic_adults = [r for r in roles.values()
+                      if (not r.is_adult) and _GENERIC_ADULT_RID_RE.match(r.rid or "")]
+    if len(named_adults) == 1 and generic_adults:
+        tgt = named_adults[0]
+        for dup in generic_adults:
+            for pi in dup.page_indexes:
+                if pi not in tgt.page_indexes:
+                    tgt.page_indexes.append(pi)
+            tgt.aliases |= dup.aliases | {dup.rid}
+            if len(dup.desc_en) > len(tgt.desc_en):
+                tgt.desc_en = dup.desc_en
+            roles.pop(dup.rid, None)
+        tgt.page_indexes.sort()
+
+    # 裸名 ⊂ 多词专名 归并（2026-06-11·修 L4 Book45 根因）：当一个【单词】角色 rid 恰是另一个
+    #   【多词专名】角色 rid 的完整组成词（如 "weaver" ⊂ "wind weaver"、"tom" ⊂ "farmer tom"），
+    #   它们几乎一定是同一个角色——官方/正文里既用全名（Wind Weaver）又用裸名（Weaver）称呼。
+    #   旧逻辑各自登记成两个一次性角色 → 同页同时锁出两套互相冲突的外观（灰白短发焦糖棕 vs 栗棕低马尾
+    #   赭石橙），同一成人被画成两个人。这里把【裸名】并入【多词专名】这一个规范角色，只保留一套外观，
+    #   并把裸名挂为别名（使既含全名又含裸名的页都命中同一锚）。
+    #   安全：仅做【单词→多词】方向；裸名须为多词专名的【整词】；裸名同时命中多个多词专名(歧义)→跳过；
+    #         人/动物物种不一致(如人物 Brown vs 动物 Brown Bear)→跳过，绝不误并不同物种。
+    def _rid_words(_rid: str) -> list[str]:
+        return [w for w in re.split(r"\s+", (_rid or "").strip()) if w]
+    _multi = {rid: set(_rid_words(rid)) for rid in roles if len(_rid_words(rid)) >= 2}
+    for rid in list(roles.keys()):
+        if rid not in roles or len(_rid_words(rid)) != 1:
+            continue
+        cands = [m for m, ws in _multi.items()
+                 if rid in ws and m in roles and m != rid]
+        if len(cands) != 1:                              # 无匹配 / 歧义(命中多个多词专名) → 不动
+            continue
+        canon = cands[0]
+        tgt, dup = roles[canon], roles[rid]
+        if dup.species != tgt.species and "human" in (dup.species, tgt.species):
+            continue                                     # 人 ↔ 动物 物种不一致 → 不并
+        for pi in dup.page_indexes:
+            if pi not in tgt.page_indexes:
+                tgt.page_indexes.append(pi)
+        tgt.page_indexes.sort()
+        if len(dup.desc_en) > len(tgt.desc_en):
+            tgt.desc_en = dup.desc_en
+        tgt.aliases |= dup.aliases | {dup.rid}
+        tgt.is_adult = tgt.is_adult or dup.is_adult
+        tgt.gender = tgt.gender or dup.gender
+        if dup.species != "human" and tgt.species == "human":
+            tgt.species = dup.species
+        del roles[rid]
+
+    # 成人角色性别兜底：未定性别的成人按其名/别名附近（或整本）的 he/his vs she/her 推断，
+    #   保证锚图与每页都锁正确性别（防把男老师画成女老师）。
+    for r in roles.values():
+        if r.gender or not is_adult_role(r):
+            continue
+        keys = [r.rid] + sorted(r.aliases) + [(r.display or "").lower()]
+        sents = [s for s in re.split(r"(?<=[.!?])\s+", whole)
+                 if any(k and k in s.lower() for k in keys)]
+        r.gender = _infer_text_gender(" ".join(sents)) or _infer_text_gender(whole)
     return roles
 
 
@@ -624,9 +899,16 @@ def anchor_prompt(role: OneOffRole) -> str:
     # 成人/职业类角色显式加成人锁——否则模型常把"警察/医生/农夫"画成穿制服的小孩。
     adult_lock = ""
     if is_adult_role(role):
-        adult_lock = (
-            "【这是一位成年人】成熟的成年人脸庞与成人身材比例，明显高于 10 岁儿童、约为儿童身高的 4:3，"
+        _g = _gender_cn(role)
+        _sex = (f"【这是一位成年{_g}】这是一位{_g}成年人（成年{'男士' if _g=='男性' else '女士' if _g=='女性' else '人'}），"
+                if _g else "【这是一位成年人】")
+        # 无官方外观文本时，用确定性稳定外观兜底（与每页 prompt 共用同一句 → 锚图/各页完全一致）。
+        if not desc:
+            adult_lock += oneoff_adult_appearance(role) + "。"
+        adult_lock += (
+            f"{_sex}成熟的成年人脸庞与成人身材比例，明显高于 10 岁儿童、约为儿童身高的 4:3，"
             "成人头身比（约 7-7.5 头身）、成熟体格；绝不能画成小孩、儿童、幼儿或青少年/teenager。"
+            + (f"（性别锁：必须画成成年{_g}，绝不画成另一性别。）" if _g else "")
         )
     # 动物角色（剧情狗 Buddy / 狐狸…）：走物种/犬种外观锁，绝不套人类儿童反克隆锁、不拟人成小孩。
     animal_lock = ""
@@ -657,7 +939,9 @@ def anchor_prompt(role: OneOffRole) -> str:
         "角色表情友善温和、可爱亲切——绝不凶恶、不露獠牙、不阴森吓人（这是给低龄儿童看的绘本）。"
         "用于后续每一页该角色的形象锁定，请把脸型、五官、发型/毛色、肤色、服装款式与配色画清楚、明确、可复用。\n\n"
         "【负向】不要文字、不要多个角色、不要分镜/多视图排版、不要照片质感、不要恐怖/暴力/丑陋元素、不要复杂背景。"
-        + ("（负向追加：不要把这个成年人画成小孩/儿童/青少年、不要儿童身材比例。）" if adult_lock else "")
+        + (("（负向追加：不要把这个成年人画成小孩/儿童/青少年、不要儿童身材比例"
+            + (f"、不要画成{'女性' if _gender_cn(role)=='男性' else '男性'}（必须是成年{_gender_cn(role)}）" if _gender_cn(role) else "")
+            + "。）") if adult_lock else "")
         + ("（负向追加：不要把这个孩子画成 Tommy 或 Mia 的翻版/撞脸/撞发型/撞衣色，不要棕色蓬松短发配浅蓝衣，"
            "不要穿蓝色或紫色，不要画成 12 岁/青少年/成人，也不要画成五六岁低龄幼儿/胖娃娃/Q 版大头，"
            "不要跑成 3D/写实/厚涂或与本书不一致的画风。）" if child_lock else "")
