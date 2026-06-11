@@ -236,12 +236,73 @@ def _stage_shell(step_num: int, title: str, wizard: bool):
     return _locked_step_expander(step_num, title)
 
 
-# 绘本内层「向导」三阶段（内部步骤号 3/4/5 → 展示 1/2/3）
+# 绘本内层「向导」三阶段（内部步骤号 3/4/5 → 展示 Step 2/3/4）
 BOOK_WIZARD_STAGES: list[tuple[int, str, str, str]] = [
-    (3, "🎭", "锁人物 + 定画风", "选故事角色形象、定全本画风背景"),
-    (4, "🖼️", "生成插图", "一键出图、逐页重生 / 锁定满意的图"),
-    (5, "📦", "打包交付", "一键产出绘本 + 练习册 + RR + 教师指南"),
+    (3, "🎭", "IP + 画风锁定", "确认主角形象（含 Mia 发型）· 定全本画风"),
+    (4, "🖼️", "生图工作台", "一键出图 · 逐页重生 / 锁定 · Prompt 导出"),
+    (5, "📦", "组装 4 件套", "绘本 PPT + 练习册 + RR + 教师指南 → ZIP"),
 ]
+
+# Mia 发型：half-up 为 Web 默认；ponytail 对齐官方定妆表参考图
+MIA_HAIR_OPTIONS: dict[str, str] = {
+    "halfup": "半扎散发 half-up（默认推荐）",
+    "ponytail": "后脑中高位马尾 ponytail（官方定妆表）",
+}
+
+
+def _mia_hair_style() -> str:
+    style = st.session_state.get("mia_hair_style", "halfup")
+    return style if style in MIA_HAIR_OPTIONS else "halfup"
+
+
+def _mia_hair_ref_for_age(age: int, style: str | None = None) -> Path | None:
+    """按年龄档 + 发型返回 Mia 参考图路径（ip_library 优先，回退 characters）。"""
+    from config import CHARACTERS_DIR
+
+    style = style or _mia_hair_style()
+    age = int(age)
+    ip_dir = CHARACTERS_DIR.parent / "ip_library"
+    if style == "halfup":
+        candidates = [
+            ip_dir / f"mia_{age}.halfup.bak.png",
+            CHARACTERS_DIR / f"mia_age{age}.halfup.bak.png",
+        ]
+    else:
+        candidates = [
+            ip_dir / f"mia_{age}.png",
+            ip_dir / f"mia_{age}.ponytail.bak.png",
+            CHARACTERS_DIR / f"mia_age{age}.png",
+        ]
+    for p in candidates:
+        if p.exists():
+            return p
+    return None
+
+
+def _is_mia_ref_path(p: Path) -> bool:
+    return bool(re.search(r"mia[_\-]?(age)?\d+", p.name.lower()))
+
+
+def _swap_mia_refs_in_list(refs: list[Path], ip_age: int) -> list[Path]:
+    """把列表里的 Mia 定妆图替换为当前会话选定的发型版本。"""
+    alt = _mia_hair_ref_for_age(ip_age)
+    if not alt:
+        return refs
+    out: list[Path] = []
+    for r in refs:
+        p = Path(r)
+        out.append(alt if _is_mia_ref_path(p) else p)
+    return out
+
+
+def _refresh_mia_refs_in_page_prompts(ip_age: int) -> None:
+    page_prompts = st.session_state.get("page_prompts") or {}
+    for entry in page_prompts.values():
+        refs = entry.get("references") or []
+        entry["references"] = [
+            str(p) for p in _swap_mia_refs_in_list([Path(r) for r in refs], ip_age)
+        ]
+    st.session_state.page_prompts = page_prompts
 
 
 def _render_book_wizard() -> None:
@@ -948,7 +1009,9 @@ def _rebuild_one_cn_prompt(page_idx: int) -> None:
             "positive": built.positive,
             "negative": built.negative,
             "prompt": built.prompt,
-            "references": [str(r) for r in built.references],
+            "references": [
+                str(r) for r in _swap_mia_refs_in_list(list(built.references), ip_age)
+            ],
             "must_include": prev_must,
             "page_avoid": prev_avoid,
             "label": page.label,
@@ -3695,7 +3758,9 @@ def main() -> None:
                         "positive": built.positive,
                         "negative": built.negative,
                         "prompt": built.prompt,
-                        "references": [str(r) for r in built.references],
+                        "references": [
+                            str(r) for r in _swap_mia_refs_in_list(list(built.references), ip_age_val)
+                        ],
                         "must_include": "",
                         "label": page.label,
                         "display_name": page_display_name(page.index),
@@ -3833,6 +3898,13 @@ def _render_ip_cast_panel(detected_chars: list[dict], detected_generic: list[dic
     from ip_library import list_by_kind, get_ip
     from config import resolve_ip_age
 
+    # 当前 outline 的 IP age（用于挑年龄档）
+    outline = st.session_state.get("outline")
+    level = outline.level if outline else "5"
+    target_age = resolve_ip_age(level)
+
+    _render_mia_hair_selector(int(target_age))
+
     st.markdown("---")
     st.subheader("📚 这本绘本会出现的全部 IP（勾选 = 生图时会作为参考形象）")
     st.caption(
@@ -3840,11 +3912,6 @@ def _render_ip_cast_panel(detected_chars: list[dict], detected_generic: list[dic
         "如果某页需要其他 IP 出场（如班里其他同学、家人探班），可加勾。"
         "**勾选项越多，生图时可挑选的参考图越多**。"
     )
-
-    # 当前 outline 的 IP age（用于挑年龄档）
-    outline = st.session_state.get("outline")
-    level = outline.level if outline else "5"
-    target_age = resolve_ip_age(level)
 
     # 自动默认勾选：识别到的 IP（按 age 档匹配） + 无名角色默认套的 IP
     auto_keys: set[str] = set()
@@ -3971,6 +4038,41 @@ def _render_ip_cast_panel(detected_chars: list[dict], detected_generic: list[dic
         st.session_state["generic_overrides"] = new_overrides
 
 
+def _render_mia_hair_selector(target_age: int) -> None:
+    """Step 2：Mia 发型锁定（全书统一参考图）。"""
+    st.markdown("##### 💇 Mia 发型锁定（全书统一 · 生图参考图）")
+    st.caption(
+        "默认 **half-up 半扎**；若需对齐官方 Age 定妆表的 **中高马尾**，可切换。"
+        "切换后会自动更新已生成的分页 Prompt 里的 Mia 参考图路径。"
+    )
+    opts = list(MIA_HAIR_OPTIONS.keys())
+    labels = list(MIA_HAIR_OPTIONS.values())
+    cur = _mia_hair_style()
+    idx = opts.index(cur) if cur in opts else 0
+    sel = st.radio(
+        "Mia 发型",
+        options=range(len(opts)),
+        index=idx,
+        format_func=lambda i: labels[i],
+        horizontal=True,
+        key="mia_hair_radio",
+    )
+    chosen = opts[sel]
+    prev = st.session_state.get("_mia_hair_applied")
+    st.session_state["mia_hair_style"] = chosen
+    if prev != chosen:
+        st.session_state["_mia_hair_applied"] = chosen
+        _refresh_mia_refs_in_page_prompts(target_age)
+    ref = _mia_hair_ref_for_age(target_age, chosen)
+    if ref:
+        try:
+            _zoom_image(str(ref), key="mia_hair_preview", caption=f"Mia {target_age}y · {labels[sel]}")
+        except Exception:
+            st.caption(f"预览：{ref.name}")
+    else:
+        st.warning("未找到对应发型参考图，将使用默认定妆图。")
+
+
 def _generate_worksheet_preview() -> None:
     """v1.9：基于当前编辑过的题目，立即生成一份 worksheet.pptx 初稿供老师下载预览。
 
@@ -4064,7 +4166,9 @@ def _rebuild_all_cn_prompts() -> None:
             "positive": built.positive,     # v3: 正向
             "negative": built.negative,     # v3: 反向
             "prompt": built.prompt,         # v3: 拼接后兜底（向后兼容）
-            "references": [str(r) for r in built.references],
+            "references": [
+                str(r) for r in _swap_mia_refs_in_list(list(built.references), ip_age)
+            ],
             "must_include": prev_must,
             "label": page.label,
             "display_name": page_display_name(page.index),
@@ -4864,6 +4968,8 @@ def _build_final_prompt_for_page(page, outline: BookOutline, ip_age: int) -> tup
         negative = built.negative if hasattr(built, "negative") else ""
         refs = built.references
 
+    refs = _swap_mia_refs_in_list([Path(r) for r in refs], ip_age)
+
     # v3.1 注入 Step 3 风格设定
     if style_pos:
         positive = f"【全局风格设定】\n{style_pos}\n\n" + positive
@@ -4989,7 +5095,14 @@ def _book_protagonist_ref_cached(cast_keys: tuple[str, ...], all_text: str, titl
     if not best_key:
         return ""
     ip = get_ip(best_key)
-    return str(ip.image_path) if ip and ip.image_path else ""
+    if not ip or not ip.image_path:
+        return ""
+    p = ip.image_path
+    if _is_mia_ref_path(p):
+        alt = _mia_hair_ref_for_age(ip_age)
+        if alt:
+            return str(alt)
+    return str(p)
 
 
 def _book_protagonist_ref(outline: BookOutline, ip_age: int) -> Path | None:
