@@ -44,7 +44,7 @@ from ai_extractor import (
     apply_extracted_to_outline, extract_all, generate_one_worksheet_question,
     generate_story_draft,
 )
-from auto_fill import auto_summary
+from auto_fill import auto_summary, cast_pool_fingerprint, infer_cast_pool_keys
 from config import (
     DOUBAO_API_KEY, JIMENG_API_KEY, MOCK_AI_EXTRACT, MOCK_IMAGES,
     OUTPUTS_DIR, brand_color_hex, resolve_ip_age, rr_question_distribution,
@@ -3929,6 +3929,9 @@ def main() -> None:
             st.session_state.outline = outline
             st.session_state.auto = auto
             st.session_state.auto["_lexile"] = auto["lexile"]  # 留作生成阶段元信息
+            # 新故事抽取 → 重置 IP 人物池，Step2 按 infer_cast_pool_keys 重新勾选
+            st.session_state.pop("story_cast_pool", None)
+            st.session_state.pop("_cast_pool_fp", None)
 
             # v1.9：预生成每页中文 prompt（按 Seedream 4.5 官方指南），存 session 供用户编辑
             ip_age_val = int(ip_age)
@@ -4053,7 +4056,16 @@ def _render_auto_summary_panel() -> None:
                 )
                 st.caption(ch["description"])
     elif not generic:
-        st.info("ℹ️ 未在故事里识别到已注册的 IP 角色。系统将按通用 girl/boy 生成（默认套 Mia/Tommy 形象）。")
+        leads = auto.get("lead_protagonists") or []
+        if leads:
+            lead_names = " + ".join(n.capitalize() for n in leads)
+            _lv = outline.level if outline else "1"
+            st.info(
+                f"ℹ️ 未识别到具名 IP，但按人称/系列规则推断主角为 **{lead_names}**"
+                f"（已在下方 IP 库自动勾选 {resolve_ip_age(_lv)} 岁档）。"
+            )
+        else:
+            st.info("ℹ️ 未在故事里识别到已注册的 IP 角色。系统将按通用 girl/boy 生成（默认套 Mia/Tommy 形象）。")
 
     # === 故事人物库 IP 选择器（始终展示完整 IP 库）+ 无名角色映射 ===
     _render_ip_cast_panel(chars, generic)
@@ -4095,22 +4107,24 @@ def _render_ip_cast_panel(detected_chars: list[dict], detected_generic: list[dic
         "**勾选项越多，生图时可挑选的参考图越多**。"
     )
 
-    # 自动默认勾选：识别到的 IP（按 age 档匹配） + 无名角色默认套的 IP
-    auto_keys: set[str] = set()
-    for ch in detected_chars:
-        ip = resolve_registry_key(ch["matched_key"], target_age)
-        # 用户拍板（2026-06-04 / 06-06）：不自动拉「只有 8/10 岁档的支持角色」（在 12 岁书里会偏小）；
-        # 但故事里【点名出现】且【正好有本级年龄档】的角色（如 Anna 12y）必须自动带上——
-        # 它就是这本书的真实角色。其余无名 girl/boy 仍走 girl/boy→Mia/Tommy 映射，不新创造别人。
-        if ip and (ip.kind != "supporting" or ip.age == target_age):
-            auto_keys.add(ip.key)
-    for g in detected_generic:
-        from ip_library import resolve_generic_role
-        ip = resolve_generic_role(g["role"], target_age)
-        if ip:
-            auto_keys.add(ip.key)
+    # 自动默认勾选：具名 IP + 无名角色 + I/We/系列主角推断（auto_fill.infer_cast_pool_keys）
+    raw_story = ""
+    title = ""
+    if outline:
+        title = (outline.title or "").strip()
+        raw_story = (getattr(outline, "raw_story", None) or "").strip()
+        if not raw_story and outline.pages:
+            raw_story = "\n".join(
+                (p.text or "").strip() for p in outline.pages if (p.text or "").strip()
+            )
+    pool_fp = cast_pool_fingerprint(level, raw_story, title)
+    if st.session_state.get("_cast_pool_fp") != pool_fp:
+        st.session_state["_cast_pool_fp"] = pool_fp
+        st.session_state.pop("story_cast_pool", None)
 
-    # 上次手动选过的话，沿用；否则用 auto 默认
+    auto_keys: set[str] = set(infer_cast_pool_keys(raw_story, level, title))
+
+    # 新故事 / 未手动选过 → 用 auto 默认
     if "story_cast_pool" not in st.session_state or not st.session_state["story_cast_pool"]:
         st.session_state["story_cast_pool"] = sorted(auto_keys)
 

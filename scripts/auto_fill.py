@@ -268,6 +268,70 @@ def detect_characters_in_story(story_text: str, level: str = "5") -> list[dict]:
     return out
 
 
+_STANDALONE_I_RE = re.compile(r"(?:^|[.!?]\s+|\n)I\s", re.IGNORECASE)
+_STANDALONE_WE_RE = re.compile(r"(?:^|[.!?]\s+|\n)We\s", re.IGNORECASE)
+
+
+def infer_lead_protagonist_keys(story_text: str, title: str = "") -> list[str]:
+    """按故事推断应勾选的系列主角 registry key（mia / tommy）。
+
+    与 cn_prompt_builder._pronoun_lead_keys / _lead_keys_for_book 对齐：
+      - 正文含 Mia/Tommy 专名 → 只带被点名的那位（Mia+Lucia 故事不加 Tommy）
+      - 独立 We → Mia + Tommy
+      - 独立 I → Tommy 叙述者；封面仍可能双孩，人物池带 Mia+Tommy
+      - 无名默认 → Mia + Tommy 双主角
+    """
+    text = (story_text or "").strip()
+    combined = f"{title or ''}\n{text}".lower()
+    has_mia = bool(re.search(r"\bmia\b", combined))
+    has_tommy = bool(re.search(r"\btommy\b", combined))
+    if has_mia or has_tommy:
+        keys: list[str] = []
+        if has_mia:
+            keys.append("mia")
+        if has_tommy:
+            keys.append("tommy")
+        return keys
+    if text and _STANDALONE_WE_RE.search(text):
+        return ["mia", "tommy"]
+    if text and _STANDALONE_I_RE.search(text):
+        return ["mia", "tommy"]
+    return ["mia", "tommy"]
+
+
+def infer_cast_pool_keys(story_text: str, level: str, title: str = "") -> list[str]:
+    """推断 Web Step2 应自动勾选的 ip_library key 列表（含年龄档）。"""
+    from config import resolve_ip_age
+    from ip_library import resolve_generic_role, resolve_registry_key
+
+    age = resolve_ip_age(level)
+    keys: set[str] = set()
+
+    for ch in detect_characters_in_story(story_text, level):
+        ip = resolve_registry_key(ch["matched_key"], age)
+        if ip and (ip.kind != "supporting" or ip.age == age):
+            keys.add(ip.key)
+
+    for g in detect_generic_roles(story_text):
+        ip = resolve_generic_role(g["role"], age)
+        if ip:
+            keys.add(ip.key)
+
+    for reg_key in infer_lead_protagonist_keys(story_text, title):
+        ip = resolve_registry_key(reg_key, age)
+        if ip:
+            keys.add(ip.key)
+
+    return sorted(keys)
+
+
+def cast_pool_fingerprint(level: str, story_text: str, title: str = "") -> str:
+    """故事/级别变更时用于重置 Web 人物池勾选。"""
+    import hashlib
+    blob = f"{_level_key(level)}|{(title or '').strip()}|{(story_text or '').strip()}"
+    return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:16]
+
+
 def detect_generic_roles(story_text: str) -> list[dict]:
     """检测故事里出现的 "the girl / a boy / a woman / mom" 等没具名的角色，
     返回类型 + 默认建议（用哪个 registry key 顶替）。
@@ -310,4 +374,6 @@ def auto_summary(level: str, story_text: str, title: str = "") -> dict:
         "word_count": count_story_words(story_text),
         "characters": detect_characters_in_story(story_text, level),
         "generic_roles": detect_generic_roles(story_text),
+        "lead_protagonists": infer_lead_protagonist_keys(story_text, title),
+        "cast_pool_keys": infer_cast_pool_keys(story_text, level, title),
     }
