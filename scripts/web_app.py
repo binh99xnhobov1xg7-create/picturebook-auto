@@ -1978,6 +1978,170 @@ def _render_batch_mode() -> None:
                 st.error(f"批量生产启动失败：{e}")
 
 
+class _UploadBlob:
+    """轻量 file-like：供页图抽取逻辑复用（Streamlit UploadedFile / ZIP 解压条目）。"""
+
+    __slots__ = ("name", "_data")
+
+    def __init__(self, name: str, data: bytes):
+        self.name = name
+        self._data = data
+
+    def getvalue(self) -> bytes:
+        return self._data
+
+
+def _normalize_book_match_key(text: str) -> str:
+    """书名/文件夹名模糊匹配键（仅保留字母数字）。"""
+    return re.sub(r"[^a-z0-9]", "", (text or "").lower())
+
+
+def _upload_run_paths(outline: BookOutline) -> tuple[Path, Path, str]:
+    """上传教辅模式专用 run 目录（不依赖 session outline 生命周期）。"""
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    run_dir = OUTPUTS_DIR / f"{outline.slug}_{timestamp}"
+    img_dir = run_dir / "images"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    img_dir.mkdir(parents=True, exist_ok=True)
+    return run_dir, img_dir, _name_prefix(outline)
+
+
+def _write_teaching_extract_txt(outline: BookOutline, ec, dest: Path) -> Path:
+    """落盘教辅抽取摘要（词表/拼读/Worksheet 题/RR 题）—— 上传模式无出图 prompt。"""
+    lines = [
+        f"# {outline.title} · Level {outline.level} · Teaching Extract",
+        "",
+        "（上传成品绘本路径：不含 image_prompts / 出图 SOP；仅 AI 抽取的教辅内容摘要）",
+        "",
+    ]
+    if outline.vocabulary_for_display():
+        lines += ["## Vocabulary", ", ".join(outline.vocabulary_for_display()), ""]
+    if outline.phonics:
+        lines += ["## Phonics", outline.phonics, ""]
+    if outline.grammar_focus:
+        lines += ["## Grammar", outline.grammar_focus, ""]
+    if ec is not None:
+        lines += ["## Worksheet Questions"]
+        for i, ws in enumerate(getattr(ec, "worksheet_questions", None) or [], 1):
+            lines.append(f"  {i}. [{ws.get('type', '?')}] {ws.get('title', '')}")
+            instr = (ws.get("instruction") or "").strip()
+            if instr:
+                lines.append(f"     {instr}")
+        lines.append("")
+        lines += ["## Reading Report Questions"]
+        for i, rr in enumerate(getattr(ec, "rr_questions", None) or [], 1):
+            stars = rr.get("stars", "")
+            page = rr.get("page", "")
+            pg = f" (P{page})" if page else ""
+            lines.append(f"  {i}. {'★' * int(stars or 1)}{pg} {rr.get('q', '')}")
+    dest.write_text("\n".join(lines), encoding="utf-8")
+    return dest
+
+
+def _build_and_assemble_teaching_kit(
+    *,
+    title: str,
+    level: str,
+    book_number: str,
+    raw_story: str,
+    image_paths: list[Path],
+    run_dir: Path,
+    rr_answers: bool,
+    ws_reading_q_count: int = 4,
+) -> dict[str, Path]:
+    """单本上传教辅核心：outline → AI 抽取 → WS + RR + TG + teaching_extract.txt。"""
+    ip_age = resolve_ip_age(level)
+    raw = (raw_story or "").strip()
+    outline = _build_outline(
+        title=title, level=level, book_number=book_number, cefr="", theme="",
+        ip_age=int(ip_age), raw_story=raw, custom_chars_text="",
+    )
+    ec = None
+    if raw:
+        ec = extract_all(raw_story=raw, title=title, level=level, cefr="", theme="")
+        apply_extracted_to_outline(outline, ec)
+    enrich_from_syllabus(outline)
+    if ec is not None:
+        attach_rr_questions(outline, ec.rr_questions)
+        attach_worksheet_questions(outline, ec.worksheet_questions, reading_q_count=ws_reading_q_count)
+
+    name_prefix = _name_prefix(outline)
+    ws_path = run_dir / f"{name_prefix}_Worksheet.pptx"
+    rr_path = run_dir / f"{name_prefix}_Reading_Report.docx"
+    tg_path = run_dir / f"{name_prefix}_Teachers_Guide.docx"
+    extract_path = run_dir / f"{name_prefix}_Teaching_Extract.txt"
+
+    build_worksheet(outline, ws_path, image_paths=image_paths)
+    build_reading_report(outline, rr_path, with_answers=rr_answers)
+    build_teacher_guide(outline, tg_path)
+    _write_teaching_extract_txt(outline, ec, extract_path)
+
+    kit_zip = run_dir / f"{name_prefix}_Teaching_Kit.zip"
+    with zipfile.ZipFile(kit_zip, "w", zipfile.ZIP_DEFLATED) as z:
+        for p in (ws_path, rr_path, tg_path, extract_path):
+            if p.exists():
+                z.write(p, arcname=p.name)
+        for img in image_paths:
+            if img.exists():
+                z.write(img, arcname=f"images/{img.name}")
+
+    return {
+        "ws": ws_path, "rr": rr_path, "tg": tg_path,
+        "extract": extract_path, "zip": kit_zip,
+        "name_prefix": name_prefix,  # type: ignore[dict-item]
+    }
+
+
+def _parse_upload_zip_book_map(zip_bytes: bytes, extract_root: Path) -> dict[str, list[_UploadBlob]]:
+    """解压 ZIP → {书名匹配键: [该本 PDF/PPTX/散图 blobs]}。
+
+    支持两种结构：
+      1) 每本一个子文件夹（文件夹名含书名）
+      2) 根目录多个 PDF/PPTX（文件名含书名）
+    """
+    extract_root.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
+        zf.extractall(extract_root)
+
+    book_map: dict[str, list[_UploadBlob]] = {}
+    media_ext = {".pdf", ".pptx", ".png", ".jpg", ".jpeg", ".webp"}
+
+    for child in sorted(extract_root.iterdir()):
+        if child.is_dir():
+            blobs: list[_UploadBlob] = []
+            for f in sorted(child.rglob("*")):
+                if f.is_file() and f.suffix.lower() in media_ext:
+                    blobs.append(_UploadBlob(f.name, f.read_bytes()))
+            if blobs:
+                book_map[_normalize_book_match_key(child.name)] = blobs
+        elif child.is_file() and child.suffix.lower() in media_ext:
+            key = _normalize_book_match_key(child.stem)
+            book_map.setdefault(key, []).append(_UploadBlob(child.name, child.read_bytes()))
+    return book_map
+
+
+def _match_upload_blobs_for_book(
+    item,
+    book_map: dict[str, list[_UploadBlob]],
+    ordered_blobs: list[_UploadBlob] | None,
+    book_index: int,
+) -> list[_UploadBlob]:
+    """为单本 BatchItem 匹配上传文件：先模糊书名 → 再按顺序兜底。"""
+    keys = [
+        _normalize_book_match_key(item.title),
+        _normalize_book_match_key(getattr(item, "name_prefix", "")),
+    ]
+    for k in keys:
+        if not k:
+            continue
+        for map_key, blobs in book_map.items():
+            if k in map_key or map_key in k:
+                return blobs
+    if ordered_blobs and book_index < len(ordered_blobs):
+        return [ordered_blobs[book_index]]
+    return []
+
+
 def _extract_uploaded_page_images(uploaded_files, dest_dir: Path) -> list[Path]:
     """块5：把上传的成品绘本（PDF / PPTX / 散图）抽成有序页图 PNG 列表。
 
@@ -1991,7 +2155,7 @@ def _extract_uploaded_page_images(uploaded_files, dest_dir: Path) -> list[Path]:
     n = 0
     for f in img_seq:
         name = (f.name or "").lower()
-        data = f.getvalue()
+        data = f.getvalue() if hasattr(f, "getvalue") else f.read_bytes()
         if name.endswith(".pdf"):
             try:
                 import fitz  # PyMuPDF
@@ -2052,14 +2216,8 @@ def _extract_uploaded_page_images(uploaded_files, dest_dir: Path) -> list[Path]:
     return out[:8]
 
 
-def _render_upload_mode() -> None:
-    """块5（用户拍板 2026-06-08）：上传成品绘本(PDF/PPT/散图) → 只生成 Worksheet + RR + TG（不重出绘本本体）。"""
-    st.subheader("📤 上传成品绘本 → 生成教辅（Worksheet + Reading Report + Teacher's Guide）")
-    st.caption(
-        "💡 已有成品绘本时用这里：上传 **PDF / PPTX / 散图**（最多 8 张：封面+7 页，允许缺页）。"
-        "系统**不重出绘本本体**，只产出 WS + RR + TG。单词/拼读 **逐字取自该 Level 大纲**。"
-    )
-
+def _render_upload_single_mode() -> None:
+    """单本：上传成品绘本 → WS + RR + TG。"""
     c1, c2 = st.columns([3, 1])
     with c1:
         up_title = st.text_input("📕 Book Title *", value="", key="up_title",
@@ -2080,6 +2238,12 @@ def _render_upload_mode() -> None:
     )
     rr_answers = st.checkbox("RR 生成示例答案版（教师版）", value=False, key="up_rr_answers")
 
+    with st.expander("📝 教辅 Prompt / 抽取摘要（上传模式说明）", expanded=False):
+        st.caption(
+            "**出图 Prompt（image_prompts / SOP 四部分）在此路径不适用**——绘本已存在，系统不重出图。"
+            "生成完成后可下载 `*_Teaching_Extract.txt`（词表 · Worksheet 题 · RR 题摘要）。"
+        )
+
     if not st.button("🚀 生成教辅三件套（WS + RR + TG）", type="primary", key="up_run_btn"):
         return
 
@@ -2090,7 +2254,13 @@ def _render_upload_mode() -> None:
         st.error("请至少上传 1 个文件（PDF / PPTX / 图片）。")
         return
 
-    run_dir, img_dir, name_prefix = _ensure_run_dir()
+    outline = _build_outline(
+        title=up_title, level=up_level, book_number="", cefr="", theme="",
+        ip_age=int(resolve_ip_age(up_level)), raw_story=(up_text or "").strip(),
+        custom_chars_text="",
+    )
+    run_dir, img_dir, name_prefix = _upload_run_paths(outline)
+
     with st.spinner("解析上传文件，抽取页图…"):
         image_paths = _extract_uploaded_page_images(files, img_dir)
     if not image_paths:
@@ -2098,63 +2268,231 @@ def _render_upload_mode() -> None:
         return
     st.success(f"✅ 已解析出 {len(image_paths)} 张页图。")
 
-    ip_age = resolve_ip_age(up_level)
-    raw = (up_text or "").strip()
-    # 1) 构建 outline（有正文→AI 抽题/拆页；无正文→空页骨架，靠大纲补词/题）
-    outline = _build_outline(
-        title=up_title, level=up_level, book_number="", cefr="", theme="",
-        ip_age=int(ip_age), raw_story=raw, custom_chars_text="",
-    )
-    ec = None
-    if raw:
-        try:
-            ec = run_with_live_timer("AI 抽取（抽词 · 拆段 · 出题）", extract_all,
-                                     raw_story=raw, title=up_title, level=up_level,
-                                     cefr="", theme="")
-            apply_extracted_to_outline(outline, ec)
-        except Exception as e:
-            st.warning(f"AI 抽取失败，改用大纲/兜底：{e}")
-    # 2) 大纲权威逐字覆盖词表/拼读（块6）
     hit = enrich_from_syllabus(outline)
     if hit:
-        st.info("📚 命中 S&S 大纲：单词/拼读已按大纲逐字覆盖。")
-    elif not raw:
+        st.info("📚 命中 S&S 大纲：单词/拼读将按大纲逐字覆盖。")
+    elif not (up_text or "").strip():
         st.warning("⚠️ 未命中大纲且未粘贴正文 —— 题目/词表可能为占位，建议粘贴正文或确认书名与大纲一致。")
-    # 3) 挂题
-    if ec is not None:
-        attach_rr_questions(outline, ec.rr_questions)
-        rqc = int(st.session_state.get("ws_reading_q_count", 4))
-        attach_worksheet_questions(outline, ec.worksheet_questions, reading_q_count=rqc)
 
-    # 4) 组装 WS + RR + TG（不出绘本本体）
     progress = st.progress(0, "组装教辅中…")
-    ws_path = run_dir / f"{name_prefix}_Worksheet.pptx"
-    rr_path = run_dir / f"{name_prefix}_Reading_Report.docx"
-    tg_path = run_dir / f"{name_prefix}_Teachers_Guide.docx"
     try:
-        progress.progress(1 / 3, "生成 Worksheet…")
-        build_worksheet(outline, ws_path, image_paths=image_paths)
-        progress.progress(2 / 3, "生成 Reading Report…")
-        build_reading_report(outline, rr_path, with_answers=rr_answers)
-        progress.progress(3 / 3, "生成 Teacher's Guide…")
-        build_teacher_guide(outline, tg_path)
+        rqc = int(st.session_state.get("ws_reading_q_count", 4))
+        paths = run_with_live_timer(
+            "生成教辅三件套",
+            _build_and_assemble_teaching_kit,
+            title=up_title, level=up_level, book_number="",
+            raw_story=(up_text or "").strip(), image_paths=image_paths,
+            run_dir=run_dir, rr_answers=rr_answers, ws_reading_q_count=rqc,
+        )
     except Exception as e:
         st.error(f"组装失败：{e}")
         return
 
-    zip_path = run_dir / f"{name_prefix}_Teaching_Kit.zip"
-    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as z:
-        for p in (ws_path, rr_path, tg_path):
-            if p.exists():
-                z.write(p, arcname=p.name)
-        for img in image_paths:
-            z.write(img, arcname=f"images/{img.name}")
-
     progress.progress(1.0, "完成 ✅")
     st.success("✅ 教辅三件套已生成。")
-    with open(zip_path, "rb") as fh:
-        st.download_button("⬇️ 下载 ZIP（WS + RR + TG + 页图）", fh.read(),
-                           file_name=zip_path.name, mime="application/zip")
+    st.session_state["up_last_paths"] = {k: str(v) for k, v in paths.items() if k != "name_prefix"}
+    _render_upload_download_row(paths)
+
+
+def _render_upload_download_row(paths: dict) -> None:
+    """单本上传完成后：ZIP + 分项 + Teaching Extract 下载。"""
+    zip_p = Path(paths.get("zip", ""))
+    if zip_p.exists():
+        with open(zip_p, "rb") as fh:
+            st.download_button(
+                "⬇️ 下载 ZIP（WS + RR + TG + 抽取摘要 + 页图）",
+                fh.read(), file_name=zip_p.name, mime="application/zip",
+                key="up_dl_zip_main",
+            )
+    cols = st.columns(4)
+    labels = [("ws", "📋 Worksheet"), ("rr", "📝 RR"), ("tg", "👩‍🏫 TG"), ("extract", "📄 抽取摘要")]
+    for col, (key, label) in zip(cols, labels):
+        p = Path(paths.get(key, ""))
+        with col:
+            if p.exists():
+                with open(p, "rb") as fh:
+                    st.download_button(f"⬇️ {label}", fh.read(), file_name=p.name, key=f"up_dl_{key}")
+
+
+def _render_upload_batch_mode() -> None:
+    """批量：N 本已有绘本 → 每本 WS + RR + TG。"""
+    st.info(
+        "粘贴多本信息，每本用 `===` 分隔。每本第一行 = `Title | Level | Book#`，其后为故事英文原文。"
+        "再上传 **ZIP（每本子文件夹）** 或 **多个 PDF/PPTX**（按书名模糊匹配，匹配不到则按顺序对应）。"
+    )
+    st.text_area(
+        "批量书目 + 故事原文",
+        height=220,
+        key="up_batch_raw",
+        placeholder=(
+            "How Our Local Government Works | 4 | 18\n"
+            "Mia and Tommy visit city hall. ...\n"
+            "===\n"
+            "Five Ways to Eat Better | 4 | 21\n"
+            "Tommy wants to eat healthier. ...\n"
+        ),
+    )
+
+    match_mode = st.radio(
+        "绘本文件匹配方式",
+        ["ZIP 子文件夹 / 根目录多文件（按书名）", "多个 PDF/PPTX 按列表顺序一一对应"],
+        horizontal=True,
+        key="up_batch_match_mode",
+    )
+    batch_zip = st.file_uploader(
+        "（可选）上传 ZIP：每本一个子文件夹，或根目录多个 PDF/PPTX",
+        type=["zip"],
+        key="up_batch_zip",
+    )
+    batch_files = st.file_uploader(
+        "（可选）上传多个 PDF / PPTX（不与 ZIP 同时用时生效）",
+        type=["pdf", "pptx"],
+        accept_multiple_files=True,
+        key="up_batch_files",
+    )
+    c1, c2 = st.columns(2)
+    with c1:
+        rr_answers = st.checkbox("RR 生成示例答案版（教师版）", value=False, key="up_batch_rr_answers")
+    with c2:
+        st.checkbox("打包总 ZIP", value=True, key="up_batch_master_zip")
+
+    with st.expander("📝 批量 Prompt 说明", expanded=False):
+        st.markdown(
+            "- **出图 Prompt**：上传成品路径 **不生成** `image_prompts.txt` / SOP 四部分（绘本已存在）。\n"
+            "- **教辅抽取摘要**：每本自动生成 `*_Teaching_Extract.txt`（词表 · Worksheet 题 · RR 题）。\n"
+            "- 若需要完整出图 Prompt，请用 **📚 批量生产** 或 **📖 单本制作** 模式。"
+        )
+
+    if not st.button("🚀 批量生成教辅三件套", type="primary", key="up_batch_run_btn"):
+        return
+
+    from batch_runner import parse_batch_outlines
+
+    items = parse_batch_outlines(st.session_state.get("up_batch_raw", ""))
+    if not items:
+        st.error("没解析到任何书目。请检查格式：每本第一行 `Title | Level | Book#`，多本用 `===` 分隔。")
+        return
+
+    book_map: dict[str, list[_UploadBlob]] = {}
+    ordered_blobs: list[_UploadBlob] | None = None
+    zip_file = st.session_state.get("up_batch_zip")
+    multi_files = st.session_state.get("up_batch_files") or []
+
+    if zip_file is not None:
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        zip_root = OUTPUTS_DIR / f"upload_batch_zip_{ts}"
+        book_map = _parse_upload_zip_book_map(zip_file.getvalue(), zip_root)
+        st.caption(f"ZIP 内解析到 {len(book_map)} 组文件。")
+    elif multi_files:
+        ordered_blobs = sorted(
+            [_UploadBlob(f.name, f.getvalue()) for f in multi_files],
+            key=lambda b: b.name.lower(),
+        )
+        st.caption(f"已上传 {len(ordered_blobs)} 个 PDF/PPTX，将按{'顺序' if '顺序' in match_mode else '书名'}匹配。")
+
+    batch_root = OUTPUTS_DIR / f"upload_batch_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    batch_root.mkdir(parents=True, exist_ok=True)
+    results: list[dict] = []
+    progress = st.progress(0, text="批量组装教辅…")
+    rqc = int(st.session_state.get("ws_reading_q_count", 4))
+
+    for i, item in enumerate(items):
+        progress.progress(i / max(len(items), 1), text=f"正在处理 {i + 1}/{len(items)}：{item.title}")
+        book_dir = batch_root / item.name_prefix
+        img_dir = book_dir / "images"
+        book_dir.mkdir(parents=True, exist_ok=True)
+
+        blobs = _match_upload_blobs_for_book(item, book_map, ordered_blobs, i)
+        image_paths: list[Path] = []
+        if blobs:
+            image_paths = _extract_uploaded_page_images(blobs, img_dir)
+        elif not item.story.strip():
+            results.append({
+                "title": item.title, "status": "failed",
+                "error": "无上传文件且无故事正文，无法生成题目。",
+            })
+            continue
+
+        if blobs and not image_paths:
+            results.append({
+                "title": item.title, "status": "failed",
+                "error": "上传文件未能解析出页图。",
+            })
+            continue
+
+        try:
+            paths = _build_and_assemble_teaching_kit(
+                title=item.title, level=item.level, book_number=item.book_number,
+                raw_story=item.story, image_paths=image_paths,
+                run_dir=book_dir, rr_answers=rr_answers, ws_reading_q_count=rqc,
+            )
+            results.append({
+                "title": item.title, "status": "ok",
+                "name_prefix": paths.get("name_prefix", item.name_prefix),
+                "outputs": [str(paths[k]) for k in ("ws", "rr", "tg", "extract", "zip") if paths.get(k)],
+                "zip": str(paths.get("zip", "")),
+                "n_images": len(image_paths),
+            })
+        except Exception as e:
+            results.append({"title": item.title, "status": "failed", "error": str(e)})
+
+    progress.progress(1.0, text="完成")
+    ok_n = sum(1 for r in results if r["status"] == "ok")
+    st.success(f"✅ 批量完成：{ok_n}/{len(items)} 本成功。输出目录：`{batch_root}`")
+
+    master_zip_path = ""
+    if st.session_state.get("up_batch_master_zip") and ok_n:
+        master_zip_path = str(batch_root / "Upload_Batch_Teaching_Kits.zip")
+        with zipfile.ZipFile(master_zip_path, "w", zipfile.ZIP_DEFLATED) as z:
+            for r in results:
+                if r["status"] != "ok":
+                    continue
+                zp = r.get("zip")
+                if zp and Path(zp).exists():
+                    z.write(zp, arcname=f"{r.get('name_prefix', r['title'])}/{Path(zp).name}")
+
+    st.session_state["up_batch_last"] = {"root": str(batch_root), "results": results, "master_zip": master_zip_path}
+
+    for r in results:
+        if r["status"] == "ok":
+            st.markdown(f"✅ **{r['title']}** — {r.get('n_images', 0)} 张页图")
+        else:
+            st.markdown(f"❌ **{r['title']}** — {r.get('error', '未知错误')}")
+
+    if master_zip_path and Path(master_zip_path).exists():
+        with open(master_zip_path, "rb") as fh:
+            st.download_button(
+                "⬇️ 下载批量总 ZIP",
+                fh.read(), file_name=Path(master_zip_path).name,
+                mime="application/zip", key="up_batch_master_dl",
+            )
+
+    with st.expander(f"📄 各本 Teaching Extract 下载（{ok_n} 本）", expanded=False):
+        for r in results:
+            if r["status"] != "ok":
+                continue
+            extract = next((p for p in r.get("outputs", []) if p.endswith("_Teaching_Extract.txt")), "")
+            if extract and Path(extract).exists():
+                with open(extract, "rb") as fh:
+                    st.download_button(
+                        f"⬇️ {r['title']} · 抽取摘要",
+                        fh.read(), Path(extract).name,
+                        key=f"up_batch_extract_{r.get('name_prefix', r['title'])}",
+                    )
+
+
+def _render_upload_mode() -> None:
+    """块5（用户拍板 2026-06-08）：上传成品绘本(PDF/PPT/散图) → 只生成 Worksheet + RR + TG（不重出绘本本体）。"""
+    st.subheader("📤 已有绘本 · 生成教辅（Worksheet + Reading Report + Teacher's Guide）")
+    st.caption(
+        "💡 已有成品绘本时用这里：上传 **PDF / PPTX / 散图**（最多 8 张：封面+7 页，允许缺页）。"
+        "系统**不重出绘本本体**，只产出 WS + RR + TG。单词/拼读 **逐字取自该 Level 大纲**。"
+    )
+    tab_single, tab_batch = st.tabs(["📕 单本", "📚 批量"])
+    with tab_single:
+        _render_upload_single_mode()
+    with tab_batch:
+        _render_upload_batch_mode()
 
 
 def _render_global_standards_panel() -> None:
@@ -2788,7 +3126,7 @@ def _render_features_section() -> None:
         ("📄 RR", "阅读表达题预览与单题修改，空白版/示例版可选。"),
         ("👩‍🏫 TG", "自动生成 Teacher's Guide DOCX。"),
         ("📚 批量生产", "一次跑多本大纲，适合系列化备课。"),
-        ("📤 上传成品绘本", "已有 PDF/PPT/散图 → 只出 WS + RR + TG 教辅三件套。"),
+        ("📤 已有绘本 · 教辅", "已有 PDF/PPT/散图 → 单本或批量出 WS + RR + TG + 抽取摘要。"),
     ]
     for title, desc in feats:
         with st.expander(title, expanded=False):
@@ -3111,17 +3449,17 @@ def main() -> None:
     # ---------- 模式：单本 / 批量 ----------
     mode = st.radio(
         "制作模式",
-        ["📖 单本制作", "📚 批量生产", "📤 上传成品绘本 → 教辅"],
+        ["📖 单本制作", "📚 批量生产", "📤 已有绘本 · 教辅三件套"],
         horizontal=True,
         key="produce_mode",
-        help="单本：逐本精调出图 + 4 件套。批量：一次跑多本大纲。上传成品：已有绘本(PDF/PPT/散图)→只出 Worksheet+RR+TG。",
+        help="单本：逐本精调出图 + 4 件套。批量：一次跑多本大纲 + 出图。已有绘本：PDF/PPT/散图 → 只出 WS+RR+TG（支持单本/批量）。",
     )
     if mode == "📚 批量生产":
         _render_batch_mode()
         if st.session_state.get("batch_last_summary"):
             _render_batch_prompt_downloads(st.session_state["batch_last_summary"])
         return
-    if mode == "📤 上传成品绘本 → 教辅":
+    if mode == "📤 已有绘本 · 教辅三件套":
         _render_upload_mode()
         return
 
