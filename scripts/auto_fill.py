@@ -15,6 +15,7 @@ UI 端只需调用 `auto_summary(level, story_text, title)` 拿到 dict，把它
 from __future__ import annotations
 
 import re
+from pathlib import Path
 from typing import Optional
 
 from character_registry import REGISTRY, get_character
@@ -236,15 +237,28 @@ def detect_characters_in_story(story_text: str, level: str = "5") -> list[dict]:
         if not char:
             continue
         from character_registry import get_reference_path, get_description
-        ref = get_reference_path(reg_key, age)
-        desc = get_description(reg_key, age) or ""
+        from ip_library import resolve_registry_key, format_age_label
+
+        kind = char.get("kind", "")
+        lookup_age: int | str = age
+        if kind == "adult":
+            lookup_age = "adult"
+        elif kind == "pet":
+            lookup_age = "pet"
+
+        ref = get_reference_path(reg_key, lookup_age)
+        ip_entry = resolve_registry_key(reg_key, age)
+        if ip_entry and ip_entry.image_path.exists():
+            ref = ip_entry.image_path
+        desc = get_description(reg_key, lookup_age) or ""
+        display_age = format_age_label(ip_entry) if ip_entry else f"{age}y"
         matches[reg_key] = {
             "name_in_story": name_in_story,
             "matched_key": reg_key,
-            "kind": char.get("kind", ""),
+            "kind": kind,
             "gender": char.get("gender", ""),
-            "age": age,
-            "reference_exists": ref is not None,
+            "age": display_age,
+            "reference_exists": bool(ref and Path(ref).exists()),
             "reference_path": str(ref) if ref else None,
             "description": desc[:140] + ("..." if len(desc) > 140 else ""),
             "first_mention_idx": m.start(),

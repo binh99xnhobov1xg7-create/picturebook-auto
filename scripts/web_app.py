@@ -3838,50 +3838,44 @@ def _render_auto_summary_panel() -> None:
     # 块11：蓝思值半自动取值（禁止编造）—— 大纲没有官方 Lexile 时，用官方分析器取真实值后回填
     _render_lexile_panel(outline)
 
-    # === 主角识别面板 ===
+    # === 主角识别 + IP 库勾选（完整网格在下方）===
     st.subheader("🎭 主角识别（让你确认 AI 理解的故事人物是谁）")
     chars = auto.get("characters", [])
     generic = auto.get("generic_roles", [])
 
-    if not chars and not generic:
-        st.info("ℹ️ 未在故事里识别到已注册的 IP 角色。系统将按通用 girl/boy 生成（默认套 Mia/Tommy 形象）。")
-        return
-
     if chars:
-        st.markdown(f"**✅ 已匹配到 {len(chars)} 个官方 IP**（生图时会自动用对应参考图保证形象一致）：")
-        ncols = min(len(chars), 4)
-        cols = st.columns(ncols)
-        for i, ch in enumerate(chars):
-            with cols[i % ncols]:
-                ref_badge = "✅ 有官方参考图" if ch["reference_exists"] else "⚠️ 缺参考图"
-                kind_emoji = {
-                    "protagonist": "⭐", "supporting": "👥", "adult": "👩‍🏫",
-                    "pet": "🐱", "brand": "🦖", "family": "👨‍👩‍👧",
-                }.get(ch["kind"], "•")
+        kind_emoji = {
+            "protagonist": "⭐", "supporting": "👥", "adult": "👩‍🏫",
+            "pet": "🐱", "brand": "🦖", "family": "👨‍👩‍👧",
+        }
+        chips = []
+        for ch in chars:
+            em = kind_emoji.get(ch["kind"], "•")
+            ref = "✅" if ch["reference_exists"] else "⚠️"
+            chips.append(f"{em} **{ch['name_in_story']}** ({ch['age']}) {ref}")
+        st.markdown(
+            f"**AI 从故事里识别到 {len(chars)} 个官方 IP**（已在下方 IP 库中自动勾选）：  \n"
+            + " · ".join(chips)
+        )
+        with st.expander("查看识别详情（registry key / 形象描述）", expanded=False):
+            for ch in chars:
                 st.markdown(
-                    f"### {kind_emoji} {ch['name_in_story']}\n"
-                    f"**Registry key**: `{ch['matched_key']}`  \n"
-                    f"**类别**: {ch['kind']}  |  **性别**: {ch['gender']}  |  **年龄**: {ch['age']}y  \n"
-                    f"**参考图**: {ref_badge}"
+                    f"- `{ch['matched_key']}` · {ch['name_in_story']} · "
+                    f"{ch['kind']} / {ch['gender']} / {ch['age']}"
                 )
-                if ch["reference_exists"] and ch["reference_path"]:
-                    try:
-                        _zoom_image(ch["reference_path"],
-                                    key=f"match{ch['matched_key']}",
-                                    caption=ch["name_in_story"])
-                    except Exception:
-                        pass
-                with st.expander(f"形象描述（生图 prompt 用）"):
-                    st.caption(ch["description"])
+                st.caption(ch["description"])
+    elif not generic:
+        st.info("ℹ️ 未在故事里识别到已注册的 IP 角色。系统将按通用 girl/boy 生成（默认套 Mia/Tommy 形象）。")
 
-    # === v2.1 新增：故事人物库 IP 选择器 + 无名角色映射 ===
+    # === 故事人物库 IP 选择器（始终展示完整 IP 库）+ 无名角色映射 ===
     _render_ip_cast_panel(chars, generic)
 
-    st.warning(
-        "🔍 **请审核以上识别结果。** 如果识别错了（例如把 Mary 误识别为 Mia），"
-        "请去顶部「⚙️ 选填字段」→「🆕 新人物注册」加一行 `mary | 12y GIRL, ...` 把新人物注册进来，"
-        "再点 AI 重新抽取。"
-    )
+    if chars or generic:
+        st.warning(
+            "🔍 **请审核以上识别结果。** 如果识别错了（例如把 Mary 误识别为 Mia），"
+            "请去顶部「⚙️ 选填字段」→「🆕 新人物注册」加一行 `mary | 12y GIRL, ...` 把新人物注册进来，"
+            "再点 AI 重新抽取。"
+        )
 
 
 def _render_ip_cast_panel(detected_chars: list[dict], detected_generic: list[dict]) -> None:
@@ -3895,7 +3889,7 @@ def _render_ip_cast_panel(detected_chars: list[dict], detected_generic: list[dic
          st.session_state['generic_overrides'] (dict role→key)，
          供 cn_prompt_builder 使用。
     """
-    from ip_library import list_by_kind, get_ip
+    from ip_library import list_by_kind, get_ip, resolve_registry_key, format_age_label
     from config import resolve_ip_age
 
     # 当前 outline 的 IP age（用于挑年龄档）
@@ -3909,16 +3903,14 @@ def _render_ip_cast_panel(detected_chars: list[dict], detected_generic: list[dic
     st.subheader("📚 这本绘本会出现的全部 IP（勾选 = 生图时会作为参考形象）")
     st.caption(
         "✅ 已自动勾选「故事里识别到的角色」。"
-        "如果某页需要其他 IP 出场（如班里其他同学、家人探班），可加勾。"
+        "下方展示 **完整 IP 库**（Mia/Tommy 各年龄档、Anna、老师、家人、宠物等），可随时加勾或取消。"
         "**勾选项越多，生图时可挑选的参考图越多**。"
     )
 
     # 自动默认勾选：识别到的 IP（按 age 档匹配） + 无名角色默认套的 IP
     auto_keys: set[str] = set()
     for ch in detected_chars:
-        # ch["matched_key"] 可能是 base（"anna"），我们要带 age 后缀的（"anna_12"）
-        from ip_library import resolve_name_to_ip
-        ip = resolve_name_to_ip(ch["matched_key"], target_age)
+        ip = resolve_registry_key(ch["matched_key"], target_age)
         # 用户拍板（2026-06-04 / 06-06）：不自动拉「只有 8/10 岁档的支持角色」（在 12 岁书里会偏小）；
         # 但故事里【点名出现】且【正好有本级年龄档】的角色（如 Anna 12y）必须自动带上——
         # 它就是这本书的真实角色。其余无名 girl/boy 仍走 girl/boy→Mia/Tommy 映射，不新创造别人。
@@ -3958,12 +3950,12 @@ def _render_ip_cast_panel(detected_chars: list[dict], detected_generic: list[dic
                 cols = st.columns(ncols)
                 for j, e in enumerate(entries[row_start:row_start + ncols]):
                     with cols[j]:
-                        try:
-                            _zoom_image(e.image_path, key=f"ip{e.key}", caption=e.name)
-                        except Exception:
-                            pass
+                        age_lbl = format_age_label(e)
+                        cap = f"{e.name_base} · {age_lbl}" if age_lbl != "—" else e.name
+                        _ip_thumbnail(e.image_path, key=f"ip{e.key}", caption=cap)
+                        auto_tag = " ☑️" if e.key in auto_keys else ""
                         is_checked = st.checkbox(
-                            e.name,
+                            f"{e.name}{auto_tag}",
                             value=(e.key in selected),
                             key=f"ip_pick_{e.key}",
                             help=e.desc[:120],
@@ -6155,8 +6147,21 @@ def _img_data_uri(path) -> str | None:
     return f"data:{mime};base64,{base64.b64encode(data).decode('ascii')}"
 
 
+def _ip_thumbnail(path, key: str, caption: str = "", width: int = 120) -> None:
+    """IP 库网格缩略图：用 st.image 直读文件，避免大图 base64 在 Cloud 上渲染失败。"""
+    p = Path(path) if path else None
+    if p and p.exists():
+        st.image(str(p), caption=caption or None, width=width)
+    else:
+        st.caption(f"⚠️ 缺参考图{caption and f' · {caption}' or ''}")
+
+
 def _zoom_image(path, key: str, caption: str = "") -> None:
     """单图点击放大（纯 CSS 灯箱）：点缩略图 → 全屏看大图；点任意处关闭。无需任何按钮。"""
+    p = Path(path) if path else None
+    if p and p.exists() and p.stat().st_size > 1_500_000:
+        _ip_thumbnail(p, key, caption, width=140)
+        return
     uri = _img_data_uri(path)
     if not uri:
         st.caption("⚠️ 图片不存在")

@@ -39,8 +39,6 @@ def load_library() -> list[IPEntry]:
     out: list[IPEntry] = []
     for d in data:
         img = PROJECT_ROOT / d["image"]
-        if not img.exists():
-            continue
         out.append(IPEntry(
             key=d["key"], name=d["name"], kind=d["kind"],
             gender=d.get("gender", ""), age=int(d.get("age", 0)),
@@ -75,12 +73,34 @@ _NAME_ALIAS: dict[str, str] = {
     "dad": "dad", "daddy": "dad", "father": "dad", "爸爸": "dad",
     "grandma": "grandma", "granny": "grandma", "奶奶": "grandma",
     "grandpa": "grandpa", "grandfather": "grandpa", "爷爷": "grandpa",
-    # 老师 / 宠物
-    "teacher": "teacher", "ms. kim": "teacher", "mrs. kim": "teacher", "kim": "teacher",
-    "cat": "cat", "kitty": "cat", "kitten": "cat",
+    # 老师 / 宠物（character_registry key → manifest key）
+    "teacher": "teacher", "teacher_kim": "teacher",
+    "ms. kim": "teacher", "mrs. kim": "teacher", "kim": "teacher",
+    "cat": "cat", "winnie": "cat", "kitty": "cat", "kitten": "cat",
     "max": "max",
     "dino": "dino",
 }
+
+# character_registry REGISTRY key → ip_library manifest key（无年龄后缀的 base）
+_REGISTRY_TO_IP: dict[str, str] = {
+    "teacher_kim": "teacher",
+    "winnie": "cat",
+}
+
+
+def resolve_registry_key(reg_key: str, age: int) -> IPEntry | None:
+    """把 character_registry 的 key 解析为 ip_library 条目（含年龄档）。"""
+    base = _REGISTRY_TO_IP.get(reg_key, reg_key)
+    return resolve_name_to_ip(base, age)
+
+
+def format_age_label(entry: IPEntry) -> str:
+    """UI 展示用年龄文案（成人/宠物不用书本级别年龄）。"""
+    if entry.kind in ("adult", "family") and entry.age > 0:
+        return f"{entry.age}y 成人"
+    if entry.kind == "pet" or entry.age == 0:
+        return "—"
+    return f"{entry.age}y"
 
 
 def resolve_name_to_ip(name: str, age: int) -> IPEntry | None:
