@@ -2971,15 +2971,30 @@ def _clear_storage(storage_key: str) -> None:
 
 
 def _init_main_nav() -> None:
+    """冷启动/刷新时从 URL 恢复 tab；会话已存在后不再覆写（避免吞掉 radio 点击）。"""
     _storage_bridge(_NAV_COOKIE, "tab")
+    if "main_nav" in st.session_state:
+        return
     tab = st.query_params.get("tab", "")
     tab = _LEGACY_NAV.get(tab, tab)
-    if tab in _MAIN_NAV:
-        st.session_state["main_nav"] = tab
-        # URL 直达时同步 radio；勿每轮用 main_nav 覆写 widget 状态（会吞掉点击）
-        st.session_state["main_nav_radio"] = _MAIN_NAV[tab]
-    elif "main_nav" not in st.session_state:
-        st.session_state["main_nav"] = "overview"
+    if tab not in _MAIN_NAV:
+        tab = "overview"
+    st.session_state["main_nav"] = tab
+    st.session_state["main_nav_radio"] = _MAIN_NAV[tab]
+
+
+def _sync_main_nav_from_radio() -> None:
+    """radio on_change：把 widget 选项写回 main_nav + URL（Streamlit Cloud 可靠路径）。"""
+    label = st.session_state.get("main_nav_radio")
+    if not label:
+        return
+    labels = list(_MAIN_NAV.values())
+    keys = list(_MAIN_NAV.keys())
+    try:
+        key = keys[labels.index(label)]
+    except ValueError:
+        return
+    _set_main_nav(key)
 
 
 def _set_main_nav(key: str) -> None:
@@ -3008,8 +3023,6 @@ def _render_app_header_compact() -> None:
     )
     nav = st.session_state.get("main_nav", "overview")
     labels = list(_MAIN_NAV.values())
-    keys = list(_MAIN_NAV.keys())
-    idx = keys.index(nav) if nav in keys else 0
 
     st.markdown('<div id="app-header-anchor"></div>', unsafe_allow_html=True)
     with st.container(border=True):
@@ -3029,13 +3042,13 @@ def _render_app_header_compact() -> None:
             )
         with c_nav:
             st.markdown('<div class="main-nav-wrap">', unsafe_allow_html=True)
-            selected = st.radio(
+            st.radio(
                 "主导航",
                 labels,
-                index=idx,
                 horizontal=True,
                 label_visibility="collapsed",
                 key="main_nav_radio",
+                on_change=_sync_main_nav_from_radio,
             )
             st.markdown("</div>", unsafe_allow_html=True)
         with c_act:
@@ -3057,11 +3070,6 @@ def _render_app_header_compact() -> None:
                     args=("work",),
                 )
             st.markdown("</div>", unsafe_allow_html=True)
-
-    selected_key = keys[labels.index(selected)]
-    if selected_key != nav:
-        _set_main_nav(selected_key)
-        st.rerun()
 
 
 def _render_overview_section() -> None:
