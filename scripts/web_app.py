@@ -2422,6 +2422,20 @@ def _render_upload_single_mode() -> None:
     progress.progress(1.0, "完成 ✅")
     st.success("✅ 教辅三件套已生成。")
     st.session_state["up_last_paths"] = {k: str(v) for k, v in paths.items() if k != "name_prefix"}
+    try:
+        from dingtalk_notify import notify_book_complete
+
+        notify_book_complete(
+            title=up_title,
+            level=up_level,
+            book_number="",
+            status="ok",
+            output_path=str(paths.get("zip", "")),
+            source="upload",
+            deliverable="教辅三件套（WS + RR + TG）",
+        )
+    except Exception:
+        pass
     _render_upload_download_row(paths)
 
 
@@ -2570,9 +2584,40 @@ def _render_upload_batch_mode() -> None:
                 "outputs": [str(paths[k]) for k in ("ws", "rr", "tg", "extract", "zip") if paths.get(k)],
                 "zip": str(paths.get("zip", "")),
                 "n_images": len(image_paths),
+                "level": item.level,
+                "book_number": item.book_number,
             })
+            try:
+                from dingtalk_notify import notify_book_complete
+
+                notify_book_complete(
+                    title=item.title,
+                    level=item.level,
+                    book_number=item.book_number,
+                    status="ok",
+                    output_path=str(paths.get("zip", "")),
+                    source="upload_batch",
+                    deliverable="教辅三件套（WS + RR + TG）",
+                )
+            except Exception:
+                pass
         except Exception as e:
             results.append({"title": item.title, "status": "failed", "error": str(e)})
+            try:
+                from dingtalk_notify import notify_book_complete
+
+                notify_book_complete(
+                    title=item.title,
+                    level=item.level,
+                    book_number=item.book_number,
+                    status="failed",
+                    output_path=str(book_dir),
+                    source="upload_batch",
+                    error=str(e),
+                    deliverable="教辅三件套",
+                )
+            except Exception:
+                pass
 
     progress.progress(1.0, text="完成")
     ok_n = sum(1 for r in results if r["status"] == "ok")
@@ -2590,6 +2635,19 @@ def _render_upload_batch_mode() -> None:
                     z.write(zp, arcname=f"{r.get('name_prefix', r['title'])}/{Path(zp).name}")
 
     st.session_state["up_batch_last"] = {"root": str(batch_root), "results": results, "master_zip": master_zip_path}
+
+    try:
+        from dingtalk_notify import notify_batch_summary
+
+        notify_batch_summary(
+            total=len(items),
+            ok=ok_n,
+            failed=len(items) - ok_n,
+            out_root=str(batch_root),
+            source="upload_batch",
+        )
+    except Exception:
+        pass
 
     for r in results:
         if r["status"] == "ok":
@@ -5848,6 +5906,21 @@ def _run_docs_assembly() -> None:
 
     _elapsed = time.time() - _assemble_t0
     st.success(f"4 件套已生成（组装用时 {_elapsed:.1f}s）。点击下面按钮下载：")
+    try:
+        from dingtalk_notify import notify_book_complete
+
+        notify_book_complete(
+            title=outline.title,
+            level=outline.level,
+            book_number=outline.book_number,
+            status="ok",
+            output_path=str(zip_path),
+            elapsed_s=_elapsed,
+            source="web",
+            deliverable="4 件套（PPT + WS + RR + TG）",
+        )
+    except Exception:
+        pass
     try:
         paths = _export_book_prompts_to_disk(outline)
         st.session_state["s7_prompt_paths"] = {k: str(v) for k, v in paths.items()}

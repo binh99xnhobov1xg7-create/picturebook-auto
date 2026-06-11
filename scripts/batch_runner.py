@@ -647,6 +647,22 @@ def run_batch(
             done += 1
             if progress_cb:
                 progress_cb(done, total, r)
+            try:
+                from dingtalk_notify import notify_book_complete
+
+                notify_book_complete(
+                    title=r.item.title,
+                    level=r.item.level,
+                    book_number=r.item.book_number,
+                    status=_book_display_status(r),
+                    output_path=r.zip_path or str(out_root / r.item.name_prefix),
+                    placeholder_pages=r.placeholder_pages,
+                    elapsed_s=r.elapsed_s,
+                    source="batch",
+                    error=(r.error or "")[:300],
+                )
+            except Exception:
+                pass
 
     # 主 ZIP（把每本的全套 zip 再合并）
     master_zip = ""
@@ -920,6 +936,19 @@ def run_batch_from_ui() -> None:
     try:
         from web_app import render_batch_output_table
         render_batch_output_table(summary, expanded=True)
+    except Exception:
+        pass
+    try:
+        from dingtalk_notify import notify_batch_summary
+
+        notify_batch_summary(
+            total=summary.get("total", len(items)),
+            ok=summary.get("ok", 0),
+            failed=summary.get("failed", 0),
+            out_root=summary.get("out_root", ""),
+            need_review=summary.get("need_review", 0),
+            source="batch",
+        )
     except Exception:
         pass
     return summary

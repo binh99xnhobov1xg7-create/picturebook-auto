@@ -14,7 +14,9 @@ except ImportError:
     pass
 
 # Streamlit Cloud 兼容：把 st.secrets 的值同步进 os.environ
-# 这样 Cloud 上不用改 .env 就能读 ARK_API_KEY / DOUBAO_MODEL 等
+# 这样 Cloud 上不用改 .env 就能读 ARK_API_KEY / DOUBAO_MODEL 等。
+# 钉钉群机器人（可选）：DINGTALK_WEBHOOK_URL、DINGTALK_SECRET（加签）、
+# STREAMLIT_APP_URL、DINGTALK_FEEDBACK_FORM_URL — 见 docs/DingTalk_接入说明.md
 def _hydrate_from_streamlit_secrets() -> None:
     try:
         import streamlit as st
