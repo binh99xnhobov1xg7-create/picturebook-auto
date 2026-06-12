@@ -8,6 +8,7 @@ import logging
 import os
 import time
 import urllib.parse
+from pathlib import Path
 from typing import Optional
 
 import requests
@@ -22,8 +23,32 @@ _STATUS_LABEL = {
 }
 
 
+def _load_secrets_toml() -> dict[str, str]:
+    """CLI 场景读取 .streamlit/secrets.toml（Streamlit 未启动时）。"""
+    root = Path(__file__).resolve().parents[1]
+    path = root / ".streamlit" / "secrets.toml"
+    if not path.exists():
+        return {}
+    try:
+        import tomllib
+        data = tomllib.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    out: dict[str, str] = {}
+    for k, v in data.items():
+        if isinstance(k, str) and isinstance(v, str):
+            out[k] = v.strip()
+    return out
+
+
+_SECRETS_TOML = _load_secrets_toml()
+
+
 def _cfg(key: str, default: str = "") -> str:
     val = os.getenv(key, "").strip()
+    if val:
+        return val
+    val = _SECRETS_TOML.get(key, "").strip()
     if val:
         return val
     try:
@@ -116,6 +141,56 @@ def _level_book_line(level: str, book_number: str) -> str:
     return "—"
 
 
+def _normalize_book_row(raw: dict) -> dict:
+    """统一 batch_log / upload_batch 等不同来源的书目字段。"""
+    status = str(raw.get("display_status") or raw.get("status") or "").strip()
+    if status == "ok" and (raw.get("placeholder_pages") or raw.get("placeholder_count")):
+        status = "partial"
+    return {
+        "title": str(raw.get("title") or "").strip(),
+        "level": str(raw.get("level") or raw.get("Level") or "").strip(),
+        "book": str(raw.get("book") or raw.get("book_number") or "").strip(),
+        "status": status,
+        "placeholder_pages": list(raw.get("placeholder_pages") or []),
+        "error": str(raw.get("error") or "").strip()[:80],
+    }
+
+
+def _book_row_icon(status: str) -> str:
+    if status == "failed":
+        return "❌"
+    if status in ("partial", "warn"):
+        return "⚠️"
+    return "✅"
+
+
+def _format_book_list_lines(
+    books: list[dict],
+    *,
+    deliverable: str = "4 件套",
+    max_rows: int = 25,
+) -> list[str]:
+    if not books:
+        return []
+    lines = ["", "**本次产出清单**："]
+    for i, raw in enumerate(books[:max_rows], 1):
+        b = _normalize_book_row(raw)
+        icon = _book_row_icon(b["status"])
+        lv_bk = _level_book_line(b["level"], b["book"])
+        title = b["title"] or "—"
+        extra: list[str] = []
+        ph = b["placeholder_pages"]
+        if ph:
+            extra.append(f"占位 P{', P'.join(str(p) for p in ph)}")
+        if b["status"] == "failed" and b["error"]:
+            extra.append(b["error"])
+        suffix = f"（{'；'.join(extra)}）" if extra else ""
+        lines.append(f"{i}. {icon} {lv_bk} · **{title}** — {deliverable}{suffix}")
+    if len(books) > max_rows:
+        lines.append(f"... 还有 {len(books) - max_rows} 本，见输出目录或工作台")
+    return lines
+
+
 def notify_book_complete(
     *,
     title: str,
@@ -174,22 +249,43 @@ def notify_batch_summary(
     failed: int,
     out_root: str = "",
     need_review: int = 0,
+    clean_pass: int = 0,
     source: str = "batch",
+    books: Optional[list[dict]] = None,
+    master_zip: str = "",
+    deliverable: str = "",
 ) -> bool:
-    """批量任务全部结束后的汇总推送（Web 批量模式用）。"""
+    """批量任务全部结束后的汇总推送（含本次产出书目清单）。"""
+    source_note = {
+        "batch": "CLI / 批量流水线",
+        "web": "Streamlit 工作台 · 批量生产",
+        "upload_batch": "批量上传 · 教辅三件套",
+    }.get(source, source)
+    deliverable = deliverable or {
+        "batch": "4 件套",
+        "web": "4 件套",
+        "upload_batch": "教辅三件套（WS + RR + TG）",
+    }.get(source, "产出")
+
     lines = [
         "### 📦 批量生成汇总",
         "",
+        f"- **来源**：{source_note}",
         f"- **合计**：{total} 本",
         f"- **成功**：{ok} 本",
         f"- **失败**：{failed} 本",
     ]
     if need_review:
         lines.append(f"- **需人工抽查**：{need_review} 本")
+    if clean_pass:
+        lines.append(f"- **可直接放行**：{clean_pass} 本")
     if out_root:
         lines.append(f"- **输出目录**：`{out_root}`")
+    if master_zip and Path(master_zip).is_file():
+        lines.append(f"- **总包 ZIP**：`{Path(master_zip).name}`")
     app = streamlit_app_url()
     if app:
-        lines.append(f"- **工作台**：[打开 Streamlit]({app})")
+        lines.append(f"- **工作台**：[打开下载]({app})（登录后批量页可下 ZIP）")
+    lines.extend(_format_book_list_lines(books or [], deliverable=deliverable))
     lines.extend(["", _feedback_footer()])
     return send_dingtalk_markdown("批量生成汇总", "\n".join(lines))

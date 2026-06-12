@@ -32,6 +32,14 @@ class PageSpec:
     # 块4（用户拍板 2026-06-08）：生图前给老师确认的"简体中文场景安全线"（谁+在哪+做什么）。
     # 非空时作为本页画面的权威核心注入 prompt 最前；老师可在生图前逐页编辑确认。
     safety_line: str = ""
+    # 科普/历史书的【本页年代/时代】标签（如 "long-ago one-room schoolhouse era" / "modern present-day"
+    # / "past-vs-present contrast" / "ancient" / "future"）。由 AI 按本页文字推断，留空=无特定历史设定。
+    # 出图时据此把本页布景/家具/器物/服装/科技锁到该年代，避免"过去页画成现代/现代页画成过去"。
+    era: str = ""
+    # 角色猜测/想象画面：真实人物仍按本页现实衣着画；这里描述小型 thought bubble 内的想象内容。
+    thought_bubble: str = ""
+    # 本页贯穿道具状态补充：朝向/装订边/内容是否朝内或不可读等，供 recurring_props 逐页复用。
+    prop_state: str = ""
 
     @property
     def label(self) -> str:
@@ -81,6 +89,15 @@ class BookOutline:
     official_image_prompt: object | None = None  # 命中的官方每课出图 Prompt（OfficialImagePrompt），出图时权威参考注入
     book_cast: dict | None = None    # 书内角色册：反复出场的一次性/非 IP 角色 → 全书形象锁 + 书内定妆锚图
     frame_mode: str = "A+"           # 框架寓言呈现模式（老师拍板 2026-06-08 默认 A+）：封面=拿书引子+中间纯故事+末页故事结尾&合书；B/A 备选
+    # SOP「关键贯穿物件统一描述」：若全书围绕【同一个反复出现的关键物件】（味道/气味等抽象描述会变、
+    #   但实物始终是同一个），AI 在此给出该物件【唯一固定的视觉描述】（造型/颜色/大小/材质/盛器，不含抽象感受词）
+    #   + 出现页 + 各页允许的【具体物理状态变化】（盖着→揭开、整个→切开…）。出图时逐页复用同一描述、只改状态。
+    #   形如 {"present": bool, "name": str, "unified_desc_cn": str, "pages": [int], "states": [{"pages":[int], "state": str}]}。
+    key_object: dict | None = None
+    # 固定班级/群像册：本书内部固定 exactly 4 classmates + 1 teacher，跨页复用，不跨书复用。
+    class_ensemble: dict | None = None
+    # 贯穿多页的普通道具（非唯一关键物件）：统一外观 + 朝向/装订/内容朝内不可读等约束。
+    recurring_props: list[dict] = field(default_factory=list)
 
     @property
     def slug(self) -> str:

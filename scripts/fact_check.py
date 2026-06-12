@@ -28,6 +28,28 @@ from typing import Any
 from deepseek_client import is_deepseek_available
 
 
+_SCIENCE_FLAVORED_FICTION_TITLES = {
+    "thelanguageofdolphins",
+}
+
+
+def _norm_title(s: str) -> str:
+    import re
+    return re.sub(r"[^a-z0-9]+", "", (s or "").lower())
+
+
+def is_science_flavored_fiction_whitelisted(title: str) -> bool:
+    """只允许用户明确拍板的 science-flavored fiction 进入事实校验；不做宽泛自动检测。"""
+    return _norm_title(title) in _SCIENCE_FLAVORED_FICTION_TITLES
+
+
+def should_fact_check_outline(outline, *, is_nonfiction: bool = False) -> bool:
+    """非虚构默认核查；科学味 fiction 仅白名单核查（当前只有 Book33）。"""
+    if is_nonfiction:
+        return True
+    return is_science_flavored_fiction_whitelisted(getattr(outline, "title", "") or "")
+
+
 def is_available() -> bool:
     return is_deepseek_available()
 
@@ -66,11 +88,17 @@ Output schema (strict JSON):
 """
 
 
-def _build_user_prompt(pages: list[dict], title: str, level: str) -> str:
+def _build_user_prompt(pages: list[dict], title: str, level: str, fiction_type: str = "") -> str:
+    genre = (
+        "SCIENCE-FLAVORED FICTION (whitelisted for factual/biology/setting sanity check)"
+        if is_science_flavored_fiction_whitelisted(title) and not str(fiction_type or "").lower().startswith("non")
+        else "NON-FICTION (informational picture book)"
+    )
     lines = [
         f"Book title: {title}",
         f"Level: {level}",
-        "Genre: NON-FICTION (informational picture book)",
+        f"Genre: {genre}",
+        "Special visual fact checks when relevant: no impossible animal anatomy, no misleading captive-animal setting details, and scene_cn must not contradict the story page.",
         "",
         "Pages to fact-check (index / text / scene_cn):",
     ]
@@ -106,7 +134,7 @@ def fact_check_pages(
 
     data = deepseek_chat_json(
         system=_SYSTEM_PROMPT,
-        user=_build_user_prompt(usable, title, level),
+        user=_build_user_prompt(usable, title, level, fiction_type),
         temperature=0.0,
         max_tokens=3000,
         fallback=None,

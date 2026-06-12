@@ -23,6 +23,13 @@ NO_ACCESSORY = (
     "NO watch, NO bracelet, NO necklace, NO earrings, NO glasses, NO hat"
 )
 
+# 脸型/五官形态锁（用户拍板 2026-06-12）：把主角脸画成低龄圆润可爱、与定妆表一致，
+# 杜绝写实/大龄脸。仅用于 Mia/Tommy 主角，不动服装/发型/配色。
+FACE_CHILD_LOCK = (
+    "FACE: round soft child face, soft rounded chin, big clean expressive eyes, "
+    "a tiny nose, gentle childlike features (never a semi-realistic or adult/older-teen face)"
+)
+
 
 # ============================================================
 #  主角（年龄分档 8 / 10 / 12，对应 L0-2 / L3-4 / L5-6）
@@ -47,8 +54,8 @@ MIA = {
             "tied, with NO loose hair left hanging down; the tail falls naturally; a few face-framing "
             "strands at the front are optional. NOT a bun, NOT a top-knot, NOT a hair-bun, NOT half-up, "
             "NOT a low/side ponytail, NOT loose/undone hair. "
-            "lavender purple SHORT-SLEEVE tee, light-blue WIDE-LEG denim jeans (cuffed hems), "
-            "lilac-and-white sneakers, bare wrists, " + NO_ACCESSORY
+            "lavender purple LONG-SLEEVE sweatshirt, light gray/light pants, "
+            "lilac-and-white sneakers, bare wrists, " + FACE_CHILD_LOCK + ", " + NO_ACCESSORY
         ),
         10: (
             "Mia: 10y GIRL. HAIR LOCK (HIGH PONYTAIL): dark-brown hair gathered entirely into ONE "
@@ -57,16 +64,15 @@ MIA = {
             "strands at the front are optional. NOT a bun, NOT a top-knot, NOT a hair-bun, NOT half-up, "
             "NOT a low/side ponytail, NOT loose/undone hair. "
             "lavender purple LONG-SLEEVE sweatshirt, light gray sweatpants, white sneakers, "
-            "bare wrists, " + NO_ACCESSORY
+            "bare wrists, " + FACE_CHILD_LOCK + ", " + NO_ACCESSORY
         ),
         12: (
             "Mia: 12y GIRL. HAIR LOCK (HIGH PONYTAIL): dark-brown hair gathered entirely into ONE "
-            "single HIGH PONYTAIL tied high at the top/back of the head (with a small white "
-            "scrunchie); ALL hair is pulled up and tied, with NO loose hair left hanging down; the "
+            "single HIGH PONYTAIL tied high at the top/back of the head with a purple hair tie; ALL hair is pulled up and tied, with NO loose hair left hanging down; the "
             "tail falls naturally; a few face-framing strands at the front are optional. NOT a bun, "
             "NOT a top-knot, NOT a hair-bun, NOT half-up, NOT a low/side ponytail, NOT loose/undone hair. "
-            "lavender purple LONG-SLEEVE polo-collar pullover, white wide-leg trousers, white sneakers, "
-            "bare wrists, " + NO_ACCESSORY
+            "lavender purple LONG-SLEEVE sweatshirt, light gray/light pants, white sneakers, "
+            "bare wrists, " + FACE_CHILD_LOCK + ", " + NO_ACCESSORY
         ),
     },
 }
@@ -83,18 +89,18 @@ TOMMY = {
     "description_by_age": {
         8: (
             "Tommy: 8y BOY (NOT a girl, NO ponytail, NO long hair), short tidy brown hair, "
-            "blue-and-white horizontally striped SHORT-SLEEVE tee, light gray-blue trousers "
-            "(cuffed hems), white sneakers, bare wrists, " + NO_ACCESSORY
+            "light blue LONG-SLEEVE sweatshirt, khaki straight pants, white sneakers, bare wrists, "
+            + FACE_CHILD_LOCK + ", " + NO_ACCESSORY
         ),
         10: (
             "Tommy: 10y BOY (NOT a girl, NO ponytail, NO long hair), short messy brown hair, "
             "light blue LONG-SLEEVE sweatshirt, khaki straight pants, white sneakers, "
-            "bare wrists, " + NO_ACCESSORY
+            "bare wrists, " + FACE_CHILD_LOCK + ", " + NO_ACCESSORY
         ),
         12: (
             "Tommy: 12y BOY (NOT a girl, NO ponytail, NO long hair), short messy brown hair, "
-            "navy SHORT-SLEEVE polo shirt with V-collar, blue denim straight-cut jeans, "
-            "white sneakers, bare wrists, " + NO_ACCESSORY
+            "light blue LONG-SLEEVE sweatshirt, khaki straight pants, "
+            "white sneakers, bare wrists, " + FACE_CHILD_LOCK + ", " + NO_ACCESSORY
         ),
     },
 }
@@ -107,7 +113,10 @@ TOMMY = {
 TEACHER_KIM = {
     "kind": "adult",
     "gender": "woman",
-    "aliases": ["ms. kim", "ms kim", "kim", "teacher"],
+    # 用户拍板 2026-06-07：裸词 "teacher" 不再映射成金发女 IP Teacher Kim——否则任何
+    # 出现"老师/teacher"的故事（如 Book03《The Sub Teacher》里的男代课老师）都会被错配成
+    # Teacher Kim 女老师。只认其专名 Ms./Mrs./Teacher Kim / Kim。
+    "aliases": ["ms. kim", "ms kim", "mrs. kim", "mrs kim", "teacher kim", "kim"],
     "reference_by_age": {"adult": "teacher_kim.png"},
     "description_by_age": {
         "adult": (

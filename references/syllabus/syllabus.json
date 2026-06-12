@@ -1,8 +1,10 @@
 {
  "_meta": {
-  "source_l36": "Level 3-6  S&S.xlsx",
-  "source_l02": "S&S绘本大纲内容Level 0-Level 2.xlsx",
-  "book_count": 638
+  "source_l36": "l36_20260611_191849.xlsx",
+  "source_l02": "l02_20260611_192148.xlsx",
+  "book_count": 638,
+  "synced_at": "2026-06-11T11:22:21.656796+00:00",
+  "sync_via": "dingtalk-workspace-cli"
  },
  "books": {
   "3::miaandthesevendayplan": {
@@ -131,8 +133,8 @@
    ],
    "core_vocab_raw": "family reunion, nervous, relative, beard",
    "text_7page": "Page 1\nTommy went to a big family reunion. He felt nervous.\n\nPage 2\nHe did not know many relatives and mixed names.\n\nPage 3\nMia said, \"Look for a clue. Uncle Bob has a beard, Cousin Jack wears a hat, and Grandma Nina wears a scarf.\"\n\nPage 4\nTommy looked and found a beard, a hat, and a scarf.\n\nPage 5\nTommy said, \"Hello, Uncle Bob! Hi, Cousin Jack! Hello, Grandma Nina!\"\n\nPage 6\nEveryone clapped. \"Well done, Tommy!\" they said.\n\nPage 7\nTommy whispered, \"Thank you, Mia.\" Mia smiled.",
-   "pure_text": "Tommy went to a big family reunion. He felt nervous. He did not know many relatives and mixed names. Mia said, \"Look for a clue. Uncle Bob has a beard, Cousin Jack wears a hat, and Grandma Nina wears a scarf.\" Tommy looked and found a beard, a hat, and a scarf. Tommy said, \"Hello, Uncle Bob! Hi, Cousin Jack! Hello, Grandma Nina!\" Everyone clapped. \"Well done, Tommy!\" they said. Tommy whispered, \"Thank you, Mia.\" Mia smiled.",
-   "word_count": "72",
+   "pure_text": "Tommy went to a big family reunion. He felt nervous. He did not know many relatives. He mixed up their names. Mia said, \"Look for clues. Uncle Bob has a beard. Cousin Jack wears a hat. Grandma Nina wears a scarf.\" Tommy looked around. He saw the beard. He saw the hat. He saw the scarf!\n Tommy said, \"Hello, Uncle Bob! Hi, Cousin Jack! Hello, Grandma Nina!\" Everyone clapped. \"Well done, Tommy!\" they said. Tommy whispered, \"Thank you, Mia.\" Mia smiled.",
+   "word_count": "81",
    "lexile": "3",
    "cefr": "A1",
    "decoding_label": "Phonics Rule",
@@ -1165,9 +1167,9 @@
    "go_description": "以路线轨迹呈现事物移动过程的视觉图形组织器",
    "go_usage": "画出羽毛飘过的路线：Grass -> Tree -> Monkey's nose -> Pond"
   },
-  "3::mammalshowtheylive": {
+  "3::mammals": {
    "level": "3",
-   "title": "Mammals: How They Live",
+   "title": "Mammals",
    "book_number": "26",
    "genre": "nonfiction",
    "sentence_pattern": "There are [noun phrase] that [verb phrase].",
@@ -1371,10 +1373,15 @@
      "word": "protein",
      "level": "",
      "example": ""
+    },
+    {
+     "word": "dairy",
+     "level": "",
+     "example": ""
     }
    ],
-   "core_vocab_raw": "healthy, vitamin, protein",
-   "text_7page": "Page 1\nOur bodies need good food, exercise, and rest to stay strong.\n\nPage 2\nEat foods from different food groups every day.\n\nPage 3\nEat vegetables and fruit. They give your body vitamins.\n\nPage 4\nEat protein and grains for growth and energy.\n\nPage 5\nEat dairy foods for strong bones and teeth. Drink water every day.\n\nPage 6\nPlay and move for sixty minutes each day. Sleep about nine hours each night.\n\nPage 7\nWash your hands to stay clean. Choose one healthy habit today!",
+   "core_vocab_raw": "healthy, vitamin, protein, dairy",
+   "text_7page": "Page 1\nOur bodies need good food, exercise, and rest to stay strong.\nPage 2\nEat foods from different food groups every day.\nPage 3\nEat vegetables and fruit. They give your body vitamins.\nPage 4\nEat protein and grains for growth and energy.\nPage 5\nEat dairy foods for strong bones and teeth. Drink water every day.\nPage 6\nPlay and move for sixty minutes each day. Sleep about nine hours each night.\nPage 7\nWash your hands to stay clean. Choose one healthy habit today!",
    "pure_text": "Our bodies need good food, exercise, and rest to stay strong. Eat foods from different food groups every day. Eat vegetables and fruit. They give your body vitamins. Eat protein and grains for growth and energy. Eat dairy foods for strong bones and teeth. Drink water every day. Play and move for sixty minutes each day. Sleep about nine hours each night. Wash your hands to stay clean. Choose one healthy habit today!",
    "word_count": "73",
    "lexile": "30",
@@ -1835,8 +1842,8 @@
    ],
    "core_vocab_raw": "whale, dolphin, coral, wave",
    "text_7page": "Page 1: Tommy and Mia go on a boat to the blue ocean.Page 2: They see dolphins that jump over waves.Page 3: They see big whales that sing songs.Page 4: They see sea turtles that swim to the sand.Page 5: Small fish hide in the bright coral.Page 6: \"The ocean is like a big home,\" says Mia.Page 7: They see many more animals before they go home. \"I love the ocean,\" says Tommy.",
-   "pure_text": "Tommy and Mia go on a boat to the blue ocean. They see dolphins that jump over waves. They see big whales that sing songs. They see sea turtles that swim near the sand. Small fish hide in the bright coral. \"The ocean is like a big home,\" says Mia. They see many more animals before they go home. \"I love the ocean,\" says Tommy.",
-   "word_count": "90",
+   "pure_text": "Tommy and Mia go on a boat to the blue ocean. They see sea turtles that swim near the sand. Small fish hide in the bright coral. They see dolphins that jump over waves. They see big whales that sing songs.  \"The ocean is like a big home,\" says Mia. They see many more animals before they go home. \"I love the ocean,\" says Tommy.",
+   "word_count": "65",
    "lexile": "40",
    "cefr": "A1",
    "decoding_label": "Phonics Rule",
@@ -1907,6 +1914,11 @@
    "teaching_focus": "Practice using the prepositions from...to..., simple place words, and subject-verb agreement (travel/travels). Pupils can swap words to make new sentences.",
    "core_vocab": [
     {
+     "word": "journey",
+     "level": "",
+     "example": ""
+    },
+    {
      "word": "crop",
      "level": "",
      "example": ""
@@ -1922,10 +1934,10 @@
      "example": ""
     }
    ],
-   "core_vocab_raw": "crop, truck, market",
+   "core_vocab_raw": "journey, crop, truck, market",
    "text_7page": "Page 1\nFood goes on a journey. It travels from the farm to your fork.\n\nPage 2\nFarmers plant seeds in the soil. The seeds grow into plants.\n\nPage 3\nFarmers look after the crops. They water them every day.\n\nPage 4\nWorkers pick the crops. Trucks carry the food to factories.\n\nPage 5\nAt the factory, workers wash and pack the food into boxes.\n\nPage 6\nThe boxes go to shops and markets. People choose what to buy.\n\nPage 7\nWe bring food home. We cook it and eat with our family.",
-   "pure_text": "Food goes on a journey. It travels from the farm to your fork. Farmers plant seeds in the soil. The seeds grow into plants. Farmers look after the crops. They water them every day. Workers pick the crops. Trucks carry the food to factories. At the factory, workers wash and pack the food into boxes. The boxes go to shops and markets. People choose what to buy. We bring food home. We cook it and eat with our family.",
-   "word_count": "79",
+   "pure_text": "Food goes on a journey — from the farm to your fork! Farmers plant seeds in the soil. The seeds grow into plants. Farmers look after the crops. They water the plants and keep them healthy. Workers pick the crops. Trucks carry the food to factories. At the factory, workers wash the food and pack it into boxes. The boxes go to shops and markets. We choose what to buy. We bring the food home. We cook it and share it with our family. What a long journey!",
+   "word_count": "87",
    "lexile": "42",
    "cefr": "A1",
    "decoding_label": "Phonics Rule",
@@ -2179,12 +2191,17 @@
    "teaching_focus": "Students can practice food vocabulary and sources, ask and answer 'Where does X come from?', use substitution to make many sentences, and notice the preposition 'from' and the simple present form 'comes'.",
    "core_vocab": [
     {
+     "word": "liter",
+     "level": "",
+     "example": ""
+    },
+    {
      "word": "wheat",
      "level": "",
      "example": ""
     },
     {
-     "word": "liter",
+     "word": "ham",
      "level": "",
      "example": ""
     },
@@ -2194,10 +2211,10 @@
      "example": ""
     }
    ],
-   "core_vocab_raw": "wheat, liter, place",
+   "core_vocab_raw": "liter, wheat, ham, place",
    "text_7page": "Page 1\nWhere does our food come from? Let's find out together!\n\nPage 2\nMilk comes from cows. Cows eat grass and make fresh milk. One cow can give twenty liters of milk a day!\n\nPage 3\nEggs come from hens. Hens lay eggs every day.\n\nPage 4\nBread comes from wheat. Farmers grow wheat in big green fields.\n\nPage 5\nHam comes from pigs. Pigs live on farms and they eat a lot.\n\nPage 6\nFish comes from the water. People catch fish in the ocean or river.\n\nPage 7\nNow you know, food comes from many places.",
    "pure_text": "Where does our food come from? Let's find out together! Milk comes from cows. Cows eat grass and make fresh milk. One cow can give twenty liters of milk a day! Eggs come from hens. Hens lay eggs every day. Bread comes from wheat. Farmers grow wheat in big green fields. Ham comes from pigs. Pigs live on farms and they eat a lot. Fish comes from the water. People catch fish in the ocean or river. Now you know, food comes from many places.",
-   "word_count": "88",
+   "word_count": "85",
    "lexile": "48",
    "cefr": "A1",
    "decoding_label": "Phonics Rule",
@@ -2469,12 +2486,17 @@
      "word": "stamp",
      "level": "",
      "example": ""
+    },
+    {
+     "word": "collect",
+     "level": "",
+     "example": ""
     }
    ],
-   "core_vocab_raw": "hobby, sport, stamp",
+   "core_vocab_raw": "hobby, sport, stamp, collect",
    "text_7page": "Page 1\nHobbies make life more fun. Everyone can find a hobby they love.\n\nPage 2\nYou can play sports with friends. You can learn music and sing songs.\n\nPage 3\nYou can draw and paint pictures. You can read books about anything.\n\nPage 4\nYou can also collect things like stamps or rocks. There are so many choices!\n\nPage 5\nTry a new hobby for a few days. Notice what feels good and fun.\n\nPage 6\nStart small and keep going. You will get better every time you try.\n\nPage 7\nChoose one hobby and keep trying. Your favorite hobby is waiting for you!",
-   "pure_text": "Hobbies make life more fun. Everyone can find a hobby they love. You can play sports with friends. You can learn music and sing songs. You can draw and paint pictures. You can read books about anything. You can also collect things like stamps or rocks. There are so many choices! Try a new hobby for a few days. Notice what feels good and fun. Start small and keep going. You will get better every time you try. Choose one hobby and keep trying. Your favorite hobby is waiting for you!",
-   "word_count": "92",
+   "pure_text": "Hobbies make life more fun. Everyone can find a hobby. You can play sports with friends. You can learn music and sing songs.      You can draw and paint pictures. You can read books about anything. You can also collect stamps or rocks. There are so many           choices! Try a new hobby. See how it feels. What makes you happy? Then choose one hobby. Start small and keep going. You will get  better every time you try. Your favorite hobby is waiting for you.",
+   "word_count": "83",
    "lexile": "54",
    "cefr": "A1",
    "decoding_label": "Phonics Rule",
@@ -2756,7 +2778,7 @@
    "core_vocab_raw": "confidence, minute, mood, balance",
    "text_7page": "Page 1\nPlaying sports helps your body and mind.\n\nPage 2\nSports make your heart strong. Just thirty minutes can lift your mood.\n\nPage 3\nSports help your muscles grow. They also improve your balance and speed.\n\nPage 4\nPlaying sports builds teamwork. Teams learn to talk and solve problems together.\n\nPage 5\nSports give you confidence. You feel proud when you learn new skills.\n\nPage 6\nSports help your brain stay sharp. You can focus better at school too.\n\nPage 7\nTry thirty minutes of sports each day. Join a team and have fun!",
    "pure_text": "Playing sports helps your body and mind. Sports make your heart strong. Just thirty minutes can lift your mood. Sports help your muscles grow. They also improve your balance and speed. Playing sports builds teamwork. Teams learn to talk and solve problems together. Sports give you confidence. You feel proud when you learn new skills. Sports help your brain stay sharp. You can focus better at school too. Try thirty minutes of sports each day. Join a team and have fun!",
-   "word_count": "84",
+   "word_count": "81",
    "lexile": "60",
    "cefr": "A1",
    "decoding_label": "Phonics Rule",
@@ -3445,8 +3467,8 @@
    ],
    "core_vocab_raw": "absent, substitute, strict, abacus",
    "text_7page": "Page 1 Mia and Tommy sat at their desks. Their teacher was absent.\nPage 2 A substitute teacher came in.\nPage 3 The class feared he might be strict. Everyone sat up straight.\nPage 4 He opened a big book and said, \"Hi, I'm Bob Johnson. We will play a learning game today!\"\nPage 5 He pulled out an old abacus and taught math with it. The whole class was amazed.\nPage 6 Tommy said, \"Wow, this is the best math lesson!\"\nPage 7 Mr. Johnson gave everyone a toy abacus to practice after class. Mia said, \"I like his class! Different teachers can be great.\"",
-   "pure_text": "Mia and Tommy sat at their desks. Their teacher was absent. A substitute teacher came in. The class feared he might be strict. Everyone sat up straight. He opened a big book and said, \"Hi, I'm Bob Johnson. We will play a learning game today!\" He pulled out an old abacus and taught math with it. The whole class was amazed. Tommy said, \"Wow, this is the best math lesson!\" Mr. Johnson gave everyone a toy abacus to practice after class. Mia said, \"I like his class! Different teachers can be great.\"",
-   "word_count": "92",
+   "pure_text": "Mia and Tommy sat at their desks. Their teacher was absent today. Just then, a substitute teacher came in. The class went very quiet. Everyone was worried that he might be strict. He smiled and said, \"Hi, I'm Bob Johnson. We're going to play a learning game today!\" He pulled out an old abacus and taught math with it. The whole class was amazed. Tommy said, \"Wow, this is the best math lesson!\" Mr. Johnson gave everyone a toy abacus to practice with after class. Mia said, \"I like this class! A new teacher can be a wonderful surprise!\"",
+   "word_count": "99",
    "lexile": "410L - 600L",
    "cefr": "A2",
    "decoding_label": "Phonics Rule",
@@ -3554,9 +3576,9 @@
    "go_description": "中心写 The Grand Canyon，向外辐射四个分支：Rocks (layers, history), Plants (cactus, pine), Animals (sheep, condors), Visitors (trails, safe stops)",
    "go_usage": "引导学生在阅读前提问'大峡谷有什么特别之处'，阅读后将文中各类细节归入对应分支"
   },
-  "4::schoolsofthepasthoweducationchanged": {
+  "4::howeducationchanged": {
    "level": "4",
-   "title": "Schools of the Past: How Education Changed",
+   "title": "How Education Changed",
    "book_number": "6",
    "genre": "nonfiction",
    "sentence_pattern": "In the past, [people] [verb phrase], but today [people] [verb phrase].",
@@ -3584,9 +3606,9 @@
      "example": "Students used wooden desks and slates to write their lessons."
     }
    ],
-   "core_vocab_raw": "tutor, scroll, compulsory, slate",
-   "text_7page": "Page 1 In the past, schools were very different. Many children walked far to reach school.\nPage 2 One room could hold many ages together. One teacher taught all grades at once.\nPage 3 Students used wooden desks and slates. Sometimes a whole class shared one textbook.\nPage 4 Lessons were reading, writing, and sums. There were no science or art classes.\nPage 5 There were no computers or tablets. Now students use screens and find answers online.\nPage 6 Today, classrooms are smaller. Students have their own desks, books, and supplies.\nPage 7 Schools changed because the world changed. New tools and ideas made learning better for all.",
-   "pure_text": "In the past, schools were very different. Many children walked far to reach school. One room could hold many ages together. One teacher taught all grades at once. Students used wooden desks and slates. Sometimes a whole class shared one textbook. Lessons were reading, writing, and sums. There were no science or art classes. There were no computers or tablets. Now students use screens and find answers online. Today, classrooms are smaller. Students have their own desks, books, and supplies. Schools changed because the world changed. New tools and ideas made learning better for all.",
+   "core_vocab_raw": "hold, grade, share, textbook",
+   "text_7page": "Page 1 In the past, schools were very different. Many children walked far to reach school.\nPage 2 One room could hold students of many ages together. One teacher taught all grades at once.\nPage 3 Students used wooden desks and slates. Sometimes a whole class shared one textbook.\nPage 4 Lessons included reading, writing, and math. There were few science or art classes.\n\nPage 5 There were no computers or tablets, but now students use screens and find answers online.\nPage 6 Today, classrooms are smaller. Students have their own desks, books, and supplies.\nPage 7 Schools changed because the world changed. New tools and ideas made learning better for all.",
+   "pure_text": "In the past, schools were very different. Many children walked far to reach school. One room could hold students of many ages together. One teacher taught all grades at once. Students used wooden desks and slates. Sometimes a whole class shared one textbook. Lessons were reading, writing, and sums. There were no science or art classes. There were no computers or tablets, but now students use screens and find answers online. Today, classrooms are smaller. Students have their own desks, books, and supplies. Schools changed because the world changed. New tools and ideas made learning better for all.",
    "word_count": "95",
    "lexile": "410L - 600L",
    "cefr": "A2",
@@ -3631,10 +3653,10 @@
      "example": "Ben observed it from afar."
     }
    ],
-   "core_vocab_raw": "staff, sandstorm, rescue, observe",
-   "text_7page": "Page 1 Mia's class visited the Desert Animal Rescue. They were excited.\nPage 2 There is a red fox with a sore paw. Mia helped the staff clean its paw.\nPage 3 There is a small lizard that hides under rocks. Ben observed it from afar.\nPage 4 Lina found a desert turtle. The staff said it stores water in its body.\nPage 5 There are many thirsty animals after the sandstorm. The children gave them water and food.\nPage 6 Students wrote notes and took care of the animals.\nPage 7 Before leaving, they took a class photo with the staff and animals.",
-   "pure_text": "Mia's class visited the Desert Animal Rescue. They were excited. There is a red fox with a sore paw. Mia helped the staff clean its paw. There is a small lizard that hides under rocks. Ben observed it from afar. Lina found a desert turtle. The staff said it stores water in its body. There are many thirsty animals after the sandstorm. The children gave them water and food. Students wrote notes and took care of the animals. Before leaving, they took a class photo with the staff and animals.",
-   "word_count": "90",
+   "core_vocab_raw": "rescue, staff, observe, tortoise",
+   "text_7page": "Page 1\nMia's class visited the Desert Animal Rescue. They were excited.\nPage 2\nThere was a fox with a sore paw. Mia helped the staff wrap its paw.\nPage 3\nThere was a small lizard that hid under a rock. Tommy observed it carefully.\nPage 4\nMia found a tortoise. The staff said it stored water in its body.\nPage 5\nThere were many thirsty animals after the sandstorm. The children gave them water and food.\nPage 6\nThe children wrote notes and took care of the animals.\nPage 7\nBefore leaving, they took a class photo with the staff and animals.",
+   "pure_text": "Mia’s class visited the Desert Animal Rescue. They were excited. There was a fox with a sore paw. Mia helped the staff wrap its paw. There was a small lizard that hid under a rock. Tommy observed it carefully. Mia found a tortoise. The staff said it stored water in its body. There were many thirsty animals after the sandstorm. The children gave them water and food. The children wrote notes and took care of the animals. Before leaving, they took a class photo with the staff and animals.",
+   "word_count": "89",
    "lexile": "410L - 600L",
    "cefr": "A2",
    "decoding_label": "Phonics Rule",
@@ -3726,9 +3748,9 @@
     }
    ],
    "core_vocab_raw": "catalog, project, sort, overdue",
-   "text_7page": "Page 1 Mia and Tommy went to the library. They needed books for a science project.\nPage 2 There are many books in the library.\nPage 3 There is a friendly librarian named Ms. Lee. \"Do you remember the title of the book?\" she asked. \"No.\" said Mia.\nPage 4 There are computers to search the catalog. They typed the subject word 'plants'.\nPage 5 There are letters and numbers on each book label. Ms. Lee showed them how to use the letters and numbers.\nPage 6 They chose three books and smiled. Now they know how the library is sorted.\n\nPage 7\nMs. Lee smiled. \"Come back any time,\" she said. Mia and Tommy left with their books.",
-   "pure_text": "Mia and Tommy went to the library. They needed books for a science project. There are many books in the library. There is a friendly librarian named Ms. Lee. \"Do you remember the title of the book?\" she asked. \"No.\" said Mia. There are computers to search the catalog. They typed the subject word 'plants'. There are letters and numbers on each book label. Ms. Lee showed them how to use the letters and numbers. They chose three books and smiled. Now they know how the library is sorted. Ms. Lee smiled. \"Come back any time,\" she said. Mia and Tommy left with their books.",
-   "word_count": "105",
+   "text_7page": "Page 1 Mia and Tommy went to the library. They needed books about plants for their project.\n\nPage 2 There were many books in the library. Books filled every shelf from top to bottom.\n\nPage 3 The librarian asked, \"What book do you need?\" \"We don't know yet,\" said Mia.\n\nPage 4 They used a computer to search the catalog. They found two books, but they did not know where to find them.\n\nPage 5 \"There are letters and numbers on each book label,\" said the librarian. She helped them find the books.\n\nPage 6 Now they knew how the books were sorted.\n\nPage 7 They thanked the librarian. \"Come back any time,\" she said warmly.",
+   "pure_text": "Mia and Tommy went to the library. They needed books about plants for their project. There were many books in the library. Books filled every shelf from top to bottom. The librarian asked, \"What book do you need?\" \"We don't know yet,\" said Mia. They used a computer to search the catalog. They found two books, but they did not know where to find them. \"There are letters and numbers on each book label,\" said the librarian. She helped them find the books. Now they knew how the books were sorted. They thanked the librarian. \"Come back any time,\" she said warmly.",
+   "word_count": "102",
    "lexile": "410L - 600L",
    "cefr": "A2",
    "decoding_label": "Phonics Rule",
@@ -3867,8 +3889,8 @@
     }
    ],
    "core_vocab_raw": "leash, groom, veterinarian, microchip",
-   "text_7page": "Page 1\nGetting a pet is exciting. Good owners think carefully first.\n\nPage 2\nBefore you get a dog, think about time. Dogs need a leash and a daily walk.\n\nPage 3\nCats are more independent. Long-haired cats need to be groomed every few days.\n\nPage 4\nFish are quiet and easy. They need a clean tank and the right temperature.\n\nPage 5\nAll pets need a veterinarian. A vet checks your pet and gives it yearly vaccinations.\n\nPage 6\nEvery pet also needs a microchip. It goes under the skin and helps find lost pets.\n\nPage 7\nChoose the right pet for your home. A happy pet needs a prepared owner.",
-   "pure_text": "Getting a pet is exciting. Good owners think carefully first. Before you get a dog, think about time. Dogs need a leash and a daily walk. Cats are more independent. Long-haired cats need to be groomed every few days. Fish are quiet and easy. They need a clean tank and the right temperature. All pets need a veterinarian. A vet checks your pet and gives it yearly vaccinations. Every pet also needs a microchip. It goes under the skin and helps find lost pets. Choose the right pet for your home. A happy pet needs a prepared owner.",
+   "text_7page": "Page 1\nGetting a pet is exciting. Good owners think carefully first.\n\nPage 2\nBefore you get a dog, think about time. Dogs need a leash and a daily walk.\n\nPage 3\nCats are more independent. Long-haired cats need to be groomed every few days.\n\nPage 4\nFish are quiet and easy. They need a clean tank and the right temperature.\n\nPage 5\nAll pets need a vet. A vet checks your pet and gives it yearly vaccinations.\n\nPage 6\nEvery pet also needs a microchip. It goes under the skin and helps find lost pets.\n\nPage 7\nChoose the right pet for your home. A happy pet needs a prepared owner.",
+   "pure_text": "Getting a pet is exciting. Good owners think carefully first. Before you get a dog, think about time. Dogs need a leash and a daily walk. Cats are more independent. Long-haired cats need to be groomed every few days. Fish are quiet and easy. They need a clean tank and the right temperature. All pets need a vet. A vet checks your pet and gives it yearly vaccinations. Every pet also needs a microchip. It goes under the skin and helps find lost pets. Choose the right pet for your home. A happy pet needs a prepared owner.",
    "word_count": "98",
    "lexile": "410L - 600L",
    "cefr": "A2",
@@ -4009,7 +4031,7 @@
    ],
    "core_vocab_raw": "ingredient, mild, flavor, portion",
    "text_7page": "Page 1\nIt was cooking class. The teacher put a covered dish on the table.\n\nPage 2\n\"Nobody knows what this is,\" she said. \"You have to taste it to find out.\"\n\nPage 3\nMia whispered, \"What if it is awful?\" Tommy picked up a spoon.\n\nPage 4\nIt tasted mild at first, but then a warm flavor spread across Tommy's tongue.\n\nPage 5\n\"What is the secret ingredient?\" The flavor was sweet, sour, and faintly smoky.\n\nPage 6\nMia asked for a second portion. Tommy asked for one too. Every hand went up.\n\nPage 7\n\"Jackfruit curry from Sri Lanka,\" said the teacher. \"Best mystery ever,\" said Tommy.",
-   "pure_text": "It was cooking class. The teacher put a covered dish on the table. \"Nobody knows what this is,\" she said. \"You have to taste it to find out.\" Mia whispered, \"What if it is awful?\" Tommy picked up a spoon. It tasted mild at first, but then a warm flavor spread across Tommy's tongue. \"What is the secret ingredient?\" The flavor was sweet, sour, and faintly smoky. Mia asked for a second portion. Tommy asked for one too. Every hand went up. \"Jackfruit curry from Sri Lanka,\" said the teacher. \"Best mystery ever,\" said Tommy.",
+   "pure_text": "It was cooking class. The teacher put a covered dish on the table. \"Nobody knows what this is,\" she said. \"You have to taste it to find out.\" Mia whispered, \"What if it's awful?\" Tommy picked up a spoon and took a bite. It tasted mild at first, but then a warm flavor spread across his tongue. The flavor was sweet, sour, and faintly smoky. \"What's the secret ingredient?\" Tommy asked. Mia tried a spoonful too. Then she asked for more. Every hand went up. \"Jackfruit curry from Sri Lanka,\" said the teacher. \"Best mystery ever,\" said Tommy.",
    "word_count": "95",
    "lexile": "410L - 600L",
    "cefr": "A2",
@@ -4054,15 +4076,15 @@
      "example": "They tried the tacos from Mexico."
     }
    ],
-   "core_vocab_raw": "curry, bake sale, sushi, taco",
-   "text_7page": "Page 1 Mia's school had a big food fair. Parents brought food from many countries.\nPage 2 At first, some children were shy about the unfamiliar foods. Later, they tried the sushi from Japan. It tasted light and fresh.\nPage 3 They tried the tacos from Mexico. They tried the pizza from Italy.\nPage 4 They tried the curry from India. They tried the dumplings from China.\nPage 5 They tried hot dogs from America. A small dog sniffed a a delicious hot dog.\nPage 6 The dog grabbed it and ran. Everyone laughed at the silly scene.\nPage 7 Mia and her friends tasted many foods and they liked them. The food fair was memorable!",
-   "pure_text": "Mia's school had a big food fair. Parents brought food from many countries. At first, some children were shy about the unfamiliar foods. Later, they tried the sushi from Japan. It tasted light and fresh. They tried the tacos from Mexico. They tried the pizza from Italy. They tried the curry from India. They tried the dumplings from China. They tried hot dogs from America. A small dog sniffed a delicious hot dog. The dog grabbed it and ran. Everyone laughed at the silly scene. Mia and her friends tasted many foods and they liked them. The food fair was memorable!",
+   "core_vocab_raw": "food fair, sushi, taco, curry",
+   "text_7page": "Page 1 Mia's school had a big food fair. Parents brought food from many countries.\nPage 2 At first, some children were shy about the new foods. Later, they tried the sushi from Japan. It tasted light and fresh.\nPage 3 They tried the tacos from Mexico. They tried the pizza from Italy.\nPage 4 They tried the curry from India. They tried the dumplings from China.\nPage 5 They tried hot dogs from America. A small dog sniffed a a delicious hot dog.\nPage 6 The dog grabbed it and ran. Everyone laughed at the silly scene.\nPage 7 Mia and her friends tasted many foods and they liked them. The food fair was wonderful!",
+   "pure_text": "Mia’s school had a big food fair. Parents brought food from many countries. At first, some children were shy about the new foods. Later, they tried the sushi from Japan. It tasted light and fresh. They tried the tacos from Mexico. They tried the pizza from Italy. They tried the curry from India. They tried the dumplings from China. They tried hot dogs from America. A small dog sniffed a delicious hot dog. The dog grabbed it and ran. Everyone laughed at the silly scene. Mia and her friends tasted many foods from around the world. The food fair was wonderful!",
    "word_count": "101",
    "lexile": "410L - 600L",
    "cefr": "A2",
    "decoding_label": "Phonics Rule",
-   "phonics_rule": "Long vowel \"a_e\" as in \"bake\"",
-   "phonics_examples": "bake, sale",
+   "phonics_rule": "digraph sh as in “shy”",
+   "phonics_examples": "shy, sushi",
    "reading_strategy": "联系生活经验 (Making Connections)",
    "reading_skill": "故事要素 (Story Elements)",
    "questions_type": "1. Reading for Details:\n• What did Mia's school have? (A big bake sale)\n• Which food from Japan did the children try? (Sushi)\n• How did the sushi taste? (Light and fresh)\n• What food did they try from Mexico? (Churros)\n• How did the children feel at the end? (Happy and full)\n\n2. Reading Skill:\n• Why were some children shy at first? (Because the foods were new to them)\n• Name two foods from different countries at the bake sale. (Sushi from Japan, churros from Mexico)\n• What is the main idea of the story? (Children try food from different countries at a bake sale and enjoy it)\n\n3. Other Comprehension:\n• (Main Idea) What is the story mostly about? • (Inference) Why do you think trying new foods made the children feel happy? • (Vocabulary) What does culture mean? • (Feelings) How did the children feel before and after trying the new food? • (Connection) Have you ever tried food from another country? What did you think?",
@@ -4259,9 +4281,9 @@
    "go_description": "时间轴标注：100+ years ago（Wright brothers, first airplane）→ Then（Small aircraft → Big jets）→ Now（Jet/propeller engines, 300+ passengers, Pilots train thousands of hours）",
    "go_usage": "引导学生综合全文信息，理解飞机技术随时间的演变，并用自己的语言总结变化"
   },
-  "4::fivewaystoeatbetter": {
+  "4::fivestepstoeatbetter": {
    "level": "4",
-   "title": "Five Ways to Eat Better",
+   "title": "Five Steps to Eat Better",
    "book_number": "21",
    "genre": "nonfiction",
    "sentence_pattern": "When you [action], your body [benefit].",
@@ -4289,10 +4311,10 @@
      "example": "When you grill food instead of frying it, your body gets more nutrients."
     }
    ],
-   "core_vocab_raw": "nutritious, calorie, stir, grill",
-   "text_7page": "Page 1\nEating better is simple and important. Five steps can change how you feel.\n\nPage 2\nStep 1: Add color to your meals. Nutritious meals include red, green, and yellow foods.\n\nPage 3\nStep 2: Check calories. A calorie measures the energy your body receives. Fruit and vegetables are both excellent choices.\n\nPage 4\nStep 3: Do not skip breakfast. Stir your yogurt before eating — the fruit settles at the bottom.\n\nPage 5\nStep 4: Grill, do not fry. When you grill food, your body absorbs more nutrients.\n\nPage 6\nStep 5: Drink water, not juice. When you drink water, your body works better.\n\nPage 7\nWhen you eat better, you feel better too.",
-   "pure_text": "Eating better is simple and important. Five steps can change how you feel. Step 1: Add color to your meals. Nutritious meals include red, green, and yellow foods. Step 2: Check calories. A calorie measures the energy your body receives. Fruit and vegetables are both excellent choices. Step 3: Do not skip breakfast. Stir your yogurt before eating — the fruit settles at the bottom. Step 4: Grill, do not fry. When you grill food, your body absorbs more nutrients. Step 5: Drink water, not juice. When you drink water, your body works better. When you eat better, you feel better too.",
-   "word_count": "102",
+   "core_vocab_raw": "step, simple, grill, fry",
+   "text_7page": "Page 1\nEating better is simple and important. Five steps can change how you feel.\n\nPage 2\nStep 1: Add color to your meals. Nutritious meals often include red, green, and yellow foods.\n\nPage 3\nStep 2: Check calories. A calorie measures the energy your body receives. \n\nPage 4\nFruits and vegetables are often lower in calories and good for your body.\n\n\nPage 5\nStep 3: Do not skip breakfast. Breakfast gives your body energy to start the day.\n\nPage 6\nStep 4: Grill, do not fry. Grilled food often has less fat, so it is better for your body.\n\n\nPage 7\nStep 5: Drink water, not juice. When you drink water, your body works better. When you eat better, you feel better too.",
+   "pure_text": "Eating better is simple and important. Five steps can change how you feel. Step 1: Add color to your meals. Nutritious meals often include red, green, and yellow foods. Step 2: Check calories. A calorie measures the energy your body receives. Fruit and vegetables are both excellent choices. Step 3: Do not skip breakfast. Stir your yogurt before eating — the fruit settles at the bottom. Step 4: Grill, do not fry. Grilled food often has less fat, so it is better for your body.\n Step 5: Drink water, not juice. When you drink water, your body works better. When you eat better, you feel better too.",
+   "word_count": "109",
    "lexile": "410L - 600L",
    "cefr": "A2",
    "decoding_label": "Phonics Rule",
@@ -4430,10 +4452,10 @@
      "example": "The construction of the Pyramids took many years."
     }
    ],
-   "core_vocab_raw": "statue, monument, engineering, construction",
+   "core_vocab_raw": "protect, statue, monument, engineering",
    "text_7page": "Page 1\nLandmarks are important places. They tell stories about history and culture.\n\nPage 2\nThe Great Wall of China is 21,000 km long. It was built to protect China from attack.\n\nPage 3\nThe Eiffel Tower was constructed in 1889 for the World Fair in Paris.\n\nPage 4\nThe Colosseum is located in Rome. Its construction required ten years. It was built for entertainment and competitions.\n\nPage 5\nThe Statue of Liberty stands in New York Harbor. It welcomed new arrivals from across the sea.\n\nPage 6\nThe Burj Khalifa in Dubai measures 828 meters. It demonstrates modern engineering.\n\nPage 7\nEvery landmark is a monument to human effort. They help us understand history and culture.",
-   "pure_text": "Landmarks are important places. They tell stories about history and culture. The Great Wall of China is 21,000 km long. It was built to protect China from attack. The Eiffel Tower was constructed in 1889 for the World Fair in Paris. The Colosseum is located in Rome. Its construction required ten years. It was built for entertainment and competitions. The Statue of Liberty stands in New York Harbor. It welcomed new arrivals from across the sea. The Burj Khalifa in Dubai measures 828 meters. It demonstrates modern engineering. Every landmark is a monument to human effort. They help us understand history and culture.",
-   "word_count": "103",
+   "pure_text": "Landmarks are important places. They tell stories about history and culture. The Great Wall of China is about 21,000 kilometers long. It was built to protect China from attack. The Eiffel Tower was built in 1889 for the World's Fair in Paris. The Colosseum is in Rome. It took about ten years to build. It was used for entertainment and competitions. The Statue of Liberty stands in New York Harbor. It welcomed new arrivals from across the sea. In Dubai, the Burj Khalifa is 828 meters tall. It shows what modern engineering can do.  Every landmark is a monument to human effort. When we visit them, we touch the past.",
+   "word_count": "110",
    "lexile": "410L - 600L",
    "cefr": "A2",
    "decoding_label": "Phonics Rule",
@@ -4571,10 +4593,10 @@
      "example": "The explorer traveled to remote places to discover new things."
     }
    ],
-   "core_vocab_raw": "marine, veterinarian, journalist, explorer",
-   "text_7page": "Page 1 Our teacher invited workers to class. \"We have a guessing game today!\" she said.\nPage 2 Each worker gave a clue. We listened and guessed their job.\nPage 3 \"I often work in hot and smoky places. I keep people safe,\" said the worker. \"Firefighter!\" shouted Tommy.\nPage 4 \"I take people from one place to another,\" said a worker. Mia smiled. \"A driver!\"\nPage 5 \"I help sick people get well,\" said a worker. \"A nurse or doctor!\" the class called.\nPage 6 \"I am with students every day. They see me in the morning and in the evening,\" said the last worker.\nPage 7 Nobody could guess the job. \"I am the school bus driver!\" Everyone clapped. We learned so many jobs today.",
-   "pure_text": "Our teacher invited workers to class. \"We have a guessing game today!\" she said. Each worker gave a clue. We listened and guessed their job. \"I often work in hot and smoky places. I keep people safe,\" said the worker. \"Firefighter!\" shouted Tommy. \"I take people from one place to another,\" said a worker. Mia smiled. \"A driver!\" \"I help sick people get well,\" said a worker. \"A nurse or doctor!\" the class called. \"I am with students every day. They see me in the morning and in the evening,\" said the last worker. Nobody could guess the job. \"I am the school bus driver!\" Everyone clapped. We learned so many jobs today.",
-   "word_count": "113",
+   "core_vocab_raw": "firefighter, shout, nurse, clap",
+   "text_7page": "Page 1 Our teacher invited workers to class. \"We have a guessing game today!\" she said.\nPage 2 Each worker gave a clue. We listened and guessed their job.\nPage 3 \"I often work in hot and smoky places. I keep people safe,\" said the worker. \"Firefighter!\" shouted Tommy.\nPage 4 \"I take people from one place to another,\" said a worker. Mia smiled. \"A driver!\"\nPage 5 \"I help sick people get well,\" said a worker. \"A nurse or doctor!\" the class called.\nPage 6 \"I am with students every day. They see me in the morning and evening,\" said the last worker.\nPage 7 Nobody could guess the job. \"I am the school bus driver!\" Everyone clapped. We learned so many jobs today.",
+   "pure_text": "Our teacher invited workers to class. \"We have a guessing game today!\" she said. Each worker gave a clue. We listened and guessed their job. \"I often work in hot and smoky places. I keep people safe,\" said the worker. \"Firefighter!\" shouted Tommy. \"I take people from one place to another,\" said a worker. Mia smiled. \"A driver!\" \"I help sick people get well,\" said a worker. \"A nurse or doctor!\" the class called. \"I am with students every day. They see me in the morning and evening,\" said the last worker. Nobody could guess the job. \"I am the school bus driver!\" Everyone clapped. We learned so many jobs today.",
+   "word_count": "111",
    "lexile": "410L - 600L",
    "cefr": "A2",
    "decoding_label": "Phonics Rule",
@@ -4853,9 +4875,9 @@
      "example": "Each dolphin has its own unique signal, like a name."
     }
    ],
-   "core_vocab_raw": "communicate, sonar, pod, signal",
-   "text_7page": "Page 1 Mia and Tommy visited the ocean center. They wanted to learn about dolphins.\nPage 2 They heard strange sounds in the pool. The clicks and whistles puzzled them.\nPage 3 They watched the trainer clap and give fish. The dolphin whistled and clicked back.\nPage 4 A dolphin tapped the glass with its nose. Mia laughed and said, \"Hello, dolphin! Are you talking?\"\nPage 5 The trainer smiled and said, \"Every sound means something.\" Tommy quickly wrote notes.\nPage 6 They listened for patterns in the clicks. A dolphin swam close and looked at Mia.\nPage 7 Mia looked at Tommy's notes. She shouted, \"I think that click means hello!\" They both cheered.",
-   "pure_text": "Mia and Tommy visited the ocean center. They wanted to learn about dolphins. They heard strange sounds in the pool. The clicks and whistles puzzled them. They watched the trainer clap and give fish. The dolphin whistled and clicked back. A dolphin tapped the glass with its nose. Mia laughed and said, \"Hello, dolphin! Are you talking?\" The trainer smiled and said, \"Every sound means something.\" Tommy quickly wrote notes. They listened for patterns in the clicks. A dolphin swam close and looked at Mia. Mia looked at Tommy's notes. She shouted, \"I think that click means hello!\" They both cheered.",
+   "core_vocab_raw": "strange, pool, trainer, tap",
+   "text_7page": "Page 1 Mia and Tommy visited the ocean center. They wanted to learn about dolphins.\nPage 2 They heard strange sounds in the pool. The clicks and whistles puzzled them.\nPage 3 They watched a trainer clap and give a dolphin fish. The dolphin whistled and clicked back.\nPage 4 A dolphin tapped the water with its nose. Mia laughed and said, \"Hello, dolphin! Are you talking?\"\nPage 5 The trainer smiled and said, \"Every sound means something.\" Tommy quickly wrote notes.\nPage 6 They listened for patterns in the clicks. A dolphin swam close and looked at Mia.\nPage 7 Mia looked at Tommy's notes. She shouted, \"I think that click means hello!\" They both cheered.",
+   "pure_text": "Mia and Tommy visited the ocean center. They wanted to learn about dolphins. They heard strange sounds in the pool. The clicks and whistles puzzled them. They watched a trainer clap and give a dolphin fish. The dolphin whistled and clicked back. A dolphin tapped the water with its nose. Mia laughed and said, \"Hello, dolphin! Are you talking?\" The trainer smiled and said, \"Every sound means something.\" Tommy quickly wrote notes. They listened for patterns in the clicks. A dolphin swam close and looked at Mia. Mia looked at Tommy's notes. She shouted, \"I think that click means hello!\" They both cheered.",
    "word_count": "101",
    "lexile": "410L - 600L",
    "cefr": "A2",
@@ -4917,14 +4939,14 @@
    "go_description": "沿时间轴标注情感变化：Arrived → Excited (talked about rides) → Scared (saw roller coaster queue) → Brave (gave it a go) → Thrilled (rode 3 times!) → Relaxed (Ferris wheel + popcorn) → Happy (bumper cars, promised to come back)",
    "go_usage": "引导学生联系自身经历，同时追踪叙述者从害怕到勇敢的情感变化，理解克服恐惧的过程"
   },
-  "4::disneyland": {
+  "4::acitymarket": {
    "level": "4",
-   "title": "Disneyland",
+   "title": "A City Market",
    "book_number": "35",
    "genre": "nonfiction",
-   "sentence_pattern": "It is located near [place].",
-   "example_sentence": "It is located near Los Angeles, California.",
-   "teaching_focus": "Practice answering 'Where is it?' with a short, natural reply. Students can substitute different place words, notice the fixed phrase 'is located near', and practice pronunciation and intonation for short location statements.",
+   "sentence_pattern": "The air smells of ...",
+   "example_sentence": "The air smells of fresh bread, spices, and flowers.",
+   "teaching_focus": "Practice using \"The air smells of ___\" to describe smells in different places. Students can replace the items after \"of\" to talk about parks, kitchens, beaches, or markets.",
    "core_vocab": [
     {
      "word": "introduce",
@@ -4947,15 +4969,15 @@
      "example": "One parade can have four hundred performers!"
     }
    ],
-   "core_vocab_raw": "introduce, attraction, float, performer",
-   "text_7page": "Page 1 Disneyland is a busy, magical city park for families. Today I will introduce Disneyland in California.\nPage 2 It is located near Los Angeles, California. Walt Disney opened the park in 1955.\nPage 3 About eighteen million people visit the park each year. The park has around sixty attractions and rides.\nPage 4 Parades run during the day with loud music. One parade can have four hundred performers!\nPage 5 Visitors see dancers, floats, and large puppets.\nPage 6 Shops sell food, toys, souvenirs, and park maps. If you arrive early, you will wait less time.\nPage 7 Almost all the families leave with happy memories after each visit.",
-   "pure_text": "Disneyland is a busy, magical city park for families. Today I will introduce Disneyland in California. It is located near Los Angeles, California. Walt Disney opened the park in 1955. About eighteen million people visit the park each year. The park has around sixty attractions and rides. Parades run during the day with loud music. One parade can have four hundred performers! Visitors see dancers, floats, and large puppets. Shops sell food, toys, souvenirs, and park maps. If you arrive early, you will wait less time. Almost all the families leave with happy memories after each visit.",
-   "word_count": "97",
+   "core_vocab_raw": "market, stall, fresh, shopper",
+   "text_7page": "Page 1 A city market is loud and busy every morning. Shops and stalls fill the streets with color and life.\n\nPage 2 Food stalls sell fresh fruit and vegetables. Bakery stalls sell bread and warm pastries.\n\nPage 3 The air smells of fresh bread, spices, and flowers all at once. Shoppers walk slowly between stalls.\n\nPage 4 Some stalls sell clothes, kitchen tools, and small household goods.\n\nPage 5 Sellers often call out loudly to attract customers. Fresh produce at a market is often cheaper than at a supermarket.\n\nPage 6 Families visit on weekends to buy food for the week. They fill their baskets with fruit, bread, and vegetables.\n\nPage 7 A city market is noisy, colorful, and full of everyday life. Tommy and Mia smile and say goodbye to the busy street.",
+   "pure_text": "A city market is loud and busy every morning. Shops and stalls fill the streets with color and life. Food stalls sell fresh fruit and vegetables. Bakery stalls sell bread and warm pastries. The air smells of fresh bread, spices, and flowers all at once. Shoppers walk slowly between stalls. Some stalls sell clothes, kitchen tools, and small household goods. Sellers often call out loudly to attract customers. Fresh produce at a market is often cheaper than at a supermarket. Families visit on weekends to buy food for the week. They fill their baskets with fruit, bread, and vegetables. A city market is noisy, colorful, and full of everyday life. Tommy and Mia smile and say goodbye to the busy street.",
+   "word_count": "121",
    "lexile": "410L - 600L",
    "cefr": "A2",
    "decoding_label": "Phonics Rule",
-   "phonics_rule": "Prefix per- as in \"performers\"",
-   "phonics_examples": "performers",
+   "phonics_rule": "consonant digraph “sh” as in “shop”",
+   "phonics_examples": "fresh, shopper",
    "reading_strategy": "归纳总结 (Summarizing)",
    "reading_skill": "主旨与支撑细节 (Main Idea and Supporting Details)",
    "questions_type": "1. Reading for Details:\n• Who opened Disneyland and when? (Walt Disney opened it in 1955)\n• Where is it located? (Near Los Angeles, California)\n• About how many people visit every year? (About eighteen million)\n• Name two things visitors can do there. (Ride attractions, meet characters, watch parades)\n• What does the author suggest? (Arrive early)\n\n2. Reading Skill:\n• Why does the author suggest arriving early? (To avoid long queues and see more)\n• Name two reasons Disneyland is popular. (Famous characters, exciting rides, magical feeling)\n• What is the main idea of the book? (Disneyland is a magical and popular park that people love to visit)\n\n3. Other Comprehension:\n• (Main Idea) What is the book mostly about? • (Inference) Why do you think Disneyland is called a 'magical' place? • (Vocabulary) What does memories mean? • (Fact) When did Walt Disney open Disneyland? • (Connection) Would you like to visit Disneyland? What would you most like to do there?",
@@ -4994,10 +5016,10 @@
      "example": "A flock of birds flew south together for the winter."
     }
    ],
-   "core_vocab_raw": "migration, hibernate, navigate, flock",
+   "core_vocab_raw": "migration, incredible, landmark, cross",
    "text_7page": "Page 1 Every year, many animals start long journeys. Birds, butterflies, whales, and wildebeest all migrate.\nPage 2 Why do they travel? They move to find food, warm places, and safe homes for their young.\nPage 3 Monarch butterflies fly from Canada to Mexico each fall. One butterfly can fly about 3,000 miles!\nPage 4 Swallows cross seas and high mountains. They use the sun and stars to find their way.\nPage 5 Whales swim to warm seas to give birth. They use sound to talk and stay together.\nPage 6 Wildebeest cross the African plains in huge groups. Millions move together, like one great river.\nPage 7 Migration is an amazing animal ability. These incredible journeys happen every year, all around our world.",
-   "pure_text": "Every year, many animals start long journeys. Birds, butterflies, whales, and wildebeest all migrate. Why do they travel? They move to find food, warm places, and safe homes for their young. Monarch butterflies fly from Canada to Mexico each fall. One butterfly can fly about 3,000 miles! Swallows cross seas and high mountains. They use the sun and stars to find their way. Whales swim to warm seas to give birth. They use sound to talk and stay together. Wildebeest cross the African plains in huge groups. Millions move together, like one great river. Migration is an amazing animal ability. These incredible journeys happen every year, all around our world.",
-   "word_count": "110",
+   "pure_text": "Every year, many animals start long journeys. Birds, butterflies, whales, and wildebeest all migrate. Why do they travel? They move to find food, warm places, and safe homes for their young. Swallows cross seas and high mountains. They use the sun and landmarks to find their way. Monarch butterflies fly from Canada to Mexico each fall. One butterfly can fly about 3,000 miles! Whales swim to warm seas to give birth. They use sound to communicate and stay together. Wildebeest cross the African plains in huge groups. More than a million wildebeest move together, like one great river. Migration is an amazing animal ability. These incredible journeys happen every year, all around our world.",
+   "word_count": "114",
    "lexile": "410L - 600L",
    "cefr": "A2",
    "decoding_label": "Phonics Rule",
@@ -5042,8 +5064,8 @@
     }
    ],
    "core_vocab_raw": "moment, office, slid, a stack of",
-   "text_7page": "Page 1 I went to my dad's office after school. My dad was working at a tall desk.\nPage 2 There was a stack of papers on his desk. Dad went out of the office for a moment.\nPage 3 A small robot moved near his chair. It cleaned the floor and beeped.\nPage 4 Suddenly the stack of papers slid from dad's desk.\nPage 5 Papers flew across the room. The robot beeped louder and spun around.\nPage 6 When dad returned, he asked, \"Do you see my papers?\" I pointed at the robot. Dad laughed.\nPage 7 Together we picked up all the papers. It was a funny afternoon at dad's office.",
-   "pure_text": "I went to my dad's office after school. My dad was working at a tall desk. There was a stack of papers on his desk. Dad went out of the office for a moment. A small robot moved near his chair. It cleaned the floor and beeped. Suddenly the stack of papers slid from dad's desk. When dad returned, he asked, \"Do you see my papers?\" I pointed at the robot. Dad laughed. Together we picked up all the papers. It was a funny afternoon at dad's office.",
+   "text_7page": "Page 1 I went to my dad's office after school. My dad was working at a tall desk.\nPage 2 There was a stack of papers on his desk. Dad went out of the office for a moment.\nPage 3 A small robot moved near his chair. It cleaned the floor and beeped.\nPage 4 Suddenly the stack of papers slid from dad's desk.\nPage 5 Papers flew across the room. The robot beeped louder and spun around.\nPage 6 When dad returned, he asked, \"Did you see my papers?\" I pointed at the robot. Dad laughed.\nPage 7 Together we picked up all the papers. It was a funny afternoon at dad's office.",
+   "pure_text": "I went to my dad's office after school. My dad was working at a tall desk. There was a stack of papers on his desk. Dad went out of the office for a moment. A small robot moved near his chair. It cleaned the floor and beeped. Suddenly the stack of papers slid from dad's desk. When dad returned, he asked, \"Did you see my papers?\" I pointed at the robot. Dad laughed. Together we picked up all the papers. It was a funny afternoon at dad's office.",
    "word_count": "88",
    "lexile": "410L - 600L",
    "cefr": "A2",
@@ -5246,9 +5268,9 @@
    "go_description": "顶层写 Animal Habitats，下方分出五个栖息地及对应动物：Forest（Birds, Foxes）, Pond（Frogs, Tadpoles）, Desert（Camels）, Grassland（Wide spaces / tall grass）, Ocean（Waves, reefs, deep water）；底部写保护主题：We must protect habitats",
    "go_usage": "帮助学生将各栖息地的特征和动物归类整理，理解'保护栖息地'这一核心主张的依据"
   },
-  "4::theearthsecosystemsadelicatebalance": {
+  "4::theearthsecosystems": {
    "level": "4",
-   "title": "The Earth's Ecosystems: A Delicate Balance",
+   "title": "The Earth's Ecosystems",
    "book_number": "42",
    "genre": "nonfiction",
    "sentence_pattern": "Without [noun phrase], [subject] cannot [verb phrase].",
@@ -5276,10 +5298,10 @@
      "example": "Animals enrich the soil by spreading seeds and breaking down dead plants."
     }
    ],
-   "core_vocab_raw": "coral reef, predator, biodiversity, enrich",
-   "text_7page": "Page 1 Ecosystems are teams in nature. They help Earth stay healthy and alive.\nPage 2 Forests have tall trees and many animals. Trees give food and shelter. Animals help spread seeds.\nPage 3 Grasslands are home to zebras, birds, and insects. Plants feed them. Animals enrich the soil.\nPage 4 Deserts are hot and dry. Few plants grow there. Camels and lizards live in the heat.\nPage 5 Oceans and coral reefs are full of life. Coral reefs are cities under the sea.\nPage 6 Plants and animals need each other in every ecosystem. This keeps nature strong.\nPage 7 When one part is hurt, the whole team suffers. We must protect ecosystems.",
-   "pure_text": "Ecosystems are teams in nature. They help Earth stay healthy and alive. Forests have tall trees and many animals. Trees give food and shelter. Animals help spread seeds. Grasslands are home to zebras, birds, and insects. Plants feed them. Animals enrich the soil. Deserts are hot and dry. Few plants grow there. Camels and lizards live in the heat. Oceans and coral reefs are full of life. Coral reefs are cities under the sea. Plants and animals need each other in every ecosystem. This keeps nature strong. When one part is hurt, the whole team suffers. We must protect ecosystems.",
-   "word_count": "100",
+   "core_vocab_raw": "alive, spread, provide, suffer",
+   "text_7page": "Page 1 Ecosystems are teams in nature. They help Earth stay healthy and alive.\nPage 2 Forests have tall trees and many animals. Trees give food and shelter. Animals help spread seeds.\nPage 3 Grasslands are home to zebras, birds, and insects. Plants provide food for the animals. Animals make soil better for plants.\nPage 4 Deserts are hot and dry. Few plants grow there. Camels and lizards live in the heat.\nPage 5 Oceans and coral reefs are full of life. Coral reefs are cities under the sea.\nPage 6 Plants and animals need each other in every ecosystem. This keeps nature strong.\nPage 7 When one part is hurt, the whole team suffers. We must protect ecosystems.",
+   "pure_text": "Ecosystems are teams in nature. They help Earth stay healthy and alive. Forests have tall trees and many animals. Trees give food and shelter. Animals help spread seeds. Grasslands are home to zebras, birds, and insects. Plants provide food for the animals. Animals make soil better for plants. Deserts are hot and dry. Few plants grow there. Camels and lizards live in the heat. Oceans and coral reefs are full of life. Coral reefs are cities under the sea. Plants and animals need each other in every ecosystem. This keeps nature strong. When one part is hurt, the whole team suffers. We must protect ecosystems.",
+   "word_count": "105",
    "lexile": "410L - 600L",
    "cefr": "A2",
    "decoding_label": "Phonics Rule",
@@ -6184,7 +6206,7 @@
    "core_vocab_raw": "mistake, custom",
    "text_7page": "Fables and Folk Tales\nPage 1 Fables and folk tales have been shared for thousands of years.\nPage 2 Fables often use talking animals to teach an important lesson.\nPage 3 Folk tales tell stories about daily life, traditions, and old customs.\nPage 4 Many stories traveled from country to country as families shared them together.\nPage 5 One funny fable tells about a goat that tries to become a judge. Readers learn from the goat's mistakes.\nPage 6 Today, teachers still share fables and folk tales in classrooms around the world.\nPage 7 These stories help children think carefully, make good choices, and understand people from different places.",
    "pure_text": "Fables and folk tales have been shared for thousands of years. Fables often use talking animals to teach an important lesson. Folk tales tell stories about daily life, traditions, and old customs. Many stories traveled from country to country as families shared them together. One funny fable tells about a goat that tries to become a judge. Readers learn from the goat's mistakes. Today, teachers still share fables and folk tales in classrooms around the world. These stories help children think carefully, make good choices, and understand people from different places.",
-   "word_count": "87",
+   "word_count": "91",
    "lexile": "610L - 800L",
    "cefr": "A2",
    "decoding_label": "Phonics Rule",
@@ -6276,8 +6298,8 @@
     }
    ],
    "core_vocab_raw": "reach, believe, pitcher, proud",
-   "text_7page": "The Crow and the Pitcher\n\nPage 1 A thirsty crow flew over the village one morning. She saw a pitcher with a little water in the yard. A boy was playing nearby.\nPage 2 The crow tried to drink but could not reach the water.\nPage 3 She thought for a moment and had a clever idea. She picked up small stones near the fence with her beak.\nPage 4 She dropped the stones into the pitcher one by one. The water rose a little after each stone dropped.\nPage 5 The boy watched her work from the yard wall. He could not believe his eyes.\nPage 6 At last, the water reached her beak and she drank. She felt much better and sat on a branch.\nPage 7 The crow looked proud and flew away to a tree.",
-   "pure_text": "A thirsty crow flew over the village one morning. She saw a pitcher with a little water in the yard. A boy was playing nearby.\nThe crow tried to drink but could not reach the water.\nShe thought for a moment and had a clever idea. She picked up small stones near the fence with her beak.\nShe dropped the stones into the pitcher one by one. The water rose a little after each stone dropped.\nThe boy watched her work from the yard wall. He could not believe his eyes.\nAt last, the water reached her beak and she drank. She felt much better and sat on a branch.\nThe crow looked proud and flew away to a tree.",
+   "text_7page": "The Crow and the Pitcher\nPage 1 A thirsty crow flew over the village one morning. She saw a pitcher with a little water in the yard. A boy was playing nearby.\nPage 2 The crow tried to drink but could not reach the water.\nPage 3 She thought for a moment and had a clever idea. She picked up small stones near the fence with her beak.\nPage 4 She dropped the stones into the pitcher one by one. The water rose a little after each stone was dropped.\nPage 5 The boy watched her work from the yard wall. He could not believe his eyes.\nPage 6 At last, the water reached her beak and she drank. She felt much better and sat on a branch.\nPage 7 The crow looked proud as she flew away.",
+   "pure_text": "A thirsty crow flew over the village one morning. She saw a pitcher with a little water in the yard. A boy was playing nearby.\nThe crow tried to drink but could not reach the water.\nShe thought for a moment and had a clever idea. She picked up small stones near the fence with her beak.\nShe dropped the stones into the pitcher one by one. The water rose a little after each stone was dropped.\nThe boy watched her work from the yard wall. He could not believe his eyes.\nAt last, the water reached her beak and she drank. She felt much better and sat on a branch.\nThe crow looked proud as she fly away.",
    "word_count": "120",
    "lexile": "410L - 600L",
    "cefr": "A2",
@@ -6323,9 +6345,9 @@
     }
    ],
    "core_vocab_raw": "gold, ashamed, goose, greedy",
-   "text_7page": "The Goose That Laid the Golden Eggs\nPage 1 Tom was a farmer with a special goose on his small farm. Every morning, the goose laid a golden egg.\nPage 2 Tom sold the eggs in town and soon became rich. At first, he felt very happy and thankful.\nPage 3 But after some time, Tom became greedy. He wanted all the gold at once instead of waiting each day.\nPage 4 \"One egg a day is too slow,\" he said. Tom believed there was a lot of gold inside the goose.\nPage 5 So one morning, he killed it. But when he looked inside, he found nothing special at all.\nPage 6 The goose was just an ordinary goose. Now Tom had no goose and no more golden eggs.\nPage 7 He felt sad and ashamed. Tom learned that greed can make people lose everything.",
-   "pure_text": "Tom was a farmer with a special goose on his small farm. Every morning, the goose laid a golden egg. Tom sold the eggs in town and soon became rich. At first, he felt very happy and thankful. But after some time, Tom became greedy. He wanted all the gold at once instead of waiting each day. \"One egg a day is too slow,\" he said. Tom believed there was a lot of gold inside the goose. So one morning, he killed it. But when he looked inside, he found nothing special at all. The goose was just an ordinary goose. Now Tom had no goose and no more golden eggs. He felt sad and ashamed. Tom learned that greed can make people lose everything.",
-   "word_count": "128",
+   "text_7page": "The Goose That Laid the Golden Eggs\nPage 1 Tom was a farmer with a special goose on his small farm. Every morning, the goose laid a golden egg.\nPage 2 Tom sold the eggs in town and soon became rich. At first, he felt very happy and thankful.\nPage 3 But after some time, Tom became greedy. He wanted all the gold at once instead of waiting each day.\nPage 4 \"One egg a day is too slow,\" he said. Tom believed there was a lot of gold inside the goose.\nPage 5 So one morning, he killed it. But when he looked inside, he found nothing special at all.\nPage 6 The goose was just an ordinary goose. Now Tom had no goose and no more golden eggs.\nPage 7 He felt sad and ashamed. Tom learned that greed could make people lose everything.",
+   "pure_text": "Tom was a farmer with a special goose on his small farm. Every morning, the goose laid a golden egg. Tom sold the eggs in town and soon became rich. At first, he felt very happy and thankful. But after some time, Tom became greedy. He wanted all the gold at once instead of waiting each day. \"One egg a day is too slow,\" he said. Tom believed there was a lot of gold inside the goose. So one morning, he killed it. But when he looked inside, he found nothing special at all. The goose was just an ordinary goose. Now Tom had no goose and no more golden eggs. He felt sad and ashamed. Tom learned that greed could make people lose everything.",
+   "word_count": "125",
    "lexile": "410L - 600L",
    "cefr": "A2",
    "decoding_label": "Phonics Rule",
@@ -6419,7 +6441,7 @@
    "core_vocab_raw": "crane, fold, origami, symbol",
    "text_7page": "Paper Cranes\nPage 1 Ravi lived near a busy market in India. One afternoon, he found a small paper crane under a mango tree.\nPage 2 Ravi had learned about Japan at school that week. His teacher explained that origami cranes are symbols of good luck.\nPage 3 Ravi made a quiet wish to visit Japan someday.\nPage 4 He placed the paper crane carefully on his bedroom shelf.\nPage 5 The next day, Ravi started learning how to fold paper cranes by himself.\nPage 6 Every afternoon after school, he practiced making new cranes.\nPage 7 He planned to send his best paper crane to a school in Tokyo. Ravi believed his dream could come true.",
    "pure_text": "Ravi lived near a busy market in India. One afternoon, he found a small paper crane under a mango tree. Ravi had learned about Japan at school that week. His teacher explained that origami cranes are symbols of good luck. Ravi made a quiet wish to visit Japan someday. He placed the paper crane carefully on his bedroom shelf. The next day, Ravi started learning how to fold paper cranes by himself. Every afternoon after school, he practiced making new cranes. He planned to send his best paper crane to a school in Tokyo. Ravi believed his dream could come true.",
-   "word_count": "98",
+   "word_count": "101",
    "lexile": "610L - 800L",
    "cefr": "A2",
    "decoding_label": "Phonics Rule",
@@ -6453,8 +6475,8 @@
     }
    ],
    "core_vocab_raw": "temple, tradition",
-   "text_7page": "Japan\nPage 1 Japan is an island country with about 127 million people. Its capital city is Tokyo, one of the busiest cities in the world.\nPage 2 Mount Fuji is Japan's most famous mountain and stands 3, 776 metres high.\nPage 3 Many Japanese people enjoy eating rice and fish.\nPage 4 Japan is also known for fast trains, smart robots, and modern technology.\nPage 5 In spring, cherry blossoms bloom across the country and streets turn pink.\nPage 6 Many tourists visit temples, gardens, and colorful markets every year.\nPage 7 Visitors often feel amazed by Japan's clean cities, organized streets, and unique culture. Japan combines old traditions with modern life beautifully.",
-   "pure_text": "Japan is an island country with about 127 million people. Its capital city is Tokyo, one of the busiest cities in the world. Mount Fuji is Japan's most famous mountain and stands 3, 776 metres high. Many Japanese people enjoy eating rice and fish. Japan is also known for fast trains, smart robots, and modern technology. In spring, cherry blossoms bloom across the country and streets turn pink. Many tourists visit temples, gardens, and colorful markets every year. Visitors often feel amazed by Japan's clean cities, organized streets, and unique culture. Japan combines old traditions with modern life beautifully.",
+   "text_7page": "Japan\nPage 1 Japan is an island country with about 123 million people. Its capital city is Tokyo, one of the busiest cities in the world.\nPage 2 Mount Fuji is Japan's most famous mountain and stands 3, 776 metres high.\nPage 3 Many Japanese people enjoy eating rice and fish.\nPage 4 Japan is also known for fast trains, smart robots, and modern technology.\nPage 5 In spring, cherry blossoms bloom across the country and streets turn pink.\nPage 6 Many tourists visit temples, gardens, and colorful markets every year.\nPage 7 Visitors often feel amazed by Japan's clean cities, organized streets, and unique culture. Japan combines old traditions with modern life beautifully.",
+   "pure_text": "Japan is an island country with about 123 million people. Its capital city is Tokyo, one of the busiest cities in the world. Mount Fuji is Japan's most famous mountain and stands 3, 776 metres high. Many Japanese people enjoy eating rice and fish. Japan is also known for fast trains, smart robots, and modern technology. In spring, cherry blossoms bloom across the country, and streets turn pink. Many tourists visit temples, gardens, and colorful markets every year. Visitors often feel amazed by Japan's clean cities, organized streets, and unique culture. Japan combines old traditions with modern life beautifully.",
    "word_count": "96",
    "lexile": "610L - 800L",
    "cefr": "A2",
@@ -6546,9 +6568,9 @@
      "example": "In Kuala Lumpur she saw the Petronas Twin Towers."
     }
    ],
-   "core_vocab_raw": "disappeared, durian, kindness, Petronas",
-   "text_7page": "Mia's Trip to Malaysia\nPage 1 Mia traveled to Malaysia with a small backpack. She was excited to see new places.\nPage 2 In Kuala Lumpur, she saw the Petronas Twin Towers. The towers shone brightly and lit up at night.\nPage 3 Mia visited a night market with her friends. The street food smelled wonderful and tasted delicious.\nPage 4 Suddenly her camera disappeared. Then a small monkey grabbed it and ran away.\nPage 5 It climbed a tree and started eating a durian. Everyone laughed at the funny sight.\nPage 6 Mia asked a guide for help. The guide climbed the tree and got the camera back.\nPage 7 Mia thanked him and shared pineapple cake with her friends. She learned about Malaysian culture and the kindness of its people.",
-   "pure_text": "Mia traveled to Malaysia with a small backpack. She was excited to see new places. In Kuala Lumpur, she saw the Petronas Twin Towers. The towers shone brightly and lit up at night. Mia visited a night market with her friends. The street food smelled wonderful and tasted delicious. Suddenly her camera disappeared. Then a small monkey grabbed it and ran away. It climbed a tree and started eating a durian. Everyone laughed at the funny sight. Mia asked a guide for help. The guide climbed the tree and got the camera back. Mia thanked him and shared pineapple cake with her friends. She learned about Malaysian culture and the kindness of its people.",
+   "core_vocab_raw": "shine, grab, durian, guide",
+   "text_7page": "Mia's Trip to Malaysia\nPage 1 Mia traveled to Malaysia with a small backpack. She was excited to see new places.\nPage 2 In Kuala Lumpur, she saw the Petronas Twin Towers. The towers shone brightly and lit up at night.\nPage 3 Mia visited a night market with her friends. The street food smelled wonderful and tasted delicious.\nPage 4 The next day, when she was taking photos, a small monkey grabbed her camera and ran away.\n\nPage 5 It climbed a tree and started eating a durian. Everyone laughed at the funny sight.\nPage 6 Mia asked a guide for help. The guide climbed the tree and got the camera back.\nPage 7 Mia thanked him and shared pineapple cake with him. She learned about Malaysian culture and the kindness of its people.",
+   "pure_text": "Mia traveled to Malaysia with a small backpack. She was excited to see new places. In Kuala Lumpur, she saw the Petronas Twin Towers. The towers shone brightly and lit up at night. Mia visited a night market with her friends. The street food smelled wonderful and tasted delicious. The next day, when she was taking photos, a small monkey grabbed her camera and ran away.\n It climbed a tree and started eating a durian. Everyone laughed at the funny sight. Mia asked a guide for help. The guide climbed the tree and got the camera back. Mia thanked him and shared pineapple cake with him. She learned about Malaysian culture and the kindness of its people.",
    "word_count": "114",
    "lexile": "410L - 600L",
    "cefr": "A2",
@@ -6593,9 +6615,9 @@
      "example": "It has over two hundred million people."
     }
    ],
-   "core_vocab_raw": "vibrant, Amazon, jaguar, million",
-   "text_7page": "Brazil\nPage 1 Brazil is a large and vibrant country in South America. It has over 200 million people.\nPage 2 The Amazon is the world's largest rainforest and is found in Brazil. The Amazon River is very long and wide.\nPage 3 The forest is home to many plants and animals. It produces about 20 percent of Earth's oxygen.\nPage 4 Brasília is the capital city, located in the central highlands. Brazil is famous for Carnival, a colorful festival with music and parades.\nPage 5 Football is very important to Brazilian people. Many animals live in Brazil, including jaguars and macaws.\nPage 6 Visitors can see colorful birds in the rainforest. Portuguese is the official language of Brazil.\nPage 7 Brazil welcomes millions of tourists from around the world every year.",
-   "pure_text": "Brazil is a large and vibrant country in South America. It has over 200 million people. The Amazon is the world's largest rainforest and is found in Brazil. The Amazon River is very long and wide. The forest is home to many plants and animals. It produces about 20 percent of Earth's oxygen. Brasília is the capital city, located in the central highlands. Brazil is famous for Carnival, a colorful festival with music and parades. Football is very important to Brazilian people. Many animals live in Brazil, including jaguars and macaws. Visitors can see colorful birds in the rainforest. Portuguese is the official language of Brazil. Brazil welcomes millions of tourists from around the world every year.",
+   "core_vocab_raw": "vibrant, produce, jaguar, million",
+   "text_7page": "Brazil\nPage 1 Brazil is a large and vibrant country in South America. It has over 200 million people.\nPage 2 The Amazon Rainforest is the world’s largest rainforest, and much of it is in Brazil. The Amazon River is very long and wide.\nPage 3 The forest is home to many plants and animals. The rainforest helps produce oxygen and supports life on Earth.\n\nPage 4 Brasília is the capital city, located in the central highlands. Brazil is famous for Carnival, a colorful festival with music and parades.\nPage 5 Football is very important to Brazilian people. Many animals live in Brazil, including jaguars and macaws.\nPage 6 Visitors can see colorful birds in the rainforest. Portuguese is the official language of Brazil.\nPage 7 Brazil welcomes millions of tourists from around the world every year.",
+   "pure_text": "Brazil is a large and vibrant country in South America. It has over 200 million people. The Amazon Rainforest is the world’s largest rainforest, and much of it is in Brazil. The Amazon River is very long and wide. The forest is home to many plants and animals. The rainforest helps produce oxygen and supports life on Earth.\n Brasília is the capital city, located in the central highlands. Brazil is famous for Carnival, a colorful festival with music and parades. Football is very important to Brazilian people. Many animals live in Brazil, including jaguars and macaws. Visitors can see colorful birds in the rainforest. Portuguese is the official language of Brazil. Brazil welcomes millions of tourists from around the world every year.",
    "word_count": "112",
    "lexile": "610L - 800L",
    "cefr": "A2",
@@ -16912,7 +16934,7 @@
    "level": "1",
    "title": "Parts of a Car",
    "genre": "nonfiction",
-   "reader_text": "“This is a black tire. This is a soft seat. This is a car door. This is a round wheel. A car has many parts. They work together well. Cars take us many places. Cars help us travel fast.”",
+   "reader_text": "“This is a black tire. This is a round wheel. This is a car door. This is a soft seat.  A car has many parts. They work together well. Cars take us many places. Cars help us travel fast.”",
    "word_count": "39",
    "objective": "Build vocabulary for familiar objects; introduce function words (work, travel); categorize parts of a whole.",
    "core_vocab_raw": "tire, seat, door, wheel, soft, round, part",
@@ -21792,20 +21814,19 @@
    "level": "2",
    "title": "Things That Go Together",
    "genre": "nonfiction",
-   "reader_text": "Shoes always come in a pair. Socks always come in a pair. Gloves always come in a pair. Two things that are the same make a pair. I have a pair of red shoes. I wear them together. Pairs help us match things easily.",
-   "word_count": "44",
+   "reader_text": "Shoes always come in a pair. Socks always come in a pair. Gloves always come in a pair, too. Two things that belong together make a pair.  I have a pair of red shoes. I must wear them together.\n One shoe alone is no fun. Together, they are a perfect pair!",
+   "word_count": "51",
    "objective": "Teach early math concept of pairs and matching.",
    "core_vocab_raw": "shoe, sock, glove, come, pair, two, same, wear, together, match",
    "vocab_mastery": [
     "pair",
-    "same",
+    "glove",
     "together",
-    "match"
+    "alone"
    ],
    "vocab_exposure": [
     "shoe",
     "sock",
-    "glove",
     "come",
     "two",
     "wear"

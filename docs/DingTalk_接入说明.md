@@ -28,6 +28,8 @@
 | `DINGTALK_SECRET` | 否 | 加签密钥（安全设置选「加签」时必填） |
 | `STREAMLIT_APP_URL` | 否 | 工作台链接，默认 Cloud 正式址 |
 | `DINGTALK_FEEDBACK_FORM_URL` | 否 | 问题反馈表 URL（Google Form 等），推送里会带链接 |
+| `DINGTALK_PROGRESS_NODE_ID` | 否 | 生产进度表/Timeline 表节点或 URL；默认使用 `Timeline -Dino Reading精读绘本课程整体排期` |
+| `DINGTALK_PROGRESS_SOURCE_URL` | 否 | 生产进度表原始 URL，用于看板展示来源 |
 
 ### Streamlit Cloud
 
@@ -39,11 +41,22 @@ DINGTALK_WEBHOOK_URL = "https://oapi.dingtalk.com/robot/send?access_token=替换
 DINGTALK_SECRET = "SEC替换为加签密钥"
 STREAMLIT_APP_URL = "https://picturebook-auto-43fmumu7yf9lk5tfv2piug.streamlit.app"
 # DINGTALK_FEEDBACK_FORM_URL = "https://forms.google.com/..."  # 可选
+# DINGTALK_PROGRESS_NODE_ID = "https://alidocs.dingtalk.com/i/nodes/7NkDwLng8ZMaj15pHaqGnz5jJKMEvZBY?utm_scene=person_space"
 ```
 
 3. **Save**，等待约 3–5 分钟重新部署。
 
 更多 Secrets 结构见 [`streamlit-cloud-secrets.md`](streamlit-cloud-secrets.md)。
+
+### 进度看板同步
+
+数据看板优先读取钉钉 Timeline 进度缓存，而不是本地输出目录。同步命令：
+
+```powershell
+py scripts/sync_progress_from_dingtalk.py
+```
+
+默认数据源为 `https://alidocs.dingtalk.com/i/nodes/7NkDwLng8ZMaj15pHaqGnz5jJKMEvZBY?utm_scene=person_space`。脚本会读取 `Level 0` 到 `Level 6` 及样书进度工作表，生成 `references/syllabus/progress_status.json`。若钉钉权限或字段映射不可用，网页会降级为本地输出扫描，并明确标注“本地输出扫描（降级）”。
 
 ### 本地开发
 
@@ -55,8 +68,8 @@ STREAMLIT_APP_URL = "https://picturebook-auto-43fmumu7yf9lk5tfv2piug.streamlit.a
 
 | 场景 | 触发位置 | 推送内容 |
 |------|----------|----------|
-| CLI / `batch_runner` 批量 | 每本 `run_one` 完成 | 单本：书名、Level、Book#、成功/部分/失败、占位页、输出路径 |
-| Streamlit **批量生产** | 同上 + 全部结束后 | 单本各一条 + **批量汇总**一条 |
+| CLI / `batch_runner` 批量 | 每本 `run_one` 完成 + 全部结束后 | 单本各一条 + **批量汇总**（含书目清单） |
+| Streamlit **批量生产** | 同上（汇总由 `run_batch` 统一推送） | 单本各一条 + **批量汇总**（含书目清单） |
 | Streamlit **单本组装 ZIP** | Step 7 四件套打包成功 | 单本 4 件套完成 |
 | **上传绘本 · 教辅三件套** | 单本 / 批量上传完成 | 单本各一条；批量结束另有汇总 |
 

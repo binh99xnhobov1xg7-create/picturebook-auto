@@ -157,8 +157,16 @@ _NO_TEXT_AND_LAYOUT_LOCK = (
 )
 
 # ---------- 现行【柔和水彩】画风（默认） ----------
+_TARGET_REFERENCE_STYLE = (
+    "Target reference anchor: polished bright classic children's picture-book watercolor like the attached photo-album pages; "
+    "cozy realistic sets, airy uncluttered composition, warm daylight, figures grounded on the floor/deck in natural sitting, kneeling, leaning or observing poses; "
+    "stable cute rounded child faces, large expressive warm eyes, soft cheeks, natural child proportions, no face drift page to page; "
+    "Tommy has brown tousled short hair, light sky-blue top and khaki pants; Mia has brown high ponytail, purple top and light pants. "
+)
+
 _WATERCOLOR_STYLE_DIRECTIVE = (
     "Art-style directive (HIGHEST priority, overrides any conflicting style wording later): "
+    + _TARGET_REFERENCE_STYLE +
     "soft clean hand-painted healing watercolor children's storybook illustration — warm, cozy, gentle; "
     "thin SOFT brown/sepia outlines (never hard black ink), smooth soft watercolor gradients, "
     "a harmonious medium-low saturation color scheme where colors blend and transition softly like wet "
@@ -176,7 +184,9 @@ _WATERCOLOR_STYLE_DIRECTIVE = (
 )
 # 文末画风回声（精简）：放在末尾再压一遍画风 + 禁文字锁 + 留白锁。
 _WATERCOLOR_STYLE_ECHO = (
-    "\n\nFinal style lock (highest priority): soft clean healing watercolor with colors that blend and transition "
+    "\n\nFinal style lock (highest priority): polished bright classic children's picture-book watercolor; stable rounded cute child faces, natural grounded poses, cozy uncluttered realistic sets; "
+    "Tommy brown hair + light sky-blue top + khaki pants; Mia brown high ponytail + purple top + light pants. "
+    "Soft clean healing watercolor with colors that blend and transition "
     "softly and harmoniously like watercolor washes on paper (never hard color blocks, never a color palette/swatch), "
     "smooth shading, minimal texture, "
     "thin soft brown outlines, cute storybook faces with clean cheeks (at most a very faint natural tint, no strong rosy blush circles); "
@@ -189,34 +199,89 @@ _WATERCOLOR_STYLE_ECHO = (
 # 对齐官方水彩参考素材（VIPKID 场景图）：明亮、通透、纯净的轻水彩——纸白透气、wet-on-wet 轻水痕、
 # 细墨线、低-中饱和干净不灰。2026-06-10 用户拍板【彻底去掉莫兰迪/muted/dusty/grey】，绝不发灰发闷发厚。
 # 保留：细墨线轮廓 + 纸纹在水彩之下 + 可爱低龄脸 + 安全 IP 锚 + 禁文字/留白锁。提示词刻意精简（防 4000 截断）。
+# 2026-06-11 精简（防 4000 截断·根因修复）：原 DIRECTIVE≈981/ECHO≈1075，首尾占用 ~2056 字，
+#   把下游 4000 窗口里留给中文正文(场景/IP/比例/防分身/留白/负向)的额度压到 ~1944。这里去掉
+#   directive 与 echo 之间的重复措辞、收紧同义堆叠，核心画风语义/IP 行/NO-TEXT/LAYOUT 锁全部保留，
+#   把省下的额度让给中文正文，使更多高优先内容存活于截断窗口内。
 _SOP_STYLE_DIRECTIVE = (
     "Art-style (HIGHEST priority, override conflicting style later): bright, airy, clean children's storybook in "
-    "CLEAR TRANSPARENT LIGHT WATERCOLOR — soft, elegant, gentle; fresh pure luminous colors, thin translucent washes, "
-    "soft wet-on-wet blooms, white paper glowing through; simple uncluttered backgrounds kept in SHARP focus "
-    "(deep depth of field — foreground AND background equally clear and readable, never blurred, no bokeh, no shallow "
-    "depth of field), soft lighting, high clarity, minimal texture; delicate fine ink outlines (never heavy black ink), subtle paper grain; clean "
-    "light-to-medium saturation, NOT dusty/grey/muted/muddy/dark/heavy, never neon. Characters: cute young kids, "
-    "rounded faces, warm dark eyes, small nose, gentle smile, clean cheeks (no rosy circles), fluffy hair; storybook, "
-    "never realistic. IP: Tommy, brown-haired, in a pale sky-blue crew-neck sweatshirt; Mia, brown-haired, with a mid-high ponytail tied with a "
-    "purple hair tie, in purple; both age 10.\n\n"
+    + _TARGET_REFERENCE_STYLE +
+    "CLEAR TRANSPARENT LIGHT WATERCOLOR — soft, gentle; fresh pure luminous colors, thin translucent washes, "
+    "soft wet-on-wet blooms, white paper glowing through; uncluttered backgrounds in SHARP focus "
+    "(deep depth of field, foreground AND background equally clear, no bokeh/blur), soft lighting, high clarity, "
+    "minimal texture; delicate fine ink outlines (never heavy black ink), subtle paper grain; clean "
+    "light-to-medium saturation, NOT dusty/grey/muted/dark, never neon. Characters: cute young kids, rounded faces, "
+    "warm dark eyes, small nose, gentle smile, clean cheeks (no rosy circles), fluffy hair; never realistic. "
+    "IP: Tommy, brown-haired, in a pale sky-blue crew-neck sweatshirt; Mia, brown-haired, with a mid-high purple-tied "
+    "ponytail, in purple; both age 10.\n\n"
 )
 _SOP_STYLE_ECHO = (
-    "\n\nFinal style lock: bright airy CLEAR TRANSPARENT LIGHT WATERCOLOR — pure luminous colors, thin translucent "
-    "washes, white paper glowing through, delicate fine ink outlines (never heavy black ink), clean light-to-medium "
-    "saturation (never dusty/grey/muted/dark/neon); cute storybook faces; no noise, dirty texture, blotchy patches, "
+    "\n\nFinal style lock: polished bright classic children's picture-book watercolor; stable rounded cute child faces, natural grounded poses, cozy uncluttered realistic sets; "
+    "Tommy brown hair + light sky-blue top + khaki pants; Mia brown high ponytail + purple top + light pants. "
+    "Bright airy CLEAR TRANSPARENT LIGHT WATERCOLOR — pure luminous colors, thin washes, "
+    "white paper glowing through, delicate fine ink outlines (never heavy black ink), clean light-to-medium "
+    "saturation (never dusty/grey/muted/neon); cute storybook faces; no noise, dirty texture, blotchy patches, "
     "hard color blocks, realistic/adult-like faces.\n\n"
     + _NO_TEXT_AND_LAYOUT_LOCK
 )
 
-# 画风开关（用户拍板 2026-06-10）：SOP_STYLE_MODE=true → SOP 新画风（B：经典墨线+纹理纸+莫兰迪）；
-#   false → 旧版柔和水彩。2026-06-10 用户拍板【以 SOP 新画风 B 为正式默认】→ 默认改 true。
-#   如需临时回退旧水彩画风，设 SOP_STYLE_MODE=false 即可。
-SOP_STYLE_MODE = os.getenv("SOP_STYLE_MODE", "true").strip().lower() in ("1", "true", "yes")
+# ---------- CLEAN【清透·光滑·低纹理·高清晰】正式画风（用户拍板 2026-06-12 · 核心差距修复） ----------
+# 真正且唯一的核心差距：clean 关键词（GPT_STYLE_POSITIVE/NEGATIVE）此前只接进 image_refiner，
+#   没接进正式出图链路（GPT_CLEAN_STYLE_DIRECTIVE/ECHO 走的是 _SOP 水彩，强制墨线+纸纹+wet-on-wet，
+#   与目标 clean 冲突）。这里新增 CLEAN 画风并设为默认，去掉 ink outlines / paper grain / wet-on-wet /
+#   watercolor washes 等冲突字样，换成 smooth shading / refined edges / smooth gradients /
+#   minimal texture / high clarity。
+# 目标关键词（用户原话·逐字 SSOT，全部复用 GPT_STYLE_POSITIVE/NEGATIVE）：
+#   正向: clean illustration, smooth shading, controlled details, minimal texture, high clarity,
+#         refined edges, smooth gradients
+#   负向: noise, grain, artifacts, high frequency detail, dirty texture, oversharpen, blotchy, chaotic details
+# 英文段刻意精简（首≈760 / 尾≈760 含留白锁），把 4000 窗口的额度让给中文 IP/留白/防分身锁。
+_CLEAN_STYLE_DIRECTIVE = (
+    "Art-style (HIGHEST priority, override any conflicting style wording later): "
+    "a bright, airy, CLEAN modern children's storybook illustration — "
+    + GPT_STYLE_POSITIVE + "; "
+    "soft even lighting, fresh pure luminous colors, clean light-to-medium saturation "
+    "(NOT dusty/grey/muted/dark, never neon); smooth flat color fields with soft gradient transitions, "
+    "crisp refined clean edges, uncluttered backgrounds in sharp focus "
+    "(deep depth of field, foreground AND background equally clear, no bokeh/blur). "
+    "NO ink outlines, NO paper grain/texture, NO wet-on-wet watercolor blooms, NO visible brush strokes. "
+    "Characters: cute young kids, round soft child faces, big clean expressive eyes with small catchlights, "
+    "a tiny nose, soft rounded chin, gentle smile, clean smooth cheeks (no rosy circles), soft fluffy hair; "
+    "never realistic. IP: Tommy, brown-haired, in a pale sky-blue crew-neck sweatshirt; Mia, brown-haired, "
+    "with a mid-high purple-tied ponytail, in purple; both age 10. "
+    "Avoid: " + GPT_STYLE_NEGATIVE + ".\n\n"
+)
+_CLEAN_STYLE_ECHO = (
+    "\n\nFinal style lock (highest priority): bright, airy, CLEAN modern children's storybook illustration; "
+    "smooth shading, smooth flat color fields, crisp refined clean edges, smooth gradients, minimal texture, "
+    "high clarity, clean light-to-medium saturation (never dusty/grey/muted/neon); NO ink outlines, NO paper "
+    "grain, NO wet-on-wet blooms, NO noise/grain/blotchy patches; stable round soft cute child faces, natural "
+    "grounded poses, cozy uncluttered sets; Tommy brown hair + light sky-blue top + khaki pants; "
+    "Mia brown high ponytail + purple top + light pants; never semi-realistic or adult-like faces.\n\n"
+    + _NO_TEXT_AND_LAYOUT_LOCK
+)
 
-if SOP_STYLE_MODE:
+# 画风开关（用户拍板 2026-06-12）：STYLE_PROFILE 选画风档——
+#   "clean"（默认·正式）= 清透光滑低纹理高清晰（_CLEAN_STYLE_DIRECTIVE/ECHO）；
+#   "sop"                = 旧 SOP 清透轻水彩+细墨线+纸纹（_SOP_STYLE_DIRECTIVE/ECHO）；
+#   "watercolor"         = 更早的柔和水彩（_WATERCOLOR_STYLE_DIRECTIVE/ECHO）。
+# 向后兼容旧开关 SOP_STYLE_MODE：仅当未显式设 STYLE_PROFILE 时生效——
+#   SOP_STYLE_MODE=false → watercolor；其余（含未设）→ 仍按 STYLE_PROFILE 默认 clean。
+SOP_STYLE_MODE = os.getenv("SOP_STYLE_MODE", "true").strip().lower() in ("1", "true", "yes")
+STYLE_PROFILE = os.getenv("STYLE_PROFILE", "").strip().lower()
+if not STYLE_PROFILE:
+    if not SOP_STYLE_MODE:
+        STYLE_PROFILE = "watercolor"
+    else:
+        STYLE_PROFILE = "clean"
+
+if STYLE_PROFILE == "clean":
+    GPT_CLEAN_STYLE_DIRECTIVE = _CLEAN_STYLE_DIRECTIVE
+    GPT_CLEAN_STYLE_ECHO = _CLEAN_STYLE_ECHO
+elif STYLE_PROFILE in ("sop", "watercolor_sop"):
     GPT_CLEAN_STYLE_DIRECTIVE = _SOP_STYLE_DIRECTIVE
     GPT_CLEAN_STYLE_ECHO = _SOP_STYLE_ECHO
-else:
+else:  # watercolor / 其它
     GPT_CLEAN_STYLE_DIRECTIVE = _WATERCOLOR_STYLE_DIRECTIVE
     GPT_CLEAN_STYLE_ECHO = _WATERCOLOR_STYLE_ECHO
 
@@ -256,13 +321,36 @@ def dedupe_prompt_sentences(text: str) -> str:
 
 
 def enforce_prompt_budget(text: str, label: str = "", soft_limit: int | None = None) -> str:
-    """去重精简提示词；超软上限时打告警（提示下游可能被 4000 截断）。返回精简后的文本。"""
+    """去重精简提示词，并【硬上限裁剪】到软上限以内。返回精简+裁剪后的文本。
+
+    用户拍板 2026-06-11（Principle 3·根因修复）：不再只告警——把每页 prompt 真正压到
+    < soft_limit（默认 3800）。做法是【只从尾部裁剪】：本仓库 prompt 的最高优先锁
+    （★铁律 IP 锁 / ★0 本页核心画面=年代锁·关键贯穿物件·场景 / 【3·主体角色】）一律【前置】，
+    尾部是【第 20 段负向锁】等较低优先内容；这些尾部内容本就会被下游 4000 硬截断切掉，
+    故在 soft_limit 处按句界整段裁掉尾部是【渲染中性】的（模型看到的前段完全不变），
+    既满足"每页 < 3800"，又绝不动到任何前置关键锁。
+    """
     limit = PROMPT_SOFT_LIMIT if soft_limit is None else soft_limit
     s = dedupe_prompt_sentences(text)
-    if len(s) > limit:
-        print(f"[prompt-budget] 警告：{label or '某页'} 提示词 {len(s)} 字符 > {limit}"
-              f"（去重后仍偏长，下游 4000 截断可能切掉尾部画风/留白/防分身锁）", flush=True)
-    return s
+    if len(s) < limit:
+        return s
+    # 在 limit 之前的最后一个【句界】处整段截断（保留完整句子、不留半句），并保证【严格 < limit】。
+    _bounds = ("。", "；", "！", "？", "\n", ".")
+    floor = int(limit * 0.6)
+    end = limit
+    trimmed = s[:limit].rstrip()
+    while end > floor:
+        head = s[:end]
+        cut = max(head.rfind(c) for c in _bounds)
+        if cut <= floor:
+            break
+        if cut + 1 < limit:
+            trimmed = s[:cut + 1].rstrip()
+            break
+        end = cut  # 句界正好压在 limit 上，再往前找一句，确保严格小于
+    print(f"[prompt-budget] {label or '某页'} 提示词 {len(s)}→{len(trimmed)} 字符"
+          f"（已按句界裁掉尾部低优先负向锁至 < {limit}；前置最高优先锁不受影响）", flush=True)
+    return trimmed
 
 # 按 level 选出图后端（用户拍板 2026-06-08：A/B 对比后选定【全级别统一纯 GPT】）：
 #   gpt = 纯 gpt-image-2（画风更干净、内容/人物遵循度高）。L0-2 不再走"即梦换皮"。

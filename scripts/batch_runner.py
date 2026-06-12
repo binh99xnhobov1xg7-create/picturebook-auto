@@ -28,7 +28,7 @@ from config import L02_PIPELINE, OUTPUTS_DIR, resolve_image_backend, resolve_ip_
 from parser import BookOutline, PageSpec, enrich_from_syllabus
 from ppt_builder import build_picturebook_pptx, safe_filename
 from reading_report_builder import attach_rr_questions, build_reading_report
-from seedream_client import generate_image, generate_image_for_level
+from seedream_client import generate_image, generate_image_for_level, ImageHardStop, is_placeholder_image
 from teacher_guide_builder import build_teacher_guide
 from worksheet_builder import attach_worksheet_questions, build_worksheet
 
@@ -88,6 +88,14 @@ class BatchItem:
     theme: str = ""
     fiction_type: str = ""   # 可选强制体裁："fiction" / "non-fiction"（留空则交给 AI 抽取判定）
     frame_mode: str = "A+"   # 框架寓言呈现模式（老师拍板 2026-06-08 默认 A+：封面拿书+中间纯故事+末页结尾&合书）；仅对框架式寓言生效
+    # 可选【确定性覆盖】（调用方显式给定时覆盖 AI 抽取，保证关键锁稳定可复现；留空＝完全交给 AI）：
+    #   key_object：SOP「关键贯穿物件统一描述」(形如 outline.key_object)，把全书同一关键物件锁死（Book15 一道菜）。
+    #   page_eras：{页index: 年代label}，把指定页【年代锁】钉死（Book06 过去/现代/对比），避免 AI 漏判。
+    key_object: dict | None = None
+    page_eras: dict | None = None
+    class_ensemble: dict | None = None
+    recurring_props: list[dict] | None = None
+    page_overrides: dict | None = None
 
     @property
     def name_prefix(self) -> str:
@@ -215,6 +223,28 @@ def run_one(item: BatchItem, out_root: Path, *, mock: bool = False,
     if item.fiction_type:
         outline.fiction_type = item.fiction_type
 
+    # 可选【确定性覆盖】（调用方显式给定时覆盖 AI 抽取，保证关键锁稳定可复现）：
+    #   key_object → 全书贯穿同一关键物件统一描述（Book15 的一道菜）；
+    #   page_eras  → 指定页的年代锁（Book06 过去/现代/对比），防 AI 漏判。
+    if getattr(item, "key_object", None):
+        outline.key_object = item.key_object
+    if getattr(item, "page_eras", None):
+        for _p in outline.pages:
+            if _p.index in item.page_eras and item.page_eras[_p.index]:
+                _p.era = str(item.page_eras[_p.index])
+    if getattr(item, "class_ensemble", None):
+        outline.class_ensemble = item.class_ensemble
+    if getattr(item, "recurring_props", None):
+        outline.recurring_props = item.recurring_props
+    if getattr(item, "page_overrides", None):
+        for _p in outline.pages:
+            _ov = item.page_overrides.get(_p.index) if isinstance(item.page_overrides, dict) else None
+            if not isinstance(_ov, dict):
+                continue
+            for _k, _v in _ov.items():
+                if hasattr(_p, _k) and _v is not None:
+                    setattr(_p, _k, str(_v))
+
     # 框架寓言呈现模式（A / B / A+）：仅对框架式寓言生效（默认 A+）
     outline.frame_mode = item.frame_mode or "A+"
 
@@ -226,8 +256,13 @@ def run_one(item: BatchItem, out_root: Path, *, mock: bool = False,
     if not mock:
         try:
             from cn_prompt_builder import _is_nonfiction
-            from fact_check import fact_check_outline, apply_fixes_to_outline, summarize_issues
-            if _is_nonfiction(outline):
+            from fact_check import (
+                apply_fixes_to_outline,
+                fact_check_outline,
+                should_fact_check_outline,
+                summarize_issues,
+            )
+            if should_fact_check_outline(outline, is_nonfiction=_is_nonfiction(outline)):
                 issues = fact_check_outline(outline)
                 if issues:
                     n = apply_fixes_to_outline(outline, issues)
@@ -247,7 +282,7 @@ def run_one(item: BatchItem, out_root: Path, *, mock: bool = False,
     # 绘本全自动出图（不逐页停）
     # IP 一致性（单锚策略）：gpt-image-2 只吃一张参考图。锁定「全书主角定妆裁切图」为最强单锚，
     # 主角在本页出现时置顶为唯一参考（锁主角=锁全书一家人），本页无任何角色时用全书风格锚兜底。
-    from cn_prompt_builder import book_primary_anchor_ref, book_style_anchor_ref
+    from cn_prompt_builder import book_primary_anchor_ref, book_style_anchor_ref, _nf_body_page
     from seedream_client import crop_character_portrait, build_reference_sheet
     anchor_dir = img_dir / "_anchors"
     prot_ref = book_primary_anchor_ref(outline, ip_age)
@@ -321,6 +356,8 @@ def run_one(item: BatchItem, out_root: Path, *, mock: bool = False,
     for page in outline.pages:
         built = build_cn_page_prompt(page, outline, ip_age)
         built_pages.append((page, built))
+        # 非虚构正文页（除封面外）：Mia/Tommy 仅作封面 IP，正文页不挂主角/trio 参考（Principle 1·2026-06-11）。
+        _nf_body = _nf_body_page(page, outline)
         # 出图前自检门（用户拍板 2026-06-07）：校验主角铁律，违规累计 → 标记人工抽查
         _viol = validate_page_ip_lock(built, outline, ip_age, page)
         if _viol:
@@ -392,9 +429,11 @@ def run_one(item: BatchItem, out_root: Path, *, mock: bool = False,
                     "发色/肤色/服装款式与配色 1:1 精确还原，与往期绘本同一个人。"
                     "【唯一允许改变：该角色的姿势/动作与面部表情】，形象其余不得改动；不要照搬参考图背景或姿势。"
                 )
-            elif anchor is None and prot_ref and Path(prot_ref).exists():
+            elif anchor is None and prot_ref and Path(prot_ref).exists() and not _nf_body:
                 # 本页无任何角色定妆图，但本书有系列主角 → 优先挂【主角新定妆单锚】(mia_10/tommy_10)，
                 #   绝不回退到含旧形象的 trio 兜底图（根因一·2026-06-10：代词页脱模/Tommy 漂深蓝）。
+                # 非虚构正文页【绝不】走主角兜底（用户拍板 2026-06-11：Mia/Tommy 只在封面）：
+                #   否则会把 Mia 定妆图＋"还原 Mia 1:1"说明硬塞到"内页不含主角"的科普页上，自相矛盾。
                 anchor = crop_character_portrait(
                     prot_ref, anchor_dir / f"anchor_p{page.index:02d}.png") or Path(prot_ref)
                 nm = _ip_name(prot_ref) or "主角"
@@ -403,11 +442,17 @@ def run_one(item: BatchItem, out_root: Path, *, mock: bool = False,
                     "发色/肤色/服装款式与配色 1:1 精确还原，与往期绘本同一个人。"
                     "【唯一允许改变：该角色的姿势/动作与面部表情】，形象其余不得改动；不要照搬参考图背景或姿势。"
                 )
-            elif anchor is None and style_anchor:
+            elif anchor is None and style_anchor and not _nf_body:
                 anchor = style_anchor
             page_refs = [anchor] if anchor else []
-        # 即梦页若本页无任何角色定妆图，用全书风格锚兜底
-        if img_backend == "jimeng_refine" and not page_refs and style_anchor:
+        # 非虚构正文页：不挂任何含 Mia/Tommy 的参考图（主角锚 / trio 风格锚都含主角），
+        #   留空参考，纯靠文字 prompt + 英文画风段出图，杜绝把系列主角带进科普内页（Principle 1）。
+        if _nf_body:
+            page_refs = [r for r in page_refs if _is_oneoff_anchor(Path(r))]
+            if not page_refs:
+                note = ""
+        # 即梦页若本页无任何角色定妆图，用全书风格锚兜底（非虚构正文页除外，避免带入主角）
+        if img_backend == "jimeng_refine" and not page_refs and style_anchor and not _nf_body:
             page_refs = [style_anchor]
         page_prompt = built.prompt + ("\n\n" + note if note else "")
         # 定向修图(补人/改色)需要精确 IP 锁：gpt-image-2 修图只吃 1 张参考(草图)，
@@ -468,10 +513,19 @@ def run_one(item: BatchItem, out_root: Path, *, mock: bool = False,
 
     # ---- 阶段 2：并行出图（页间无先后依赖，各写各的 dest）----
     #   断点续跑：已存在且非空的页直接复用；全局 _IMG_SEM 统一节流在途总数。
+    # 成本护栏（用户拍板 2026-06-12）：PB_ONLY_PAGES="0,1,2" → 只【真实出图】这些页索引，
+    #   其余页写 mock 占位（不烧 API），供"先渲封面+前2页自查"。自查 OK 后清空该变量 + resume=True
+    #   续跑，占位页会被 is_placeholder_image 判定为需重生而补出真图。默认未设 → 行为不变（全渲）。
+    _only_pages_env = os.environ.get("PB_ONLY_PAGES", "").strip()
+    _only_pages = {int(x) for x in _only_pages_env.split(",") if x.strip().lstrip("-").isdigit()} if _only_pages_env else None
+
     def _gen_page(job: tuple) -> tuple[int, str, bool]:
         idx, dest, page_prompt, page_refs, fallback_prompt, review_meta = job
-        if resume and (not mock) and dest.exists() and dest.stat().st_size > 0:
+        if resume and (not mock) and dest.exists() and dest.stat().st_size > 0 and not is_placeholder_image(dest):
             return idx, "", True
+        if _only_pages is not None and idx not in _only_pages:
+            generate_image(prompt=fallback_prompt, dest=dest, mock=True, label=f"P{idx} GATED(占位·成本护栏)")
+            return idx, "", False
         try:
             with _img_guard():
                 # 按 level 分流：L0-2 即梦全程出图+GPT视觉自审定向修图；L3-6 走纯 gpt-image-2 单段
@@ -480,8 +534,11 @@ def run_one(item: BatchItem, out_root: Path, *, mock: bool = False,
                                          label=f"{item.name_prefix} P{idx}", mock=mock,
                                          review_meta=review_meta)
             return idx, "", False
+        except ImageHardStop:
+            # 硬停（429/配额/内容审核 400）：绝不写占位图、绝不吞掉——直接上抛，让本书快速失败并上报。
+            raise
         except Exception as e:  # noqa: BLE001
-            # 单页失败不致命：用占位让组装继续，标记待人工抽查
+            # 单页【瞬时】失败不致命：用占位让组装继续，标记待人工抽查
             generate_image(prompt=fallback_prompt, dest=dest, mock=True,
                            label=f"P{idx} FALLBACK")
             return idx, f"[P{idx} img: {e}] ", False
@@ -581,10 +638,33 @@ def run_one(item: BatchItem, out_root: Path, *, mock: bool = False,
             res.eval_level = "warn"
         print(f"[{item.name_prefix}] [WARN] 主角铁律自检命中 {len(ip_lock_issues)} 处，已标记人工抽查")
 
+    rr_ws_final: Path | None = None
+    try:
+        from rr_ws_checker import check_and_pack
+        rrws = check_and_pack(book_dir, outline=outline, do_convert=not mock)
+        if rrws.final_pdf and Path(rrws.final_pdf).exists():
+            rr_ws_final = Path(rrws.final_pdf)
+            res.outputs.append(str(rr_ws_final))
+        if rrws.needs_human_review:
+            res.needs_human_review = True
+            if res.eval_level != "error":
+                res.eval_level = "warn"
+            res.eval_msgs = (
+                res.eval_msgs
+                + [f"[RR/WS] {i.code}: {i.msg}" for i in rrws.issues if i.level in ("error", "warn")][:6]
+            )[:12]
+    except Exception as e:  # noqa: BLE001
+        res.needs_human_review = True
+        if res.eval_level != "error":
+            res.eval_level = "warn"
+        res.eval_msgs = (res.eval_msgs + [f"[RR/WS] 终稿校验跳过：{e}"])[:12]
+
     # 单本 ZIP
     zp = book_dir / f"{pre}_Full_Set.zip"
     with zipfile.ZipFile(zp, "w", zipfile.ZIP_DEFLATED) as z:
-        for f in [pb, ws, rr, tg]:
+        for f in [pb, ws, rr, tg, rr_ws_final]:
+            if not f:
+                continue
             z.write(f, arcname=f.name)
         for img in image_paths:
             if img.exists():
@@ -610,6 +690,7 @@ def run_batch(
     resume: bool = False,
     retries: int = 1,
     progress_cb: Optional[Callable[[int, int, BatchResult], None]] = None,
+    notify_source: str = "batch",
 ) -> dict:
     """跑一批。返回 summary dict（含每本结果 + 日志路径）。
 
@@ -703,6 +784,22 @@ def run_batch(
     log_path = out_root / "batch_log.json"
     log_path.write_text(json.dumps(log, ensure_ascii=False, indent=2), encoding="utf-8")
     log["log_path"] = str(log_path)
+    try:
+        from dingtalk_notify import notify_batch_summary
+
+        notify_batch_summary(
+            total=total,
+            ok=log["ok"],
+            failed=log["failed"],
+            out_root=str(out_root),
+            need_review=log["need_review"],
+            clean_pass=log.get("clean_pass", 0),
+            source=notify_source,
+            books=log["books"],
+            master_zip=master_zip,
+        )
+    except Exception:
+        pass
     return log
 
 
@@ -898,6 +995,7 @@ def run_batch_from_ui() -> None:
     summary = run_batch(
         items, out_root=out_root, concurrency=concurrency, image_concurrency=image_conc,
         flat=flat, make_master_zip=make_zip, mock=mock, resume=resume, progress_cb=_cb,
+        notify_source="web",
     )
     bar.progress(1.0, "完成")
     st.success(
@@ -936,19 +1034,6 @@ def run_batch_from_ui() -> None:
     try:
         from web_app import render_batch_output_table
         render_batch_output_table(summary, expanded=True)
-    except Exception:
-        pass
-    try:
-        from dingtalk_notify import notify_batch_summary
-
-        notify_batch_summary(
-            total=summary.get("total", len(items)),
-            ok=summary.get("ok", 0),
-            failed=summary.get("failed", 0),
-            out_root=summary.get("out_root", ""),
-            need_review=summary.get("need_review", 0),
-            source="batch",
-        )
     except Exception:
         pass
     return summary

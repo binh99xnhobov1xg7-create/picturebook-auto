@@ -71,6 +71,25 @@ from config import (
 _UA = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) picturebook-auto/1.0"}
 
 
+class ImageHardStop(RuntimeError):
+    """硬停异常（用户拍板 2026-06-11）：遇 429/限流/配额/内容审核(HTTP 400/403) 时立即上抛，
+    【绝不重试烧钱】，并让上层批量把本页/本书判为失败而非写 16KB 占位图。
+    仅【瞬时网络错误】(SSL EOF / read-timeout / 连接断 / 5xx / 任务轮询超时) 才走退避重试。
+    """
+
+
+def _classify_image_error(msg: str) -> str:
+    """把异常信息分类为 'hardstop'（限流/配额/内容审核）或 'transient'（瞬时网络）。"""
+    m = (msg or "").lower()
+    is_rate = ("429" in m or "rate limit" in m or "ratelimit" in m
+               or "too many" in m or "quota" in m or "insufficient" in m)
+    is_policy = ("content polic" in m or "content_polic" in m or "moderation" in m
+                 or "safety" in m or "responsibleai" in m or "content_filter" in m
+                 or "http 400" in m or "http 403" in m
+                 or "status_code=400" in m or "status_code=403" in m)
+    return "hardstop" if (is_rate or is_policy) else "transient"
+
+
 # ============================================================
 #  后处理：3:2 直出 → 居中裁 4:3 → 放大到精细印刷 2000×1500（方案A）
 # ============================================================
@@ -657,21 +676,19 @@ def generate_image(
             if do_print:
                 postprocess_4k(dest)   # 方案A：居中裁 4:3 → 升 4K（审图阶段会跳过）
             return dest
+        except ImageHardStop:
+            raise
         except Exception as e:
             last_err = e
+            # 硬停（用户拍板 2026-06-11）：限流/配额/内容审核(400/403) → 立即上抛，绝不重试烧钱。
+            if _classify_image_error(str(e)) == "hardstop":
+                raise ImageHardStop(f"硬停·不重试（{label or 'img'}）：{e}") from e
             if attempt >= max_attempts - 1:
                 break
-            msg = str(e).lower()
-            is_rate = ("429" in msg or "rate" in msg or "limit" in msg
-                       or "too many" in msg or "quota" in msg)
-            # 连接闪断/代理/超时/任务超时：也给更久退避（供应商反馈 gpt-image-2 偶发）
-            is_conn = ("timed out" in msg or "timeout" in msg or "proxy" in msg
-                       or "reset" in msg or "closed connection" in msg
-                       or "max retries" in msg or "connection" in msg)
-            base = 12 if (is_rate or is_conn) else 3
-            time.sleep(base * (attempt + 1) + _rnd.uniform(0, 3))
+            # 仅【瞬时网络错误】(SSL EOF/超时/断连/5xx/轮询超时) 退避重试。
+            time.sleep(8 * (attempt + 1) + _rnd.uniform(0, 3))
 
-    raise RuntimeError(f"gpt-image-2 生图失败（已重试）: {last_err}")
+    raise RuntimeError(f"gpt-image-2 生图失败（已重试瞬时错误 {max_attempts} 次）: {last_err}")
 
 
 def _submit_task(url: str, headers: dict, payload: dict) -> str:

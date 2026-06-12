@@ -54,7 +54,7 @@ from config import (
 from cn_prompt_builder import build_cn_page_prompt, page_display_name
 from doc_preview import render_to_images, extract_text, has_visual_preview
 from parser import BookOutline, PageSpec, enrich_from_syllabus
-from ppt_builder import build_picturebook_pptx, safe_filename
+from ppt_builder import build_picturebook_pptx, safe_filename, swap_reader_images
 from prompt_builder import build_page_prompt  # legacy: fallback only
 from reading_report_builder import attach_rr_questions, build_reading_report
 from seedream_client import generate_image, generate_image_for_level, is_placeholder_image
@@ -68,6 +68,8 @@ from curriculum_display import (
     render_mini_map_html,
     section_to_rows,
 )
+from progress_dashboard import render_progress_dashboard, build_level_stats
+from workbench_ui import render_workbench, workbench_css_block
 
 
 def run_with_live_timer(label: str, fn, *args, tick: float = 0.4, done_note: str = "", **kwargs):
@@ -1747,12 +1749,69 @@ def _render_step6_image_gen(step_num: int, embed: bool = False) -> None:
                 st.warning(f"还有 {n_total - n_locked} 张图未锁定 ✅。")
             else:
                 st.success(f"🎉 全部 {n_total} 张图已锁定。")
+                with st.expander(
+                    "✨ Step 2b · 图片精修 / 终稿编辑 · 正式顺序：确定 8 图 → 精修 → 组装",
+                    expanded=False,
+                ):
+                    st.caption(
+                        "8 页内容确认后，逐页图生图清晰化/平滑（不改构图与剧情）。"
+                        "精修前会自动备份到 `images/_pre_refine/`，精修图就地覆盖 `page_XX.png`。"
+                    )
+                    from image_refiner import USER_REFINE_POSITIVE
+
+                    if "refine_prompt_positive" not in st.session_state:
+                        st.session_state["refine_prompt_positive"] = USER_REFINE_POSITIVE
+                    with st.expander("高级精修词（已锁定，可微调）", expanded=False):
+                        _refine_pos = st.text_area(
+                            "正向（画质）",
+                            value=st.session_state.get("refine_prompt_positive", USER_REFINE_POSITIVE),
+                            height=80,
+                            key="refine_prompt_positive_input",
+                        )
+                    st.session_state["refine_prompt_positive"] = _refine_pos
+                    _, _img_dir_r, _ = _ensure_run_dir()
+                    _pre_dir = _img_dir_r / "_pre_refine"
+                    _refine_done = _pre_dir.is_dir() and any(_pre_dir.glob("page_*.png"))
+                    if st.button(
+                        "🪄 开始全书精修（8 页）",
+                        key="refine_all_pages_btn",
+                        width="stretch",
+                        disabled=mock_imgs,
+                        help="调用即梦 img2img；mock 模式下不可用",
+                    ):
+                        from image_refiner import refine_page_images
+                        with st.spinner("精修中…约 4–8 分钟（8 页串行）"):
+                            refine_page_images(
+                                _img_dir_r.parent,
+                                prompt=_refine_pos,
+                                mock=mock_imgs,
+                            )
+                        st.session_state["scratch_refine_done"] = True
+                        st.success("✅ 全书精修完成，原图已备份至 images/_pre_refine/")
+                        st.rerun()
+
+                    # 精修跑过后 → 明确引导进入组装（精修图已就地覆盖 page_XX.png，组装自动使用）
+                    if _refine_done or st.session_state.get("scratch_refine_done"):
+                        st.success(
+                            "✅ 精修图已就地覆盖 `page_XX.png`。下一步「组装 4 件套」会"
+                            "**自动使用精修后的图**（无需再操作）。"
+                        )
+                        if st.button(
+                            "➡️ 用精修图组装 4 件套",
+                            type="primary",
+                            key="scratch_refine_to_assemble",
+                            width="stretch",
+                        ):
+                            _cur = st.session_state.get("book_unlocked_step", 1)
+                            st.session_state["book_unlocked_step"] = max(_cur, step_num + 1)
+                            st.session_state["book_view_step"] = step_num + 1
+                            st.rerun()
 
             if not embed:
                 _confirm_next_step(
                     step_num,
                     label="✅ 图都满意，进入组装",
-                    help_text="👉 建议先把全部图勾 ✅ 锁定再进入下一步",
+                    help_text="👉 正式顺序：确定 8 图 → （可选）精修 → 组装。建议先把图勾 ✅ 锁定，做过精修的会自动带入。",
                 )
 
 
@@ -2052,19 +2111,41 @@ def _render_batch_mode() -> None:
     """📚 批量生产：N 个大纲 → N×4 件套。详细实现见 batch_runner。"""
     from batch_runner import WEB_BATCH_LIMIT_HINT, WEB_BATCH_MAX
 
-    st.subheader("📚 批量生产（输入 N 个大纲 → 每本自动产出 4 件套）")
+    st.subheader("📚 批量生产（从大纲选多本 → 每本自动产出 4 件套）")
     st.caption(
         f"每本之间数据严格隔离；绘本图全自动生成（标记『待人工抽查』，可事后回单本模式逐页重生）。"
         f" **{WEB_BATCH_LIMIT_HINT}**（Web 单次 ≤ {WEB_BATCH_MAX} 本）"
     )
     st.info(
-        "粘贴多本大纲，每本用 `===` 分隔。每本第一行 = `Title | Level | Book#`，其后为故事原文。"
+        "默认按 **Level + Book# 区间** 从钉钉/本地 syllabus 自动生成批量清单；"
+        "手工粘贴只作为大纲未命中时的高级兜底。"
     )
+    q1, q2, q3 = st.columns([1, 1, 1])
+    with q1:
+        st.selectbox("Level", LEVEL_OPTIONS, index=4, key="batch_pick_level")
+    with q2:
+        st.text_input("起始 Book#", key="batch_pick_start", placeholder="如 15")
+    with q3:
+        st.text_input("结束 Book#", key="batch_pick_end", placeholder="如 19（最多 5 本）")
+    if st.button("📥 按 Level + Book# 区间填入批量清单", key="batch_fill_from_syllabus", use_container_width=True):
+        raw, misses = _batch_blocks_from_syllabus(
+            st.session_state.get("batch_pick_level", ""),
+            st.session_state.get("batch_pick_start", ""),
+            st.session_state.get("batch_pick_end", ""),
+            limit=WEB_BATCH_MAX,
+        )
+        if raw:
+            st.session_state["batch_outlines_raw"] = raw
+            st.success("已从大纲填入批量清单，可微调后预检/生产。")
+        if misses:
+            st.warning("；".join(misses))
+        st.rerun()
     st.text_area(
-        "批量大纲",
+        "批量清单（自动填入，可高级微调）",
         height=220,
         key="batch_outlines_raw",
         placeholder=(
+            "先选择 Level + Book# 区间自动填入；大纲未命中时可手工粘贴：\n\n"
             "Spring Days | L1 | 02\n"
             "Mia sees a flower. ...\n"
             "===\n"
@@ -2207,11 +2288,15 @@ def _build_and_assemble_teaching_kit(
     build_teacher_guide(outline, tg_path)
     _write_teaching_extract_txt(outline, ec, extract_path)
 
+    rrws_result = _run_rr_ws_final_check(run_dir, outline=outline, do_convert=not MOCK_AI_EXTRACT)
+    check_report = _write_rr_ws_check_report(run_dir, rrws_result, name_prefix)
+
     kit_zip = run_dir / f"{name_prefix}_Teaching_Kit.zip"
     with zipfile.ZipFile(kit_zip, "w", zipfile.ZIP_DEFLATED) as z:
-        for p in (ws_path, rr_path, tg_path, extract_path):
-            if p.exists():
-                z.write(p, arcname=p.name)
+        for p in (ws_path, rr_path, tg_path, extract_path, check_report, rrws_result.final_pdf):
+            if p and Path(p).exists():
+                pp = Path(p)
+                z.write(pp, arcname=pp.name)
         for img in image_paths:
             if img.exists():
                 z.write(img, arcname=f"images/{img.name}")
@@ -2219,8 +2304,49 @@ def _build_and_assemble_teaching_kit(
     return {
         "ws": ws_path, "rr": rr_path, "tg": tg_path,
         "extract": extract_path, "zip": kit_zip,
+        "rr_ws_final_pdf": rrws_result.final_pdf or Path(""),
+        "rr_ws_check_report": check_report,
         "name_prefix": name_prefix,  # type: ignore[dict-item]
     }
+
+
+def _run_rr_ws_final_check(book_dir: Path, *, outline: BookOutline | None, do_convert: bool = True):
+    from rr_ws_checker import check_and_pack
+    return check_and_pack(Path(book_dir), outline=outline, do_convert=do_convert)
+
+
+def _write_rr_ws_check_report(book_dir: Path, result, name_prefix: str) -> Path:
+    dest = Path(book_dir) / f"{name_prefix}_RR_WS_Check_Report.txt"
+    lines = [
+        "# RR + Worksheet 教研版自检报告",
+        f"passed={result.passed} errors={result.n_error} warnings={result.n_warn}",
+        f"needs_human_review={getattr(result, 'needs_human_review', True)}",
+        f"converter={result.converter or 'n/a'}",
+        f"final_pdf={result.final_pdf or ''}",
+        "",
+    ]
+    for it in result.issues:
+        lines.append(f"[{it.level}] {it.target}/{it.code}: {it.msg}")
+    dest.write_text("\n".join(lines), encoding="utf-8")
+    return dest
+
+
+def _render_rr_ws_result(result) -> None:
+    if result is None:
+        return
+    if result.n_error:
+        st.warning(f"需人工抽查：{result.n_error} 个 error，{result.n_warn} 个 warning。error 不阻断打包。")
+    elif result.n_warn:
+        st.info(f"可放行但建议人工抽查：{result.n_warn} 个 warning。")
+    else:
+        st.success("✅ RR + Worksheet 自检通过。")
+    for it in result.issues:
+        if it.level == "ok":
+            continue
+        st.markdown(f"- **{it.level.upper()} · {it.target}/{it.code}**：{it.msg}")
+    final_pdf = Path(result.final_pdf or "")
+    if final_pdf.exists():
+        _download_button(final_pdf, "📄 下载教研版 PDF（Worksheet + RR Final）", primary=True)
 
 
 def _parse_upload_zip_book_map(zip_bytes: bytes, extract_root: Path) -> dict[str, list[_UploadBlob]]:
@@ -2348,30 +2474,88 @@ def _extract_uploaded_page_images(uploaded_files, dest_dir: Path) -> list[Path]:
 
 
 def _render_upload_single_mode() -> None:
-    """单本：上传成品绘本 → WS + RR + TG。"""
-    c1, c2 = st.columns([3, 1])
-    with c1:
-        up_title = st.text_input("📕 Book Title *", value="", key="up_title",
-                                 help="用于匹配大纲、文档大标题、文件名。")
-    with c2:
+    """单本：上传已有绘本 → WS + RR + TG。"""
+    pending = st.session_state.pop("_up_pending_syllabus", None)
+    if isinstance(pending, dict):
+        # Streamlit 不允许在同一轮 widget 创建后改它的 key；按钮只写 pending，
+        # 下一轮在 text_input/selectbox 实例化前完成预填。
+        for key, value in pending.items():
+            st.session_state[key] = value
+
+    sig = "|".join([
+        str(st.session_state.get("up_level", LEVEL_OPTIONS[4])),
+        str(st.session_state.get("up_book_number", "")),
+        str(st.session_state.get("up_title", "")).strip().lower(),
+    ])
+    if sig != st.session_state.get("_up_auto_sig"):
+        entry0 = _lookup_syllabus_entry(
+            st.session_state.get("up_level", LEVEL_OPTIONS[4]),
+            st.session_state.get("up_title", ""),
+            st.session_state.get("up_book_number", ""),
+        )
+        if entry0 is not None:
+            st.session_state["up_title"] = entry0.title
+            st.session_state["up_book_number"] = entry0.book_number
+            st.session_state["up_raw_text"] = _format_syllabus_story(entry0)
+            st.session_state["_up_auto_hit"] = True
+            st.session_state["_up_auto_meta"] = _syllabus_meta_markdown(entry0)
+        else:
+            st.session_state["_up_auto_hit"] = False
+        st.session_state["_up_auto_sig"] = sig
+
+    c0, c1, c2 = st.columns([1, 1, 3])
+    with c0:
         up_level = st.selectbox("🎚️ Level *", LEVEL_OPTIONS, index=4, key="up_level")
+    with c1:
+        up_book_number = st.text_input("📖 Book# *", key="up_book_number", placeholder="如 15")
+    with c2:
+        up_title = st.text_input(
+            "📕 Book Title（自动匹配，可微调）",
+            key="up_title",
+            help="优先由 Level + Book# 自动填入；未命中时再手填。",
+        )
+
+    entry = _lookup_syllabus_entry(up_level, up_title, up_book_number)
+    m1, m2 = st.columns([1, 3])
+    with m1:
+        if st.button("📥 匹配大纲", key="up_pull_syllabus", use_container_width=True):
+            if entry is None:
+                st.warning("未命中大纲，请核对 Level / Book# / 书名。")
+            else:
+                st.session_state["_up_pending_syllabus"] = {
+                    "up_title": entry.title,
+                    "up_book_number": entry.book_number,
+                    "up_raw_text": _format_syllabus_story(entry),
+                    "_up_auto_hit": True,
+                    "_up_auto_meta": _syllabus_meta_markdown(entry),
+                    "_up_auto_sig": "",
+                }
+                st.rerun()
+    with m2:
+        meta = st.session_state.get("_up_auto_meta")
+        if meta:
+            st.info(meta)
+        else:
+            st.caption("选择 Level + Book# 后系统会从已同步大纲自动带出书名、故事正文、核心词、句型和 phonics。")
 
     files = st.file_uploader(
-        "上传成品绘本（PDF / PPTX / 多张图片）",
+        "上传已有绘本（PDF / PPTX / 多张图片）",
         type=["pdf", "pptx", "png", "jpg", "jpeg", "webp"],
         accept_multiple_files=True,
         key="up_files",
+        help="上传后系统抽取页图，自动匹配大纲并生成 Worksheet / Reading Report / Teacher's Guide；如要先精修或重出 Reader PPT，请到「绘本图片精修 / 终稿编辑」。",
     )
     up_text = st.text_area(
-        "📝 故事英文原文（强烈建议粘贴：用于出阅读题/正文；留空则尽量用大纲）",
+        "📝 故事英文原文（大纲自动填入，可微调；未命中时再手填）",
         height=160, key="up_raw_text",
-        placeholder="把这本绘本的英文正文粘进来，用于生成阅读理解题与 RR 正文。",
+        placeholder="选择 Level + Book# 后自动填入官方故事；大纲未命中时再粘贴正文。",
     )
     rr_answers = st.checkbox("RR 生成示例答案版（教师版）", value=False, key="up_rr_answers")
 
     with st.expander("📝 教辅 Prompt / 抽取摘要（上传模式说明）", expanded=False):
         st.caption(
-            "**出图 Prompt（image_prompts / SOP 四部分）在此路径不适用**——绘本已存在，系统不重出图。"
+            "**出图 Prompt（image_prompts / SOP 四部分）在此路径不适用**——这里默认不重出绘本本体。"
+            "如果上传的 Reader 仍需清晰化、换图或重出 PPT，请先走「绘本图片精修 / 终稿编辑」。"
             "生成完成后可下载 `*_Teaching_Extract.txt`（词表 · Worksheet 题 · RR 题摘要）。"
         )
 
@@ -2379,14 +2563,14 @@ def _render_upload_single_mode() -> None:
         return
 
     if not up_title.strip():
-        st.error("请填写 Book Title。")
+        st.error("请先选择 Level + Book# 匹配大纲，或手动填写 Book Title。")
         return
     if not files:
         st.error("请至少上传 1 个文件（PDF / PPTX / 图片）。")
         return
 
     outline = _build_outline(
-        title=up_title, level=up_level, book_number="", cefr="", theme="",
+        title=up_title, level=up_level, book_number=up_book_number, cefr="", theme="",
         ip_age=int(resolve_ip_age(up_level)), raw_story=(up_text or "").strip(),
         custom_chars_text="",
     )
@@ -2411,7 +2595,7 @@ def _render_upload_single_mode() -> None:
         paths = run_with_live_timer(
             "生成教辅三件套",
             _build_and_assemble_teaching_kit,
-            title=up_title, level=up_level, book_number="",
+            title=up_title, level=up_level, book_number=up_book_number,
             raw_story=(up_text or "").strip(), image_paths=image_paths,
             run_dir=run_dir, rr_answers=rr_answers, ws_reading_q_count=rqc,
         )
@@ -2428,7 +2612,7 @@ def _render_upload_single_mode() -> None:
         notify_book_complete(
             title=up_title,
             level=up_level,
-            book_number="",
+            book_number=up_book_number,
             status="ok",
             output_path=str(paths.get("zip", "")),
             source="upload",
@@ -2450,13 +2634,27 @@ def _render_upload_download_row(paths: dict) -> None:
                 key="up_dl_zip_main",
             )
     cols = st.columns(4)
-    labels = [("ws", "📋 Worksheet"), ("rr", "📝 RR"), ("tg", "👩‍🏫 TG"), ("extract", "📄 抽取摘要")]
+    labels = [
+        ("ws", "📋 Worksheet"),
+        ("rr", "📝 RR"),
+        ("tg", "👩‍🏫 TG"),
+        ("extract", "📄 抽取摘要"),
+    ]
     for col, (key, label) in zip(cols, labels):
         p = Path(paths.get(key, ""))
         with col:
             if p.exists():
                 with open(p, "rb") as fh:
                     st.download_button(f"⬇️ {label}", fh.read(), file_name=p.name, key=f"up_dl_{key}")
+    extra_cols = st.columns(2)
+    with extra_cols[0]:
+        final_pdf = Path(paths.get("rr_ws_final_pdf", ""))
+        if final_pdf.exists():
+            _download_button(final_pdf, "📄 教研版 PDF", primary=True)
+    with extra_cols[1]:
+        report = Path(paths.get("rr_ws_check_report", ""))
+        if report.exists():
+            _download_button(report, "🧪 RR/WS 自检报告")
 
 
 def _render_upload_batch_mode() -> None:
@@ -2464,15 +2662,36 @@ def _render_upload_batch_mode() -> None:
     from batch_runner import WEB_BATCH_LIMIT_HINT, WEB_BATCH_MAX, validate_web_batch_limit
 
     st.info(
-        f"粘贴多本信息，每本用 `===` 分隔。每本第一行 = `Title | Level | Book#`，其后为故事英文原文。"
+        f"默认按 **Level + Book# 区间** 从大纲生成多本清单。"
         f"再上传 **ZIP（每本子文件夹）** 或 **多个 PDF/PPTX**（按书名模糊匹配，匹配不到则按顺序对应）。"
         f" **{WEB_BATCH_LIMIT_HINT}**（Web 单次 ≤ {WEB_BATCH_MAX} 本）"
     )
+    a1, a2, a3 = st.columns([1, 1, 1])
+    with a1:
+        st.selectbox("Level", LEVEL_OPTIONS, index=4, key="up_batch_pick_level")
+    with a2:
+        st.text_input("起始 Book#", key="up_batch_pick_start", placeholder="如 15")
+    with a3:
+        st.text_input("结束 Book#", key="up_batch_pick_end", placeholder="如 19")
+    if st.button("📥 按 Level + Book# 区间填入书目", key="up_batch_fill_from_syllabus", use_container_width=True):
+        raw, misses = _batch_blocks_from_syllabus(
+            st.session_state.get("up_batch_pick_level", ""),
+            st.session_state.get("up_batch_pick_start", ""),
+            st.session_state.get("up_batch_pick_end", ""),
+            limit=WEB_BATCH_MAX,
+        )
+        if raw:
+            st.session_state["up_batch_raw"] = raw
+            st.success("已从大纲填入书目；上传 ZIP / PDF / PPTX 后即可生成教辅三件套。")
+        if misses:
+            st.warning("；".join(misses))
+        st.rerun()
     st.text_area(
-        "批量书目 + 故事原文",
+        "批量书目 + 故事原文（自动填入，可高级微调）",
         height=220,
         key="up_batch_raw",
         placeholder=(
+            "先用 Level + Book# 区间自动填入；大纲未命中时再手工粘贴：\n\n"
             "How Our Local Government Works | 4 | 18\n"
             "Mia and Tommy visit city hall. ...\n"
             "===\n"
@@ -2645,6 +2864,9 @@ def _render_upload_batch_mode() -> None:
             failed=len(items) - ok_n,
             out_root=str(batch_root),
             source="upload_batch",
+            books=results,
+            master_zip=master_zip_path,
+            deliverable="教辅三件套（WS + RR + TG）",
         )
     except Exception:
         pass
@@ -2678,17 +2900,391 @@ def _render_upload_batch_mode() -> None:
 
 
 def _render_upload_mode() -> None:
-    """块5（用户拍板 2026-06-08）：上传成品绘本(PDF/PPT/散图) → 只生成 Worksheet + RR + TG（不重出绘本本体）。"""
-    st.subheader("📤 已有绘本 · 生成教辅（Worksheet + Reading Report + Teacher's Guide）")
+    """上传已有绘本(PDF/PPT/散图) → 生成 Worksheet + RR + TG。"""
+    st.subheader("📤 已有绘本 · 生成教辅（WS / RR / TG）")
     st.caption(
-        "💡 已有成品绘本时用这里：上传 **PDF / PPTX / 散图**（最多 8 张：封面+7 页，允许缺页）。"
-        "系统**不重出绘本本体**，只产出 WS + RR + TG。单词/拼读 **逐字取自该 Level 大纲**。"
+        "上传现有 Reader PDF/PPTX/散图后，系统自动匹配大纲并生成 Worksheet、Reading Report 和 TG。"
+        "如果需要先精修图片或重出 Reader PPT，请走「绘本图片精修 / 终稿编辑」。"
     )
     tab_single, tab_batch = st.tabs(["📕 单本", "📚 批量"])
     with tab_single:
         _render_upload_single_mode()
     with tab_batch:
         _render_upload_batch_mode()
+
+
+def _render_refine_mode() -> None:
+    """绘本图片精修 / 终稿编辑：上传或选择任意绘本目录，统一去噪 / 平滑 / 提清晰。
+
+    复用 image_refiner.refine_page_images：逐页图生图，1:1 保留构图/剧情/IP，只优化画质。
+    """
+    from image_refiner import (
+        refine_page_images,
+        USER_REFINE_POSITIVE,
+        USER_REFINE_NEGATIVE,
+    )
+
+    st.subheader("✨ 绘本图片精修 / 终稿编辑")
+    st.caption(
+        "适用于草稿、终稿或已发布绘本：上传 PDF/PPTX/散图，或选择已有输出目录，"
+        "系统按固定清晰化口径精修分页图，并尽量重出 Reader PPT。"
+    )
+
+    with st.container(border=True):
+        st.markdown("##### 上传现有绘本后精修")
+        st.caption("支持 PDF / PPTX / 散图。上传后会先抽取为 8 张页图，再进行画质精修；PPTX 会保留为重出 Reader 的模板。")
+        u0, u1, u2 = st.columns([1, 1, 3])
+        with u0:
+            up_level = st.selectbox("Level", LEVEL_OPTIONS, index=4, key="refine_up_level")
+        with u1:
+            up_book = st.text_input("Book#", key="refine_up_book", placeholder="如 15")
+        with u2:
+            up_title = st.text_input("Book Title", key="refine_up_title", placeholder="用于命名与重出 Reader PPT")
+        up_story = st.text_area(
+            "7 页故事原文（可选；无 PPTX 模板时用于生成 Reader 文本框）",
+            key="refine_up_story",
+            height=90,
+            placeholder="可留空；若要从 PDF/散图直接生成 Reader PPT，建议粘贴 7 句故事。",
+        )
+        upload_files = st.file_uploader(
+            "上传 PDF / PPTX / 多张图片",
+            type=["pdf", "pptx", "png", "jpg", "jpeg", "webp"],
+            accept_multiple_files=True,
+            key="refine_upload_files",
+        )
+        if st.button("📥 导入并准备精修", key="refine_import_upload", use_container_width=True):
+            if not upload_files:
+                st.error("请先上传 PDF / PPTX / 图片。")
+            else:
+                safe_title = safe_filename(up_title or f"L{up_level}_Book{up_book}" or "Refine_Upload")
+                upload_dir = OUTPUTS_DIR / f"refine_upload_{safe_title}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+                img_dir = upload_dir / "images"
+                upload_dir.mkdir(parents=True, exist_ok=True)
+                image_paths = _extract_uploaded_page_images(upload_files, img_dir)
+                for f in upload_files:
+                    if f.name.lower().endswith(".pptx"):
+                        (upload_dir / f"{safe_title}_Reader.pptx").write_bytes(f.getvalue())
+                        break
+                st.session_state["refine_uploaded_dir"] = str(upload_dir)
+                st.session_state["refine_uploaded_meta"] = {
+                    "title": up_title or safe_title,
+                    "level": up_level,
+                    "book_number": up_book,
+                    "story": up_story,
+                }
+                if image_paths:
+                    st.success(f"已导入 {len(image_paths)} 张页图，可在下方直接精修。")
+                    st.rerun()
+                else:
+                    st.error("没有从上传文件中解析出页图，请检查 PDF/PPTX/图片内容。")
+
+    stats = build_level_stats()
+    by_level = stats.get("by_level") or {}
+    candidates = []
+    uploaded_dir_raw = st.session_state.get("refine_uploaded_dir", "")
+    uploaded_dir = Path(uploaded_dir_raw) if uploaded_dir_raw else None
+    if uploaded_dir and uploaded_dir.is_dir() and (uploaded_dir / "images").is_dir():
+        candidates.append((f"上传绘本 · {uploaded_dir.name}", uploaded_dir))
+    for lvl in sorted(by_level.keys(), key=lambda x: int(x) if str(x).isdigit() else 99):
+        for b in by_level[lvl]:
+            if not b.output_dir:
+                continue
+            img_dir = b.output_dir / "images"
+            if not img_dir.is_dir():
+                continue
+            n_pages = len(list(img_dir.glob("page_*.png")))
+            if n_pages >= 7:
+                candidates.append((f"L{b.level} · B{b.book_number or '—'} · {b.title}", b.output_dir))
+
+    if not candidates:
+        st.info("暂无满足条件（≥7 张分页图）的绘本。请先上传 PDF/PPTX/散图，或在单本标准生产中完成出图。")
+        return
+
+    q = st.text_input("🔍 搜索绘本", key="refine_search", placeholder="书名 / Book#")
+    ql = (q or "").lower().strip()
+    filtered = [(lbl, d) for lbl, d in candidates if not ql or ql in lbl.lower()]
+    if not filtered:
+        st.warning("没有匹配的绘本，换个关键词试试。")
+        return
+
+    labels = [lbl for lbl, _ in filtered]
+    sel_lbl = st.selectbox("选择要精修的绘本", labels, key="refine_book_sel")
+    sel_dir = dict(filtered)[sel_lbl]
+
+    with st.expander("高级精修词（已锁定，可微调）", expanded=False):
+        st.caption("默认已使用固定清晰化 prompt；老师通常无需手写。仅在确需调整画质口径时修改。")
+        pos = st.text_area("正向（画质）", value=USER_REFINE_POSITIVE, key="refine_pos", height=80)
+        neg = st.text_area("负向（--no）", value=USER_REFINE_NEGATIVE, key="refine_neg", height=80)
+
+    pos = st.session_state.get("refine_pos", USER_REFINE_POSITIVE)
+    neg = st.session_state.get("refine_neg", USER_REFINE_NEGATIVE)
+    mock = bool(st.session_state.get("s6_mock_imgs", not bool(JIMENG_API_KEY)))
+    if mock:
+        st.warning("⚠️ 当前为 mock 模式（未检测到即梦 Key），精修只走占位流程，不消耗额度。")
+
+    if st.button("🚀 精修图片并重出 Reader PPT", type="primary", key="refine_run"):
+        try:
+            with st.spinner("逐页 img2img 精修中…（约 1-2 分钟）"):
+                out = refine_page_images(sel_dir, pos, negative=neg, mock=mock)
+            st.session_state["refine_last_dir"] = str(sel_dir)
+            st.session_state.pop("refine_reader_pptx", None)
+            st.success(f"✅ 精修完成，共 {len(out)} 页。原图已备份到 images/_pre_refine/。")
+
+            # 自动用精修后的 page_XX.png 就地重建绘本 Reader.pptx（只换图，文字/版式/页码全保留）。
+            readers = sorted(sel_dir.glob("*_Reader.pptx"))
+            readers = [r for r in readers if not r.name.startswith("_")]
+            if not readers:
+                imgs = sorted((sel_dir / "images").glob("page_*.png"))
+                meta = st.session_state.get("refine_uploaded_meta") or {}
+                if len(imgs) >= 8:
+                    outline = _build_outline(
+                        title=str(meta.get("title") or sel_dir.name),
+                        level=str(meta.get("level") or LEVEL_OPTIONS[4]),
+                        book_number=str(meta.get("book_number") or ""),
+                        cefr="",
+                        theme="",
+                        ip_age=int(resolve_ip_age(str(meta.get("level") or LEVEL_OPTIONS[4]))),
+                        raw_story=str(meta.get("story") or ""),
+                        custom_chars_text="",
+                    )
+                    story_lines = [x.strip() for x in str(meta.get("story") or "").splitlines() if x.strip()]
+                    for i, line in enumerate(story_lines[:7], start=1):
+                        outline.pages[i].text = line
+                    reader = sel_dir / f"{safe_filename(outline.title)}_Reader.pptx"
+                    build_picturebook_pptx(outline, imgs[:8], reader)
+                    st.session_state["refine_reader_pptx"] = str(reader)
+                    st.success(f"📘 已用精修图生成 Reader PPT：`{reader.name}`")
+                else:
+                    st.info("📄 本书目录下未找到 Reader PPT 模板，且页图不足 8 张；已完成图片精修，暂未重出 PPT。")
+            else:
+                reader = readers[0]
+                try:
+                    backup = reader.with_name("_pre_refine_reader.pptx")
+                    if not backup.exists():
+                        shutil.copy2(reader, backup)
+                    with st.spinner("用精修图重建绘本 PPT…"):
+                        swap_reader_images(reader, sel_dir / "images")
+                    st.session_state["refine_reader_pptx"] = str(reader)
+                    st.success(
+                        f"📘 已用精修图重建绘本 PPT：`{reader.name}`"
+                        f"（原版已备份为 `{backup.name}`）。"
+                    )
+                except Exception as pe:  # noqa: BLE001
+                    st.error(f"重建绘本 PPT 失败（精修图已落盘，可手动重组装）：{pe}")
+        except Exception as e:  # noqa: BLE001
+            st.error(f"精修失败：{e}")
+
+    last = st.session_state.get("refine_last_dir")
+    if last and Path(last) == sel_dir:
+        imgs = sorted((sel_dir / "images").glob("page_*.png"))
+        if imgs:
+            st.markdown("##### 精修后预览")
+            cols = st.columns(4)
+            for i, fp in enumerate(imgs[:8]):
+                with cols[i % 4]:
+                    st.image(str(fp), caption=fp.stem, use_container_width=True)
+        reader_path = st.session_state.get("refine_reader_pptx")
+        if reader_path and Path(reader_path).exists():
+            st.markdown("##### 重出的绘本 PPT")
+            _download_button(Path(reader_path), "📘 下载重出的绘本 PPT", primary=True)
+            st.caption("如需 Worksheet / RR / TG，请到「已有绘本生成三件套」上传此 Reader 后生成教辅。")
+        else:
+            st.caption("如需教辅或终稿合并，请继续走「已有绘本生成三件套」与「RR+Worksheet 教研版自检/PDF合并」。")
+
+
+def _outline_from_syllabus_or_session(level: str, book_number: str, title: str = "") -> BookOutline | None:
+    """RR/WS 上传质检用：优先按 Level+Book# 构造 outline，失败再用当前会话 outline。"""
+    entry = _lookup_syllabus_entry(level, title, book_number)
+    if entry is not None:
+        story = _format_syllabus_story(entry)
+        outline = _build_outline(
+            title=entry.title,
+            level=entry.level or level,
+            book_number=entry.book_number or book_number,
+            cefr=getattr(entry, "cefr", "") or "",
+            theme=getattr(entry, "genre", "") or "",
+            ip_age=int(resolve_ip_age(entry.level or level)),
+            raw_story=story,
+            custom_chars_text="",
+        )
+        enrich_from_syllabus(outline)
+        return outline
+    outline = st.session_state.get("outline")
+    return outline if isinstance(outline, BookOutline) else None
+
+
+def _save_rrws_uploads(
+    *,
+    level: str,
+    book_number: str,
+    title: str,
+    worksheet_file,
+    report_file,
+    reader_file,
+    tg_file,
+) -> Path:
+    """把老师上传的 WS/RR/Reader/TG 存成 checker 可识别的目录结构。"""
+    safe_title = safe_filename(title or f"L{level}_Book{book_number}" or "Manual_Upload")
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    out_dir = OUTPUTS_DIR / f"rrws_upload_{safe_title}_{stamp}"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    prefix = f"Level {str(level).lstrip('L')}_Book{book_number or 'NA'}_{safe_title}"
+
+    ws_path = out_dir / f"{prefix}_Worksheet.pptx"
+    rr_path = out_dir / f"{prefix}_Reading_Report.docx"
+    ws_path.write_bytes(worksheet_file.getvalue())
+    rr_path.write_bytes(report_file.getvalue())
+
+    if reader_file is not None:
+        ext = Path(reader_file.name).suffix.lower()
+        reader_name = f"{prefix}_Reader{ext if ext in ('.pdf', '.pptx') else Path(reader_file.name).suffix}"
+        (out_dir / reader_name).write_bytes(reader_file.getvalue())
+    if tg_file is not None:
+        ext = Path(tg_file.name).suffix or ".docx"
+        (out_dir / f"{prefix}_Teachers_Guide{ext}").write_bytes(tg_file.getvalue())
+    return out_dir
+
+
+def _render_rr_ws_mode() -> None:
+    """独立终稿质检：AI 自检 RR/WS → 人工签字 → WPS PDF 合并。"""
+    st.subheader("🧪 RR + Worksheet 教研版自检 / PDF 合并")
+    st.caption(
+        "用于已生成四件套后的终稿质检：系统对照绘本/BookOutline 检查 Worksheet 与 Reading Report，"
+        "带 warning 也会按标准标记『人工抽查』；签字后用 WPS 转 PDF，并合并为 `*_Worksheet+RR_Final.pdf`。"
+    )
+    st.info("mock/无 API 模式下不会调用 WPS COM；真实环境会串行转换，并在转换前清理 WPS/WPP/ET 残留进程。")
+
+    with st.expander("📤 老师上传 WS / RR / Reader / TG 后质检", expanded=True):
+        u1, u2, u3 = st.columns([1, 1, 3])
+        with u1:
+            up_level = st.selectbox("Level", LEVEL_OPTIONS, index=4, key="rrws_up_level")
+        with u2:
+            up_book = st.text_input("Book#", key="rrws_up_book", placeholder="如 15")
+        with u3:
+            entry = _lookup_syllabus_entry(up_level, "", up_book)
+            default_title = entry.title if entry else ""
+            if default_title and not st.session_state.get("rrws_up_title"):
+                st.session_state["rrws_up_title"] = default_title
+            up_title = st.text_input("Book Title（大纲自动匹配，可微调）", key="rrws_up_title")
+        if entry is not None:
+            st.info(_syllabus_meta_markdown(entry))
+        else:
+            st.caption("先填 Level + Book#；若大纲未命中，可手动补书名并上传 Reader/outline 作为依据。")
+
+        f1, f2 = st.columns(2)
+        with f1:
+            ws_file = st.file_uploader("Worksheet 文件（PPTX，必传）", type=["pptx"], key="rrws_ws_upload")
+            reader_file = st.file_uploader(
+                "绘本 / Reader / outline 依据（PDF/PPTX，建议传）",
+                type=["pdf", "pptx"],
+                key="rrws_reader_upload",
+                help="用于人工核对与 AI 三方一致性依据；PPTX 可被程序抽文本，PDF 主要作留档/人工依据。",
+            )
+        with f2:
+            rr_file = st.file_uploader("Reading Report 文件（DOCX，必传）", type=["docx"], key="rrws_rr_upload")
+            tg_file = st.file_uploader(
+                "Teacher Guide / TG（可选）",
+                type=["docx", "pdf"],
+                key="rrws_tg_upload",
+                help="TG 不进入 Worksheet+RR 合并 PDF；仅作教研留档或人工核对。",
+            )
+        st.caption("标准：warning / 人工抽查不阻断打包；缺 WS 或 RR 才无法生成合并 PDF。")
+
+        s1, s2, s3 = st.columns([1, 1, 2])
+        with s1:
+            up_rr_ok = st.checkbox("RR 已人工审阅", key="rrws_up_rr_signed")
+        with s2:
+            up_ws_ok = st.checkbox("Worksheet 已人工审阅", key="rrws_up_ws_signed")
+        with s3:
+            st.text_input("签字人（可选）", key="rrws_up_signer", placeholder="姓名或工号")
+
+        can_convert_upload = bool(up_rr_ok and up_ws_ok and not MOCK_AI_EXTRACT)
+        if st.button("🧪 校验上传文件并生成教研版 PDF", type="primary", key="rrws_upload_run", use_container_width=True):
+            if ws_file is None or rr_file is None:
+                st.error("请至少上传 Worksheet PPTX 和 Reading Report DOCX。")
+            else:
+                try:
+                    title_for_upload = up_title or default_title or f"L{up_level} Book {up_book}"
+                    upload_dir = _save_rrws_uploads(
+                        level=up_level,
+                        book_number=up_book,
+                        title=title_for_upload,
+                        worksheet_file=ws_file,
+                        report_file=rr_file,
+                        reader_file=reader_file,
+                        tg_file=tg_file,
+                    )
+                    outline = _outline_from_syllabus_or_session(up_level, up_book, title_for_upload)
+                    with st.spinner("校验上传文件并打包中…"):
+                        result = _run_rr_ws_final_check(upload_dir, outline=outline, do_convert=can_convert_upload)
+                    report = _write_rr_ws_check_report(upload_dir, result, upload_dir.name)
+                    st.session_state["rrws_last_result"] = result
+                    st.session_state["rrws_last_report"] = str(report)
+                    st.session_state["rrws_last_upload_dir"] = str(upload_dir)
+                    _render_rr_ws_result(result)
+                    _download_button(report, "🧪 下载自检报告")
+                    st.caption(f"上传文件已保存到：`{upload_dir}`")
+                except Exception as e:  # noqa: BLE001
+                    st.error(f"上传质检失败：{e}")
+
+    stats = build_level_stats()
+    by_level = stats.get("by_level") or {}
+    candidates = []
+    for lvl in sorted(by_level.keys(), key=lambda x: int(x) if str(x).isdigit() else 99):
+        for b in by_level[lvl]:
+            if b.output_dir and b.steps.get("ws") and b.steps.get("rr"):
+                label = f"L{b.level} · B{b.book_number or '—'} · {b.title}"
+                candidates.append((label, b.output_dir, b))
+    if not candidates:
+        st.info("暂无可校验书目：需要先生成 Worksheet 与 Reading Report。")
+        return
+
+    q = st.text_input("🔍 搜索书目", key="rrws_search", placeholder="书名 / Book# / Level")
+    ql = (q or "").lower().strip()
+    filtered = [(lbl, d, b) for lbl, d, b in candidates if not ql or ql in lbl.lower()]
+    if not filtered:
+        st.warning("没有匹配的书目。")
+        return
+    labels = [x[0] for x in filtered]
+    sel = st.selectbox("选择要质检/合并的书", labels, key="rrws_book_sel")
+    sel_dir = next(d for lbl, d, _b in filtered if lbl == sel)
+
+    c1, c2, c3 = st.columns([1, 1, 2])
+    with c1:
+        rr_ok = st.checkbox("RR 已人工审阅", key="rrws_rr_signed")
+    with c2:
+        ws_ok = st.checkbox("Worksheet 已人工审阅", key="rrws_ws_signed")
+    with c3:
+        st.text_input("签字人（可选）", key="rrws_signer", placeholder="姓名或工号")
+
+    do_convert = bool(rr_ok and ws_ok and not MOCK_AI_EXTRACT)
+    if not rr_ok or not ws_ok:
+        st.warning("请先完成 RR / Worksheet 人工审阅签字。未签字时可做检查，但不会转 PDF 合并。")
+    if MOCK_AI_EXTRACT:
+        st.warning("当前 MOCK_AI_EXTRACT=true 或未配置文本 Key，将跳过 AI/WPS 实转，仅验证导入与规则路径。")
+
+    if st.button("🧪 校验 & 出教研版 PDF", type="primary", key="rrws_run", use_container_width=True):
+        outline = st.session_state.get("outline")
+        try:
+            with st.spinner("RR/WS 自检与 PDF 合并中…"):
+                result = _run_rr_ws_final_check(sel_dir, outline=outline, do_convert=do_convert)
+            name_prefix = Path(sel_dir).name
+            report = _write_rr_ws_check_report(sel_dir, result, name_prefix)
+            st.session_state["rrws_last_result"] = result
+            st.session_state["rrws_last_report"] = str(report)
+            _render_rr_ws_result(result)
+            if report.exists():
+                _download_button(report, "🧪 下载自检报告")
+        except Exception as e:  # noqa: BLE001
+            st.error(f"RR/WS 终稿校验失败：{e}")
+
+    last = st.session_state.get("rrws_last_result")
+    if last:
+        with st.expander("最近一次校验结果", expanded=False):
+            _render_rr_ws_result(last)
+            report_p = Path(st.session_state.get("rrws_last_report", ""))
+            if report_p.exists():
+                _download_button(report_p, "🧪 下载自检报告", primary=False)
 
 
 def _render_global_standards_panel() -> None:
@@ -3009,14 +3605,17 @@ def _chips(items, kind: str = "") -> None:
 
 
 _MAIN_NAV = {
+    "workbench": "生产平台",
+    "dashboard": "数据看板",
+    "work": "经典制作（旧入口）",
     "overview": "概览",
     "background": "背景",
     "features": "功能",
     "onboarding": "新手引导",
     "metrics": "指标",
-    "work": "开始制作",
     "settings": "设置",
 }
+_COMPACT_NAV_KEYS = ("workbench", "dashboard", "work")
 _LEGACY_NAV = {"guide": "overview", "faq": "onboarding"}
 _AUTH_COOKIE = "dino_auth"
 _NAV_COOKIE = "dino_tab"
@@ -3166,6 +3765,16 @@ def _clear_storage(storage_key: str) -> None:
     )
 
 
+def _compact_nav_items() -> dict[str, str]:
+    """精简顶栏：默认仅工作台 + 经典制作；勾选 web_full_nav 或 WEB_FULL_NAV=1 显示全部。"""
+    show_all = bool(st.session_state.get("web_full_nav")) or os.getenv(
+        "WEB_FULL_NAV", ""
+    ).lower() in ("1", "true", "yes")
+    if show_all:
+        return dict(_MAIN_NAV)
+    return {k: _MAIN_NAV[k] for k in _COMPACT_NAV_KEYS if k in _MAIN_NAV}
+
+
 def _init_main_nav() -> None:
     """冷启动/刷新时从 URL 恢复 tab；会话已存在后不再覆写（避免吞掉 radio 点击）。"""
     _storage_bridge(_NAV_COOKIE, "tab")
@@ -3174,7 +3783,7 @@ def _init_main_nav() -> None:
     tab = st.query_params.get("tab", "")
     tab = _LEGACY_NAV.get(tab, tab)
     if tab not in _MAIN_NAV:
-        tab = "overview"
+        tab = "workbench"
     st.session_state["main_nav"] = tab
     st.session_state["main_nav_radio"] = _MAIN_NAV[tab]
 
@@ -3200,13 +3809,140 @@ def _set_main_nav(key: str) -> None:
     st.session_state["main_nav"] = key
     label = _MAIN_NAV[key]
     if st.session_state.get("main_nav_radio") != label:
-        st.session_state["main_nav_radio"] = label
+        try:
+            st.session_state["main_nav_radio"] = label
+        except Exception:
+            # 顶栏 radio 已实例化（页面中途点导航切换）：直接写会抛
+            # StreamlitAPIException。存为 pending，下一次 run 在创建 radio 前应用。
+            st.session_state["_pending_nav_radio"] = label
     st.query_params["tab"] = key
     _persist_storage(_NAV_COOKIE, key)
 
 
 def _go_to_nav(key: str) -> None:
     _set_main_nav(key)
+    st.rerun()
+
+
+def _level_for_work_form(level: str) -> str:
+    """看板 L0 → Smart；其余与 LEVEL_OPTIONS 对齐。"""
+    d = str(level or "").strip().lstrip("L")
+    if d == "0":
+        return "Smart"
+    return d if d in LEVEL_OPTIONS else LEVEL_OPTIONS[0]
+
+
+def _prefill_book_session(
+    *,
+    level: str,
+    book_number: str,
+    title: str,
+    run_dir: str | Path | None = None,
+) -> None:
+    """预填 Level / Book# / 书名 / run_dir + 工作台选中态。"""
+    st.session_state["input_level"] = _level_for_work_form(level)
+    st.session_state["input_title"] = (title or "").strip()
+    st.session_state["input_book_number"] = str(book_number or "").strip()
+    st.session_state["wb_selected"] = (
+        str(level).strip().lstrip("L"),
+        str(book_number or "").strip(),
+        (title or "").strip(),
+    )
+    if run_dir:
+        rd = Path(run_dir)
+        if rd.is_dir():
+            st.session_state["run_dir"] = str(rd)
+            st.session_state["run_name_prefix"] = rd.name
+    st.session_state["_syllabus_auto_key"] = ""
+    st.session_state.pop("_syllabus_auto_hit", None)
+    st.session_state["_work_prefill_pending"] = True
+
+
+def _prefill_and_go_workbench(*, level: str, book_number: str, title: str) -> None:
+    """进度看板 / 工作台树选中 → 预填并留在工作台。"""
+    _prefill_book_session(level=level, book_number=book_number, title=title)
+    _set_main_nav("workbench")
+    st.rerun()
+
+
+def _prefill_and_go_work(*, level: str, book_number: str, title: str) -> None:
+    """进入经典制作页（完整 AI 抽取 + 出图向导）。"""
+    _prefill_book_session(level=level, book_number=book_number, title=title)
+    _set_main_nav("work")
+    st.rerun()
+
+
+def _wb_lock_image(page_idx: int, locked: bool) -> None:
+    image_results = st.session_state.get("image_results") or {}
+    entry = dict(image_results.get(page_idx) or {})
+    entry["locked"] = locked
+    image_results[page_idx] = entry
+    st.session_state.image_results = image_results
+
+
+def _wb_regen_image(page_idx: int) -> None:
+    mock = bool(st.session_state.get("s6_mock_imgs", not bool(JIMENG_API_KEY)))
+    _regenerate_single_image(page_idx, mock)
+
+
+def _wb_refine_image(page_idx: int) -> None:
+    mock = bool(st.session_state.get("s6_mock_imgs", not bool(JIMENG_API_KEY)))
+    _review_fix_single(page_idx, mock)
+
+
+def _wb_pull_syllabus() -> None:
+    """工作台「从大纲拉取正文」→ 复用经典制作同一逻辑。"""
+    _maybe_autofill_syllabus_story(force=True)
+    st.session_state["_syllabus_pull_msg"] = (
+        "miss" if not st.session_state.get("_syllabus_auto_hit") else None
+    )
+    st.rerun()
+
+
+def _wb_generate_story_draft() -> None:
+    """工作台内联「AI 生成故事草稿」。"""
+    title = (st.session_state.get("input_title") or "").strip()
+    if not title:
+        st.session_state["_wb_story_err"] = "❌ 请先填写 Book Title"
+        st.rerun()
+        return
+    level = st.session_state.get("input_level", LEVEL_OPTIONS[0])
+    draft = run_with_live_timer(
+        "AI 生成故事草稿",
+        generate_story_draft,
+        title,
+        level,
+        "",
+        done_note="可在下方微调",
+    )
+    st.session_state["_pending_story_draft"] = draft
+    st.session_state["_syllabus_auto_hit"] = False
+    st.rerun()
+
+
+def _wb_on_select_book(
+    level: str,
+    book_number: str,
+    title: str,
+    art: object | None = None,
+) -> None:
+    """工作台左侧选书 → 预填制作表单与 run_dir。"""
+    run_dir = getattr(art, "output_dir", None) if art else None
+    _prefill_book_session(
+        level=level,
+        book_number=book_number,
+        title=title,
+        run_dir=run_dir,
+    )
+
+
+def _wb_open_legacy_nav(nav_key: str) -> None:
+    """工作台「更多」→ 旧版分页；非精简 Tab 时展开顶栏。"""
+    if nav_key not in _MAIN_NAV:
+        return
+    if nav_key not in _COMPACT_NAV_KEYS:
+        st.session_state["web_full_nav"] = True
+    _set_main_nav(nav_key)
     st.rerun()
 
 
@@ -3217,8 +3953,9 @@ def _render_app_header_compact() -> None:
         f"<img src='data:image/png;base64,{b64}' class='nav-dino-logo' alt='Kidde'/>"
         if b64 else "<span class='nav-dino-fallback'>🦕</span>"
     )
-    nav = st.session_state.get("main_nav", "overview")
-    labels = list(_MAIN_NAV.values())
+    nav = st.session_state.get("main_nav", "workbench")
+    nav_items = _compact_nav_items()
+    labels = list(nav_items.values())
 
     st.markdown('<div id="app-header-anchor"></div>', unsafe_allow_html=True)
     with st.container(border=True):
@@ -3237,6 +3974,10 @@ def _render_app_header_compact() -> None:
                 unsafe_allow_html=True,
             )
         with c_nav:
+            # 应用 pending nav（来自页面中途点导航切换）—— 必须在 radio 实例化「之前」写入。
+            _pending = st.session_state.pop("_pending_nav_radio", None)
+            if _pending is not None and _pending in labels and st.session_state.get("main_nav_radio") != _pending:
+                st.session_state["main_nav_radio"] = _pending
             st.markdown('<div class="main-nav-wrap">', unsafe_allow_html=True)
             st.radio(
                 "主导航",
@@ -3256,14 +3997,14 @@ def _render_app_header_compact() -> None:
                     st.session_state.pop("_authed_user", None)
                     _clear_storage(_AUTH_COOKIE)
                     st.rerun()
-            elif nav != "work":
+            elif nav not in ("work", "workbench"):
                 st.button(
-                    "开始制作 →",
+                    "工作台 →",
                     key="hdr_start",
                     type="primary",
                     use_container_width=True,
                     on_click=_set_main_nav,
-                    args=("work",),
+                    args=("workbench",),
                 )
             st.markdown("</div>", unsafe_allow_html=True)
 
@@ -3605,11 +4346,84 @@ def main() -> None:
     if "outline" not in st.session_state:
         st.session_state.outline = None
 
-    nav = st.session_state.get("main_nav", "overview")
+    nav = st.session_state.get("main_nav", "workbench")
+
+    if nav == "workbench":
+        if st.session_state.pop("_work_prefill_pending", False):
+            _maybe_autofill_syllabus_story(force=True)
+
+        st.markdown(
+            "<div class='prod-mode-note'><b>生产平台</b>：默认从「单本标准生产」开始，"
+            "后续可做图片精修/Reader 终稿编辑，再做已有绘本三件套、"
+            "RR/Worksheet 教研版自检与批量高级入口。</div>",
+            unsafe_allow_html=True,
+        )
+        wb_options = [
+            "📖 单本标准生产（默认）",
+            "✨ 绘本图片精修 / 终稿编辑",
+            "📤 已有绘本生成三件套",
+            "🧪 RR+Worksheet 教研版自检/PDF合并",
+            "📚 批量生产（高级 · ≤5 本）",
+        ]
+        if st.session_state.get("workbench_mode") not in wb_options:
+            st.session_state["workbench_mode"] = wb_options[0]
+        wb_mode = st.radio(
+            "制作模式",
+            wb_options,
+            horizontal=True,
+            key="workbench_mode",
+            label_visibility="collapsed",
+            help=(
+                "主流程：单本标准生产 → 图片精修/Reader 终稿编辑 → 已有绘本三件套 "
+                "→ RR/Worksheet 教研版自检 → 批量生产高级入口。"
+            ),
+        )
+
+        if wb_mode == "📚 批量生产（高级 · ≤5 本）":
+            _render_batch_mode()
+            if st.session_state.get("batch_last_summary"):
+                render_batch_output_table(st.session_state["batch_last_summary"], expanded=True)
+                _render_batch_prompt_downloads(st.session_state["batch_last_summary"])
+            _render_footer()
+            return
+        if wb_mode == "✨ 绘本图片精修 / 终稿编辑":
+            _render_refine_mode()
+            _render_footer()
+            return
+        if wb_mode == "📤 已有绘本生成三件套":
+            _render_upload_mode()
+            _render_footer()
+            return
+        if wb_mode == "🧪 RR+Worksheet 教研版自检/PDF合并":
+            _render_rr_ws_mode()
+            _render_footer()
+            return
+
+        render_workbench(
+            on_enter_work=_prefill_and_go_work,
+            on_select_book=_wb_on_select_book,
+            on_open_nav=_wb_open_legacy_nav,
+            on_lock_image=_wb_lock_image,
+            on_regen_image=_wb_regen_image,
+            on_refine_image=_wb_refine_image,
+            on_syllabus_change=_on_syllabus_identity_change,
+            on_pull_syllabus=_wb_pull_syllabus,
+            on_generate_story_draft=_wb_generate_story_draft,
+            level_options=LEVEL_OPTIONS,
+        )
+        _render_footer()
+        return
 
     if nav == "overview":
         _render_overview_section()
         _render_faq_accordion()
+        _render_footer()
+        return
+    if nav == "dashboard":
+        render_progress_dashboard(
+            on_start_book=lambda: _go_to_nav("workbench"),
+            on_open_book=_prefill_and_go_workbench,
+        )
         _render_footer()
         return
     if nav == "background":
@@ -3655,11 +4469,14 @@ def main() -> None:
     # ---------- 模式：单本 / 批量 ----------
     mode = st.radio(
         "制作模式",
-        ["📖 单本制作", "📚 批量生产", "📤 已有绘本 · 教辅三件套"],
+        ["📖 单本制作", "✨ 图片精修 / 终稿编辑", "📤 已有绘本 · 教辅三件套", "📚 批量生产"],
         horizontal=True,
         key="produce_mode",
-        help="单本：逐本精调出图 + 4 件套。批量：一次跑多本大纲 + 出图。已有绘本：PDF/PPT/散图 → 只出 WS+RR+TG（支持单本/批量）。",
+        help="单本：逐本精调出图 + 4 件套。精修：上传/选择 PDF、PPTX 或 8 图，重出 Reader PPT。已有绘本：自动匹配大纲并生成 WS/RR/TG。批量放在高级入口。",
     )
+    if mode == "✨ 图片精修 / 终稿编辑":
+        _render_refine_mode()
+        return
     if mode == "📚 批量生产":
         _render_batch_mode()
         if st.session_state.get("batch_last_summary"):
@@ -3686,6 +4503,9 @@ def main() -> None:
         st.session_state.input_book_number = ""
     if "input_title" not in st.session_state:
         st.session_state.input_title = ""
+
+    if st.session_state.pop("_work_prefill_pending", False):
+        _maybe_autofill_syllabus_story(force=True)
 
     _maybe_autofill_syllabus_story()
     _pending_draft = st.session_state.pop("_pending_story_draft", None)
@@ -5907,11 +6727,17 @@ def _run_docs_assembly() -> None:
     tg_path = run_dir / f"{name_prefix}_Teachers_Guide.docx"
     build_teacher_guide(outline, tg_path)
 
-    # 5. ZIP
+    # 5. RR/WS 终稿质检 + ZIP
+    progress.progress(4.5 / 5, "RR/WS 自检与教研版 PDF...")
+    rrws_result = _run_rr_ws_final_check(run_dir, outline=outline, do_convert=not MOCK_AI_EXTRACT)
+    rrws_report = _write_rr_ws_check_report(run_dir, rrws_result, name_prefix)
+
     zip_path = run_dir / f"{name_prefix}_Full_Set.zip"
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as z:
-        for path in [pb_path, ws_path, rr_path, tg_path]:
-            z.write(path, arcname=path.name)
+        for path in [pb_path, ws_path, rr_path, tg_path, rrws_report, rrws_result.final_pdf]:
+            if path and Path(path).exists():
+                pp = Path(path)
+                z.write(pp, arcname=pp.name)
         # 也带上图片（屏幕用 PNG）
         for img in image_paths:
             z.write(img, arcname=f"images/{img.name}")
@@ -5952,6 +6778,11 @@ def _run_docs_assembly() -> None:
         _download_button(tg_path, "📖 Teacher Guide")
     with col5:
         _download_button(zip_path, "📦 全套 ZIP", primary=True)
+
+    st.markdown("##### 🧪 RR + Worksheet 教研版自检")
+    _render_rr_ws_result(rrws_result)
+    if rrws_report.exists():
+        _download_button(rrws_report, "🧪 下载 RR/WS 自检报告")
 
     _render_book_prompt_download_panel(key_prefix="asm_prompt")
 
@@ -6038,6 +6869,7 @@ def _download_button(path: Path, label: str, *, primary: bool = False) -> None:
             mime="application/octet-stream",
             type="primary" if primary else "secondary",
             width="stretch",
+            key=f"dl_{hashlib.md5((str(path.resolve()) + label).encode('utf-8')).hexdigest()[:12]}",
         )
 
 
@@ -6373,6 +7205,64 @@ def _format_syllabus_story(entry) -> str:
     return "\n".join(sentences[:7] if len(sentences) > 7 else sentences)
 
 
+def _syllabus_meta_markdown(entry) -> str:
+    """把命中的大纲关键字段压成老师可读摘要。"""
+    if entry is None:
+        return ""
+    vocab = ", ".join((entry.vocab_words() or [])[:12]) or "—"
+    grammar = (
+        getattr(entry, "syntax_focus", "")
+        or getattr(entry, "sentence_pattern", "")
+        or getattr(entry, "sentence_frames", "")
+        or "—"
+    )
+    phonics = getattr(entry, "phonics_rule", "") or getattr(entry, "sor", "") or "—"
+    return (
+        f"**已命中大纲**：L{entry.level} · B{entry.book_number or '—'} · {entry.title}  \n"
+        f"核心词：{vocab}  \n"
+        f"句型/语法：{grammar}  \n"
+        f"Phonics/SoR：{phonics}"
+    )
+
+
+def _entry_batch_block(entry) -> str:
+    """生成 batch_runner 可解析的单本块：Title | Level | Book# + 故事正文。"""
+    story = _format_syllabus_story(entry)
+    header = f"{entry.title} | {entry.level} | {entry.book_number or ''}".strip()
+    return f"{header}\n{story}".strip()
+
+
+def _batch_blocks_from_syllabus(level: str, start: str, end: str, *, limit: int = 5) -> tuple[str, list[str]]:
+    """按 Level + Book# 区间生成批量输入文本，最多 limit 本。"""
+    try:
+        from syllabus import get_by_number
+    except Exception:
+        return "", ["大纲模块不可用"]
+    lvl = _syllabus_level_digit(level)
+    try:
+        a, b = int(float(str(start).strip())), int(float(str(end).strip()))
+    except Exception:
+        return "", ["请填写有效的起止 Book#"]
+    if a > b:
+        a, b = b, a
+    blocks: list[str] = []
+    misses: list[str] = []
+    for book_no in range(a, b + 1):
+        if len(blocks) >= limit:
+            misses.append(f"已达到单次最多 {limit} 本，后续书目未加入")
+            break
+        entry = get_by_number(lvl, book_no)
+        if entry is None:
+            misses.append(f"L{lvl} B{book_no} 未命中")
+            continue
+        block = _entry_batch_block(entry)
+        if block:
+            blocks.append(block)
+        else:
+            misses.append(f"L{lvl} B{book_no} 无故事正文")
+    return "\n===\n".join(blocks), misses
+
+
 def _lookup_syllabus_entry(level: str, title: str, book_number: str):
     """按 Book# 优先、书名模糊次之，从官方 syllabus 取条目。"""
     try:
@@ -6595,17 +7485,17 @@ def _inject_css() -> None:
         """<style>
         @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@500;600;700;800&display=swap');
         :root{
-          --brand:__KID_ORANGE__; --brand-dark:#c96800; --brand-tint:#fff4e8;
-          --brand-2:__KID_GREEN__; --accent:__KID_GREEN__; --accent-tint:#eef7eb;
-          --primary-fixed:#ffd9a8;
-          --ink:#0b1c30; --muted:#3c4a45; --faint:#6c7a75;
-          --line:#dce9ff; --line-soft:#eff4ff; --card:#ffffff;
-          --bg:#f8f9ff;
-          --radius:14px; --radius-lg:20px;
-          --shadow-sm:0 1px 2px rgba(11,28,48,.04),0 1px 3px rgba(11,28,48,.05);
-          --shadow-md:0 4px 12px rgba(11,28,48,.06),0 2px 4px rgba(11,28,48,.04);
-          --shadow-lg:0 18px 40px -12px rgba(241,130,0,.15);
-          --ring:0 0 0 3px rgba(241,130,0,.16);
+          --brand:#111827; --brand-dark:#030712; --brand-tint:#f3f4f6;
+          --brand-2:__KID_GREEN__; --accent:#111827; --accent-tint:#f9fafb;
+          --primary-fixed:#f3f4f6;
+          --ink:#111827; --muted:#4b5563; --faint:#6b7280;
+          --line:#e5e7eb; --line-soft:#f3f4f6; --card:#ffffff;
+          --bg:#ffffff;
+          --radius:10px; --radius-lg:14px;
+          --shadow-sm:0 1px 2px rgba(0,0,0,.04);
+          --shadow-md:0 1px 3px rgba(0,0,0,.06);
+          --shadow-lg:0 16px 32px -18px rgba(0,0,0,.25);
+          --ring:0 0 0 3px rgba(17,24,39,.14);
           --fs-base:15.5px; --fs-sm:13.5px; --fs-lg:17px;
         }
         html, body, [class*="css"]{
@@ -6614,10 +7504,7 @@ def _inject_css() -> None:
         }
         .stApp{ font-size:var(--fs-base); }
         .stApp{
-          background:
-            radial-gradient(900px 480px at 88% -8%, rgba(255,217,168,.14), transparent 60%),
-            radial-gradient(820px 460px at -6% 4%, rgba(241,130,0,.05), transparent 55%),
-            var(--bg);
+          background:var(--bg);
         }
         .block-container { max-width: 1340px; padding-top: 1.2rem; }
 
@@ -6633,9 +7520,9 @@ def _inject_css() -> None:
         #app-header-anchor + div[data-testid="stVerticalBlock"] > div[data-testid="stVerticalBlockBorderWrapper"]{
           border:1px solid var(--line) !important;
           border-radius:var(--radius-lg) !important;
-          padding:10px 16px 6px !important;
-          margin-bottom:18px !important;
-          background:linear-gradient(120deg, rgba(255,255,255,.96), rgba(255,244,232,.88)) !important;
+          padding:8px 14px 6px !important;
+          margin-bottom:12px !important;
+          background:#fff !important;
           box-shadow:var(--shadow-md) !important;
         }
         .app-topbar-brand{ display:flex; align-items:center; gap:12px; min-width:0; }
@@ -6650,7 +7537,7 @@ def _inject_css() -> None:
         .main-nav-wrap [role="radiogroup"]{
           display:flex; flex-wrap:wrap; justify-content:flex-end; align-items:center;
           gap:2px; padding:4px; border-radius:999px;
-          background:rgba(18,24,38,.04); border:1px solid var(--line);
+          background:#f9fafb; border:1px solid var(--line);
         }
         .main-nav-wrap input[type="radio"],
         [data-testid="stRadio"] [role="radiogroup"][aria-label="主导航"] input[type="radio"]{
@@ -6672,12 +7559,12 @@ def _inject_css() -> None:
           display:none !important; width:0 !important; min-width:0 !important; margin:0 !important; padding:0 !important;
         }
         .main-nav-wrap [role="radiogroup"] > label:hover{
-          color:var(--brand) !important; background:rgba(241,130,0,.08) !important;
+          color:var(--brand) !important; background:#fff !important;
         }
         .main-nav-wrap [role="radiogroup"] > label:has(input:checked){
-          color:var(--brand) !important;
-          background:linear-gradient(135deg, rgba(241,130,0,.16), rgba(94,159,73,.10)) !important;
-          box-shadow:0 1px 6px rgba(241,130,0,.18), inset 0 0 0 1px rgba(241,130,0,.22) !important;
+          color:#fff !important;
+          background:var(--brand) !important;
+          box-shadow:0 1px 2px rgba(0,0,0,.12) !important;
         }
         .main-nav-wrap [role="radiogroup"] > label > div:last-child,
         .main-nav-wrap [role="radiogroup"] > label p{
@@ -7142,7 +8029,7 @@ def _inject_css() -> None:
         ::-webkit-scrollbar-thumb{ background:#d7dbe3; border-radius:8px; border:3px solid var(--bg); }
         ::-webkit-scrollbar-thumb:hover{ background:#c2c8d2; }
         ::selection{ background:rgba(241,130,0,.22); }
-        .hero, [data-testid="stVerticalBlockBorderWrapper"]{ animation:rise .42s cubic-bezier(.2,.7,.2,1) both; }
+        .hero{ animation:rise .42s cubic-bezier(.2,.7,.2,1) both; }
         @keyframes rise{ from{ opacity:0; transform:translateY(8px); } to{ opacity:1; transform:translateY(0); } }
         @media (prefers-reduced-motion: reduce){ *{ animation:none !important; } }
 
@@ -7295,6 +8182,115 @@ def _inject_css() -> None:
 
         @media (prefers-reduced-motion: reduce){
           .hero-dino, .hero-icon::after, .hero-title, .stApp::before{ animation:none !important; }
+        }
+
+        /* ---------- 进度看板（Dino CMS IDE 风格） ---------- */
+        .dash-hero{
+          background:linear-gradient(135deg,rgba(241,130,0,.08),rgba(16,185,129,.06));
+          border:1px solid var(--line); border-radius:16px; padding:18px 20px; margin-bottom:14px;
+        }
+        .dash-kicker{
+          font-size:11px; font-weight:800; letter-spacing:.1em; text-transform:uppercase;
+          color:var(--brand); margin-bottom:6px;
+        }
+        .dash-hero h2{ margin:0 0 8px; font-size:21px; }
+        .dash-hero p{ margin:0; color:var(--muted); font-size:13px; line-height:1.65; max-width:920px; }
+        .dash-track{
+          position:relative; height:8px; border-radius:8px; background:var(--line-soft);
+          margin:6px 0 10px; overflow:hidden;
+        }
+        .dash-fill{
+          position:absolute; left:0; top:0; height:100%; border-radius:8px;
+          background:linear-gradient(90deg,var(--brand),var(--brand-2));
+          transition:width .45s ease;
+        }
+        .dash-step{
+          background:var(--card); border:1px solid var(--line); border-radius:11px;
+          padding:10px 11px; min-height:78px; box-shadow:var(--shadow-sm);
+        }
+        .dash-step .n{
+          width:22px; height:22px; border-radius:7px; background:var(--brand); color:#fff;
+          display:grid; place-items:center; font-size:11px; font-weight:800; margin-bottom:7px;
+        }
+        .dash-step b{ display:block; font-size:12.5px; margin-bottom:3px; }
+        .dash-step span{ color:var(--muted); font-size:10.5px; line-height:1.4; display:block; }
+
+        /* ============================================================
+           FIX (2026-06-12): bordered st.container 内嵌在 st.columns 里时
+           出现「空白边框框 + 内容掉到框下方」的渲染错位。根因：Streamlit 用
+           stVerticalBlockBorderWrapper 做布局测量，对该 wrapper 施加 transform/
+           animation 会干扰其在 flex column 内的高度测量，导致边框框塌缩、内容
+           外溢到框下。解决：在列容器（stHorizontalBlock）内禁用这些装饰性
+           transform/animation；卡片在其他位置的悬浮动效保持不变。
+           ============================================================ */
+        [data-testid="stHorizontalBlock"] [data-testid="stVerticalBlockBorderWrapper"],
+        [data-testid="stHorizontalBlock"] [data-testid="stVerticalBlockBorderWrapper"]:hover{
+          animation:none !important;
+          transform:none !important;
+        }
+        """
+        + workbench_css_block()
+        + """
+        /* ---------- 可读性增强：生产按钮 / radio / 上传 / 折叠标题 ---------- */
+        .prod-mode-note{
+          margin:2px 0 10px;padding:10px 12px;border-radius:12px;
+          background:#fff7ed;border:1px solid #d97706;color:#1f2937;
+          font-size:13.5px;line-height:1.55;
+        }
+        [data-testid="stWidgetLabel"] label p,
+        [data-testid="stRadio"] p,
+        [data-testid="stSelectbox"] p,
+        [data-testid="stTextInput"] p,
+        [data-testid="stTextArea"] p,
+        [data-testid="stFileUploader"] p{
+          color:#111827 !important;font-weight:700 !important;
+        }
+        .stButton > button,
+        [data-testid="stBaseButton-secondary"]{
+          color:#111827 !important;
+          border-color:#94a3b8 !important;
+          background:#ffffff !important;
+          font-weight:700 !important;
+        }
+        .stButton > button[kind="primary"],
+        [data-testid="stBaseButton-primary"],
+        .stFormSubmitButton > button,
+        [data-testid="stBaseButton-primaryFormSubmit"]{
+          background:linear-gradient(135deg,#b45309,#c2410c) !important;
+          border-color:#7c2d12 !important;
+          color:#ffffff !important;
+          box-shadow:0 10px 22px -8px rgba(124,45,18,.55) !important;
+        }
+        [data-testid="stFileUploader"] section{
+          background:#fff7ed !important;
+          border:1.5px solid #d97706 !important;
+        }
+        [data-testid="stFileUploader"] button{
+          color:#111827 !important;
+          border-color:#92400e !important;
+          font-weight:800 !important;
+        }
+        [data-testid="stExpander"] summary,
+        [data-testid="stExpander"] summary p{
+          color:#111827 !important;
+          font-weight:800 !important;
+        }
+        [data-testid="stCaptionContainer"], .stCaption, small,
+        .block-container .stMarkdown p{
+          color:#334155 !important;
+        }
+        [data-testid="stRadio"] [role="radiogroup"] label{
+          color:#1f2937 !important;
+          border-color:#cbd5e1 !important;
+        }
+        [data-testid="stRadio"] [role="radiogroup"] label:has(input:checked){
+          color:#7c2d12 !important;
+          border-color:#b45309 !important;
+          background:#ffedd5 !important;
+        }
+        textarea, input, [data-baseweb="select"] > div, [data-baseweb="input"] > div{
+          color:#111827 !important;
+          border-color:#cbd5e1 !important;
         }
         </style>"""
         .replace("__KID_ORANGE__", _kid_orange)

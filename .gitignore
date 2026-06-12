@@ -25,3 +25,38 @@ scripts/_ec_cache_*.pkl
 *_backup.docx
 *_backup.pptx
 .streamlit/secrets-cloud-paste.toml
+
+# ---- 本地一次性脚本/调试/产物（下划线前缀，不入库）----
+# 根目录的临时脚本与日志
+/_*.py
+/_*.txt
+# 根目录的临时产物目录（dryrun / 渲染输出 / 抽取缓存等）
+/_*/
+# scripts/ 下的临时脚本与日志（保留已纳入的 _run_l4_ic_batch.py）
+scripts/_*.py
+scripts/_*.txt
+scripts/_dry*/
+scripts/_dryrun*/
+!scripts/_run_l4_ic_batch.py
+# 角色/参考图的非破坏性备份与对比临时图
+*.bak.png
+references/official_style/_cmp/
+references/official_style/_jimeng_ref/
+
+# 通用备份文件
+*.bak
+*.bak.*
+
+# 运行时状态/缓存/日志（本地产物，不入库）
+logs/
+references/syllabus/_dingtalk_cache/
+references/syllabus/progress_status.json
+
+# scripts/ 下的临时目录与其它后缀临时文件
+scripts/_*/
+scripts/_*.ps1
+scripts/_*.err
+
+# IP 锚图的低清副本与画风截图（已有高清正样，无需入库）
+assets/ip_library/*.refsheet.png
+assets/ip_library/_style_anchor_*

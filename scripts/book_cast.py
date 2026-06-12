@@ -62,7 +62,7 @@ _ANIMATE = re.compile(
     #   原先不在角色词表 → 不登记为一次性角色 → 无锚无统一外观 → 逐页漂移）。单复数都收。
     r"scientists?|researchers?|rangers?|guides?|vets?|veterinarians?|biologists?|"
     r"zoologists?|botanists?|explorers?|zookeepers?|keepers?|inventors?|mayors?|"
-    r"governors?|councou?ncillors?|professors?|principals?|coach(?:es)?|conductors?|"
+    r"governors?|councou?ncillors?|professors?|principals?|trainers?|coach(?:es)?|conductors?|"
     r"weavers?|painters?|sculptors?|carpenters?|tailors?|fishermen|fisherman|"
     r"merchants?|engineers?|reporters?|journalists?|photographers?|librarians?|"
     r"curators?|gardeners?|volunteers?|workers?|helpers?|visitors?|"
@@ -81,6 +81,8 @@ _PLACE_OR_NONPERSON = re.compile(
     r"netherlands|belgium|sweden|norway|denmark|finland|poland|turkey|thailand|vietnam|"
     r"indonesia|philippines|malaysia|singapore|kenya|nigeria|morocco|ghana|"
     r"africa|asia|europe|antarctica|australia|oceania|"
+    r"sri lanka|sri|lanka|bangladesh|pakistan|nepal|tibet|mongolia|cambodia|laos|myanmar|"
+    r"iran|iraq|israel|syria|lebanon|jordan|"
     r"new zealand|new york|london|paris|tokyo|beijing|rome|cairo|earth|mars|moon|"
     r"spanish|english|french|chinese|canadian|american|mexican|italian|german|japanese|"
     r"peruvian|brazilian|argentine|portuguese|dutch|swedish|norwegian|polish|turkish|"
@@ -92,7 +94,7 @@ _PLACE_OR_NONPERSON = re.compile(
 _COMMON_NONNAME = re.compile(
     r"^(warm|cold|hot|cool|happy|sad|good|great|kind|clever|brave|gentle|quiet|loud|"
     r"always|never|often|usually|suddenly|together|finally|today|tomorrow|yesterday|"
-    r"neighbor|neighbors|neighbour|neighbours|friend|friends|children|kids|people|"
+    r"neighbor|neighbors|neighbour|neighbours|friend|friends|children|kids|students?|pupils?|classmates?|workers?|people|"
     r"everyone|everybody|someone|somebody|nobody|family|families|class|team|group|"
     r"morning|afternoon|evening|night|summer|winter|spring|autumn|fall|"
     r"hello|goodbye|thanks|please|yes|no|okay|sure|maybe|because|while|during|"
@@ -118,6 +120,11 @@ _COMMON_NONNAME = re.compile(
     r"add|stir|grill|drink|check|mix|pour|bake|boil|chop|slice|serve|cook|wash|peel|"
     r"taste|choose|blend|steam|fry|heat|fruit|fruits|vegetable|vegetables|snack|snacks|"
     r"meal|meals|juice|bread|rice|salad|soup|"
+    # 菜名/食物/料理名词（标题或引号句首被大写后误判成"专名儿童"——Book15 'Jackfruit curry'/'Mystery Dish' 根因）：
+    r"dish|dishes|mystery|curry|jackfruit|noodle|noodles|dumpling|dumplings|stew|porridge|"
+    r"pancake|pancakes|sandwich|sandwiches|cake|cakes|pie|pies|cookie|cookies|pudding|"
+    r"recipe|recipes|ingredient|ingredients|flavor|flavors|flavour|flavours|spice|spices|"
+    r"sauce|broth|dessert|desserts|pizza|pasta|sushi|taco|tacos|burrito|burritos|"
     # 生境/自然地貌（科普书的小节标题大写：Forests/Deserts/Oceans/Plants/Grasslands——Book42 根因）：
     r"forest|forests|grassland|grasslands|desert|deserts|ocean|oceans|plant|plants|"
     r"jungle|jungles|rainforest|rainforests|tundra|wetland|wetlands|reef|reefs|pond|ponds|"
@@ -176,6 +183,8 @@ def _detect_story_dog_names(text: str) -> set[str]:
 _GENERIC_CHILD = {
     "boy", "girl", "kid", "kids", "child", "children", "boys", "girls",
     "little boy", "little girl", "young boy", "young girl", "small boy", "small girl",
+    "student", "students", "pupil", "pupils", "classmate", "classmates",
+    "worker", "workers",
     "男孩", "女孩", "孩子", "小孩", "小男孩", "小女孩",
 }
 
@@ -250,7 +259,7 @@ _ADULT_ROLE_RE = re.compile(
     # 2026-06-11 新增·修 L4 SYMPTOM2（与 _ANIMATE 对齐，确保这些一次性成人走【成人锁+成人锚】）：
     r"scientists?|researchers?|rangers?|guides?|vets?|veterinarians?|biologists?|zoologists?|botanists?|"
     r"explorers?|zookeepers?|keepers?|inventors?|governors?|councou?ncillors?|professors?|principals?|"
-    r"coach(?:es)?|conductors?|weavers?|sculptors?|carpenters?|tailors?|fishermen|fisherman|merchants?|"
+    r"trainers?|coach(?:es)?|conductors?|weavers?|sculptors?|carpenters?|tailors?|fishermen|fisherman|merchants?|"
     r"engineers?|reporters?|journalists?|photographers?|"
     r"man|woman|men|women|lady|ladies|gentleman|gentlemen|adults?|grandpa|grandma|grandmother|grandfather|"
     r"警察|警官|消防员|邮递员|医生|护士|农夫|农民|司机|店员|厨师|面包师|志愿者|清洁工|工人|管理员|讲解员|馆员|"
@@ -444,6 +453,7 @@ _PLAIN_STOP = {
     "several", "many", "some", "most", "both", "each", "every", "more", "less",
     "library", "libraries", "museum", "museums", "sport", "sports",
     "game", "games", "park", "school", "store", "shop", "hospital",
+    "student", "students", "pupil", "pupils", "classmate", "classmates",
     "neighborhood", "community", "nature",
     # 抽象/活动/计数名词（2026-06-11 新增·修 L4 SYMPTOM1，与 _COMMON_NONNAME 对齐）：
     "step", "steps", "way", "ways", "wind", "winds", "sunshine", "sunlight",
@@ -456,6 +466,15 @@ _PLAIN_STOP = {
     "chop", "slice", "serve", "cook", "wash", "peel", "taste", "choose", "blend",
     "steam", "fry", "heat", "fruit", "fruits", "vegetable", "vegetables",
     "snack", "snacks", "meal", "meals", "juice", "bread", "rice", "salad", "soup",
+    # 菜名/食物/料理名词（Book15 'Jackfruit curry'/'Mystery Dish' 根因）：
+    "dish", "dishes", "mystery", "curry", "jackfruit", "noodle", "noodles",
+    "dumpling", "dumplings", "stew", "porridge", "pancake", "pancakes",
+    "sandwich", "sandwiches", "cake", "cakes", "pie", "pies", "cookie", "cookies",
+    "pudding", "recipe", "recipes", "ingredient", "ingredients", "flavor", "flavors",
+    "flavour", "flavours", "spice", "spices", "sauce", "broth", "dessert", "desserts",
+    "pizza", "pasta", "sushi", "taco", "tacos", "burrito", "burritos",
+    # 地名片段（Book15 'Sri Lanka' 根因）：
+    "sri", "lanka",
     # 生境/自然地貌（Book42 根因）：
     "forest", "forests", "grassland", "grasslands", "desert", "deserts",
     "ocean", "oceans", "plant", "plants", "jungle", "jungles", "rainforest",
@@ -609,7 +628,7 @@ def _adult_display(surname: str, text: str) -> str:
 _GENERIC_ADULT_RID_RE = re.compile(
     r"^(teacher|teachers|sub|substitute|substitute teacher|officer|police|policeman|"
     r"nurse|doctor|farmer|baker|chef|cook|driver|clerk|shopkeeper|vendor|librarian|"
-    r"curator|guard|waiter|waitress|pilot|sailor|captain|principal|coach|"
+    r"curator|guard|waiter|waitress|pilot|sailor|captain|principal|trainer|coach|"
     r"man|woman|lady|gentleman|adult)$", re.I)
 
 

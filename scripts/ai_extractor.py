@@ -171,6 +171,13 @@ class ExtractedContent:
     worksheet_questions: list[dict] = field(default_factory=list)  # [{type, title, instruction, items, answer_key}]
     # 专用阅读理解题（worksheet 阅读页用）：[{kind: mc|tf|short, q, options, correct, answer, page}]
     reading_questions: list[dict] = field(default_factory=list)
+    # SOP「关键贯穿物件统一描述」：全书围绕同一个反复出现的关键物件时，AI 给出唯一固定视觉描述 + 出现页 + 各页状态。
+    #   {"present": bool, "name": str, "unified_desc_cn": str, "pages": [int], "states": [{"pages":[int], "state": str}]}
+    key_object: dict = field(default_factory=dict)
+    # 本书内部固定班级群像（exactly 4 distinct classmates + 1 teacher），不跨书复用。
+    class_ensemble: dict = field(default_factory=dict)
+    # 多页复现的普通道具（如笔记本/地图/信息卡/石板/课本）：统一描述 + 朝向/装订/内容可见性。
+    recurring_props: list[dict] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -185,6 +192,9 @@ class ExtractedContent:
             "rr_questions": self.rr_questions,
             "worksheet_questions": self.worksheet_questions,
             "reading_questions": self.reading_questions,
+            "key_object": self.key_object,
+            "class_ensemble": self.class_ensemble,
+            "recurring_props": self.recurring_props,
         }
 
 
@@ -557,10 +567,44 @@ def _build_system_prompt(level_key: str, is_dual: bool, rr_dist: list[int], pool
       "shot": "medium",
       "camera_angle": "<eye | high | low | birdseye | over_shoulder，按本页剧情选最有表现力的机位，不要全用 eye>",
       "focus": "<本页的'高潮/焦点动作'——本页最具视觉张力、最关键或最有趣的那一下，一句中文，必须是主角正在做的动作，将作为画面居中的主体动作（如'Tommy 俯身张开双手扑向桌下逃窜的小仓鼠'）>",
-      "hook": "<本页一个有趣的画面彩蛋/细节，一句中文，如'桌子下面卡着橡皮的小仓鼠探出半个身子'，没有就给一个能强化剧情趣味的小细节>"
+      "hook": "<本页一个有趣的画面彩蛋/细节，一句中文，如'桌子下面卡着橡皮的小仓鼠探出半个身子'，没有就给一个能强化剧情趣味的小细节>",
+      "era": "<本页所描绘的【年代/时代】，仅对科普/历史/今昔对比类书有意义：如 'long-ago one-room schoolhouse era' / 'modern present-day' / 'past-vs-present contrast (both eras side by side)' / 'ancient' / 'future'；普通当代故事或与年代无关的页一律留空字符串>",
+      "thought_bubble": "<可选。本页若是孩子/班级在猜测、想象、以为某人是什么职业/身份：写一个小型 thought bubble 的画面内容；现实中的真人仍保持当前真实衣着，不因猜测提前换制服。无则空字符串>",
+      "prop_state": "<可选。本页贯穿道具的状态/朝向，如 'blue notebook closed, spiral binding on left, pages facing inward, no readable text'；无则空字符串>"
     }},
     ... 7 entries total, indices 1..7
   ],
+  "key_object": {{
+    "present": <true 仅当全书自始至终围绕【同一个反复出现的关键物件/道具】，且其【味道/气味/声音/感觉/温度等抽象描述】在不同页变化、但实物始终是同一个；否则 false>,
+    "name": "<该物件的简短英文名，如 'the covered mystery dish'>",
+    "unified_desc_cn": "<该物件【唯一固定的视觉描述】：盛器/造型/颜色/大小/材质，写得具体可画；绝不写味道/气味/抽象感受词；这段描述将逐页原样复用>",
+    "orientation": "<可选。固定朝向/摆放方向，如 lid centered on plate / book spine on left；无则空字符串>",
+    "binding": "<可选。书本/笔记本/卡片等的装订边或开合方式；无则空字符串>",
+    "content_visibility": "<可选。内容朝内/背向观众/不可读/只有抽象色块图案；无则空字符串>",
+    "pages": [<出现该物件的故事页 index 列表，如 1,2,3,4,5,6,7>],
+    "states": [{{"pages": [1,2], "state": "<该物件在这些页的具体物理状态，如 'covered with a lid, contents hidden'>"}}, {{"pages": [3,4,5,6], "state": "uncovered, being tasted/served"}}, {{"pages": [7], "state": "revealed and named"}}]
+  }},
+  "recurring_props": [
+    {{
+      "name": "<多页出现的普通道具名，如 blue notebook / slate / textbook / map / info card>",
+      "unified_desc_cn": "<该道具唯一固定视觉描述：颜色、尺寸、材质、形状>",
+      "pages": [<出现页 index>],
+      "orientation": "<固定朝向/摆放方向>",
+      "binding": "<装订边/折痕/开合方式>",
+      "content_visibility": "<内容朝内、背向观众、不可读；只允许抽象线条/色块，不可出现文字>",
+      "states": [{{"pages": [1,2], "state": "<本页/这些页状态>"}}]
+    }}
+  ],
+  "class_ensemble": {{
+    "present": <true 当本书有反复出现的班级/同学群像/课堂 ensemble；否则 false>,
+    "teacher_desc_cn": "<本书唯一老师固定外观，不写成 IP 老师，跨页完全一致>",
+    "classmates": [
+      {{"id": "classmate_a", "desc_cn": "<同学A固定外观，明显不同于 Mia/Tommy 和其他同学>"}},
+      {{"id": "classmate_b", "desc_cn": "<同学B固定外观>"}},
+      {{"id": "classmate_c", "desc_cn": "<同学C固定外观>"}},
+      {{"id": "classmate_d", "desc_cn": "<同学D固定外观>"}}
+    ]
+  }},
   "mastery": ["word1", "word2", ...],
   "exposure": ["word1", "word2", ...],
   "vocabulary": ["word1", "word2", "word3", "word4"],
@@ -620,6 +664,31 @@ Do NOT just translate the English sentence — REWRITE it as a visual scene a pa
 Example for "Lily felt nervous on her first day in the new class. Her hands shook as she sat down at a small wooden desk.":
   scene_cn: "教室靠窗的一角，Lily 独自在一张浅色小课桌后坐下，双手紧握放在桌面、微微颤抖，肩膀微微缩起，眉头轻蹙，眼神紧张地望向前方；桌上摊开一本练习本和一支削好的铅笔；背景是干净的暖米白空墙面（无黑板）、亮光浅米瓷砖地面，柔和的早晨阳光从右侧单侧窗户斜射进来，背景极简留白，温暖治愈的薄透水彩氛围。"
   （注意：① 示例名"Lily"仅作演示——真实出图请【逐字照搬故事里的名字】，绝不改名/换成 Mia/Tommy/Anna；② 示例里只有动作、表情、环境、光线——没有任何发型/眼镜/衣服/颜色/长相词。这是必须遵守的写法。）
+
+## CRITICAL: key_object（SOP「关键贯穿物件统一描述」— 读懂全文先判断"关键物件是否统一/会不会变")
+先通读全文，判断：**全书是否自始至终围绕【同一个反复出现的关键物件/道具】**（如一道菜、一个盒子、一封信、一颗种子、一件乐器）。
+  - 若是，且故事文字里对它的【味道/气味/声音/感觉/温度等抽象描述】在不同页变化（如"先是清淡、然后变暖、又甜又酸又带烟熏"）——
+    **这些只是【感受/抽象描述】，绝不代表它是不同的东西**：它【始终是同一个实物】。
+  - 此时必须把它的【唯一固定视觉描述】在 key_object.unified_desc_cn 里写一次（盛器/造型/颜色/大小/材质），出图时每页原样复用、**绝不因为味道词变化就在不同页画成不同的食物/物体**。
+  - 只允许列出它的【具体物理状态变化】（盖着→揭开、整个→切开、空→满、合上→打开）放进 states，按页对应。
+  - **关键物件本身的"它是什么"在最后才揭晓时**：揭晓前(盖着)就画成"盖着看不见内容"的同一个盛器，揭晓页才露出/点明内容——但盛器仍是同一个。
+  - 如果该物件/道具有固定朝向、装订边、盖子材质、内容朝内/不可读等要求，必须填写 orientation / binding / content_visibility；不要让同一物件逐页换方向、换材质或露出可读文字。
+  - 若全书没有这样一个贯穿始终的单一关键物件 → key_object.present=false（其余字段可留空）。这是通用判断，绝不只针对某一本书。
+
+## CRITICAL: recurring_props / class_ensemble / thought_bubble（固定对象与想象气泡）
+- 先读完整故事，找出多页固定对象/人物：老师、固定同学、worker、trainer、笔记本、地图、信息卡、石板、课本、盖子等。凡是【同一个 recurring person/object】必须 EXACT SAME：脸型/五官/发型/肤色/身高体型/服装款式配色、物件材质/颜色/形状/朝向/盖子状态全书保持一致，只允许故事明确写出的物理状态变化。
+- 课堂/班级故事若有反复出现的 class/classmates/students：class_ensemble.present=true，固定为 exactly 4 个彼此不同的 classmates + 1 位 teacher。它们只在本书内部复用，不跨书复用；绝不能把 "Students" 画成一个单一克隆角色。
+- 但科普/历史/今昔对比书必须区分【同一 recurring cast】和【不同时代/不同群体】：past-vs-present contrast 里的过去学生/老师/工具与现代学生/老师/工具通常不是同一批人，不要把同一 4 个 classmates 或同一 teacher 复制到两个时代；应在 scene_cn 里明确过去群体与现代群体年龄/衣着/族裔/工具不同。
+- 猜职业/猜身份/想象答案时：现实中的 worker/person 必须保持当页真实中性衣着；只在小型 thought bubble 里画被猜到的制服/职业形象。未揭晓前不得让真人提前穿 reveal 制服。
+
+## CRITICAL: era（科普/历史书的【本页年代】— 读懂本页讲的是哪个时代）
+对【科普 / 历史 / 今昔对比】类书：先判断**本页文字讲的是哪个年代/时代**，填进 pages[].era。
+  - 讲"过去/从前/以前/很久以前/那时候/历史上"(in the past / long ago / used to / were) → era 标成对应的过去年代（尽量具体，如 'long-ago one-room schoolhouse era'）。
+  - 讲"现在/如今/今天/当代"(now / today / nowadays / modern) → era='modern present-day'。
+  - 同一页【既讲过去又讲现在做对比】(no computers in the past, now screens) → era='past-vs-present contrast (both eras side by side)'。
+  - 据此，本页 scene_cn 的【建筑/室内布景/家具/器物/服装/科技/交通】必须**与该年代一致**：过去页就画旧式样貌、绝不混入现代物件（电子屏/瓷砖/大玻璃幕墙/现代塑料家具/现代服装等）；现代页就画当代样貌。
+  - 同属同一年代的相邻页之间，年代风格保持一致连贯，不要在过去↔现代之间随意跳。
+  - 普通当代故事 / 与年代无关的页：era 留空字符串。
 
 ## CRITICAL: camera_angle（机位角度 — 绝不能全本平视）
 - 这是绘本，画面要随剧情变化、有镜头语言。**禁止 7 页全部 eye（平视）**——至少 3-4 页换用非平视机位。
@@ -766,7 +835,7 @@ def _parse_doubao_payload(
     pages = [_normalize_page(p, i + 1) for i, p in enumerate(pages[:7])]
     while len(pages) < 7:
         pages.append({"index": len(pages) + 1, "text": "", "scene": "", "expression": "",
-                      "shot": "medium", "camera_angle": "", "focus": "", "hook": ""})
+                      "shot": "medium", "camera_angle": "", "focus": "", "hook": "", "era": ""})
 
     proper = _proper_nouns_from_story(raw_story)
     mastery = _clean_words(data.get("mastery"), proper)
@@ -792,6 +861,9 @@ def _parse_doubao_payload(
     rr_questions = _normalize_rr(data.get("rr_questions"), rr_dist)
     ws_questions = _normalize_ws(data.get("worksheet_questions"), level_key, pool=pool)
     reading_questions = _normalize_reading_questions(data.get("reading_questions"))
+    key_object = _normalize_key_object(data.get("key_object"))
+    class_ensemble = _normalize_class_ensemble(data.get("class_ensemble"))
+    recurring_props = _normalize_recurring_props(data.get("recurring_props"))
 
     return ExtractedContent(
         pages=pages,
@@ -805,7 +877,105 @@ def _parse_doubao_payload(
         rr_questions=rr_questions,
         worksheet_questions=ws_questions,
         reading_questions=reading_questions,
+        key_object=key_object,
+        class_ensemble=class_ensemble,
+        recurring_props=recurring_props,
     )
+
+
+def _normalize_key_object(raw: Any) -> dict:
+    """规整 AI 给的「关键贯穿物件统一描述」。无/不合规/present=false → 返回 {}（出图层不触发）。"""
+    if not isinstance(raw, dict):
+        return {}
+    if not raw.get("present"):
+        return {}
+    desc = str(raw.get("unified_desc_cn") or "").strip()
+    if not desc:
+        return {}
+    def _ints(v: Any) -> list[int]:
+        out: list[int] = []
+        for x in (v or []):
+            try:
+                out.append(int(x))
+            except (TypeError, ValueError):
+                continue
+        return out
+    pages = _ints(raw.get("pages"))
+    states_raw = raw.get("states") if isinstance(raw.get("states"), list) else []
+    states: list[dict] = []
+    for s in states_raw:
+        if not isinstance(s, dict):
+            continue
+        st = str(s.get("state") or "").strip()
+        sp = _ints(s.get("pages"))
+        if st:
+            states.append({"pages": sp, "state": st})
+    return {
+        "present": True,
+        "name": str(raw.get("name") or "").strip(),
+        "unified_desc_cn": desc,
+        "orientation": str(raw.get("orientation") or "").strip(),
+        "binding": str(raw.get("binding") or "").strip(),
+        "content_visibility": str(raw.get("content_visibility") or "").strip(),
+        "pages": pages,
+        "states": states,
+    }
+
+
+def _normalize_class_ensemble(raw: Any) -> dict:
+    """规整本书内部固定班级群像：exactly 4 classmates + 1 teacher。"""
+    if not isinstance(raw, dict) or not raw.get("present"):
+        return {}
+    teacher = str(raw.get("teacher_desc_cn") or "").strip()
+    mates_raw = raw.get("classmates") if isinstance(raw.get("classmates"), list) else []
+    mates: list[dict] = []
+    for i, it in enumerate(mates_raw[:4]):
+        if not isinstance(it, dict):
+            continue
+        desc = str(it.get("desc_cn") or it.get("description_cn") or "").strip()
+        if desc:
+            mates.append({"id": str(it.get("id") or f"classmate_{chr(97 + i)}").strip(), "desc_cn": desc})
+    if len(mates) != 4 and not teacher:
+        return {}
+    return {"present": True, "teacher_desc_cn": teacher, "classmates": mates[:4]}
+
+
+def _normalize_recurring_props(raw: Any) -> list[dict]:
+    """规整多页普通贯穿道具：统一外观 + 朝向/装订/内容可见性。"""
+    if not isinstance(raw, list):
+        return []
+
+    def _ints(v: Any) -> list[int]:
+        out: list[int] = []
+        for x in (v or []):
+            try:
+                out.append(int(x))
+            except (TypeError, ValueError):
+                continue
+        return out
+
+    out: list[dict] = []
+    for it in raw:
+        if not isinstance(it, dict):
+            continue
+        desc = str(it.get("unified_desc_cn") or "").strip()
+        name = str(it.get("name") or "").strip()
+        if not desc or not name:
+            continue
+        states: list[dict] = []
+        for s in (it.get("states") or []):
+            if isinstance(s, dict) and str(s.get("state") or "").strip():
+                states.append({"pages": _ints(s.get("pages")), "state": str(s.get("state") or "").strip()})
+        out.append({
+            "name": name,
+            "unified_desc_cn": desc,
+            "pages": _ints(it.get("pages")),
+            "orientation": str(it.get("orientation") or "").strip(),
+            "binding": str(it.get("binding") or "").strip(),
+            "content_visibility": str(it.get("content_visibility") or "").strip(),
+            "states": states,
+        })
+    return out
 
 
 def _normalize_page(p: dict, default_index: int) -> dict:
@@ -819,6 +989,9 @@ def _normalize_page(p: dict, default_index: int) -> dict:
         "camera_angle": str(p.get("camera_angle") or "").strip().lower(),
         "focus": str(p.get("focus") or "").strip(),
         "hook": str(p.get("hook") or "").strip(),
+        "era": str(p.get("era") or "").strip(),
+        "thought_bubble": str(p.get("thought_bubble") or "").strip(),
+        "prop_state": str(p.get("prop_state") or "").strip(),
     }
 
 
@@ -1041,6 +1214,9 @@ def _mock_extract(
             "camera_angle": "",
             "focus": "",
             "hook": "",
+            "era": "",
+            "thought_bubble": "",
+            "prop_state": "",
         })
 
     level_key = _level_key(level)
@@ -1071,6 +1247,9 @@ def _mock_extract(
         word_count=_count_words(raw_story),
         rr_questions=rr_questions,
         worksheet_questions=ws_questions,
+        key_object={},
+        class_ensemble={},
+        recurring_props=[],
     )
 
 
@@ -1265,6 +1444,13 @@ def apply_extracted_to_outline(outline, ec: ExtractedContent) -> None:
         outline.word_count_override = str(ec.word_count)
     if ec.reading_questions:
         setattr(outline, "_reading_questions", ec.reading_questions)
+    # SOP「关键贯穿物件统一描述」：挂到 outline 供 cn_prompt_builder 逐页复用同一描述（只改状态）。
+    if ec.key_object:
+        outline.key_object = ec.key_object
+    if ec.class_ensemble:
+        outline.class_ensemble = ec.class_ensemble
+    if ec.recurring_props:
+        outline.recurring_props = ec.recurring_props
 
     for p in ec.pages:
         idx = int(p.get("index") or 0)
@@ -1286,3 +1472,9 @@ def apply_extracted_to_outline(outline, ec: ExtractedContent) -> None:
                 page.focus = p["focus"]
             if p.get("hook"):
                 page.hook = p["hook"]
+            if p.get("era"):
+                page.era = p["era"]
+            if p.get("thought_bubble"):
+                page.thought_bubble = p["thought_bubble"]
+            if p.get("prop_state"):
+                page.prop_state = p["prop_state"]

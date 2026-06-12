@@ -355,3 +355,53 @@ def safe_filename(title: str) -> str:
     name = re.sub(r"[^\w\s-]", "", title, flags=re.UNICODE)
     name = re.sub(r"\s+", "_", name.strip()) or "PictureBook"
     return f"{name}.pptx"
+
+
+# ---------- 精修后原地重出 Reader.pptx（只换图、不动文字/版式/outline） ----------
+def _largest_picture(slide):
+    """返回该 slide 上面积最大的图片 shape（即全幅背景图），无则 None。"""
+    from pptx.enum.shapes import MSO_SHAPE_TYPE
+
+    pics = [sh for sh in slide.shapes if sh.shape_type == MSO_SHAPE_TYPE.PICTURE]
+    if not pics:
+        return None
+    return max(pics, key=lambda p: (p.width or 0) * (p.height or 0))
+
+
+def swap_reader_images(
+    reader_pptx: Path | str,
+    img_dir: Path | str,
+    out_path: Path | str | None = None,
+) -> Path:
+    """把现有 Reader.pptx 每页的全幅背景图替换为 img_dir 下精修后的 page_XX.png。
+
+    slide 0=封面(page_00) … slide 7=正文(page_07)；元信息页(slide 8)无背景图，跳过。
+    只替换图片二进制，文字/版式/页码/徽章全部保留，无需 outline。
+
+    Returns: 写出的 pptx 路径（默认覆盖原文件）。
+    """
+    reader_pptx = Path(reader_pptx)
+    img_dir = Path(img_dir)
+    out_path = Path(out_path) if out_path else reader_pptx
+
+    prs = Presentation(str(reader_pptx))
+    swapped = 0
+    for sidx, slide in enumerate(prs.slides):
+        if sidx > 7:
+            break
+        new_img = img_dir / f"page_{sidx:02d}.png"
+        if not new_img.exists():
+            continue
+        pic = _largest_picture(slide)
+        if pic is None:
+            continue
+        embed = pic._element.blip_rId  # rId
+        if not embed:
+            continue
+        img_part = slide.part.related_part(embed)
+        img_part._blob = new_img.read_bytes()
+        swapped += 1
+
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    prs.save(str(out_path))
+    return out_path
