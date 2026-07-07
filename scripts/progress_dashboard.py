@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 import subprocess
 import sys
 from dataclasses import dataclass, field
@@ -28,6 +29,11 @@ _DINGTALK_REQ_MD = _REPO / "references" / "dingtalk" / "requirements.md"
 _DINGTALK_PROGRESS_CACHE = _REPO / "references" / "syllabus" / "progress_status.json"
 
 _BOOK_DIR_RE = re.compile(r"^Level\s+(\d+)_Book(\d+)_(.+)$", re.I)
+
+
+def _can_run_dingtalk_sync() -> bool:
+    """Only show live DingTalk sync where the local dws CLI is available."""
+    return shutil.which("dws") is not None
 
 # 流水线步骤 → 磁盘产物映射（story 来自大纲 SSOT，其余扫输出目录）
 PIPELINE_STEPS: list[tuple[str, str, str]] = [
@@ -831,7 +837,9 @@ def render_progress_dashboard(
                 on_refresh()
             st.rerun()
     with col_sync:
-        if st.button("☁️ 从钉钉刷新进度", key="dash_sync_dingtalk", help="运行 sync_progress_from_dingtalk.py 更新逐列缓存"):
+        if not _can_run_dingtalk_sync():
+            st.info("线上环境不能直接连接钉钉。请在本地同步后发布。")
+        elif st.button("☁️ 从钉钉刷新进度", key="dash_sync_dingtalk", help="运行 sync_progress_from_dingtalk.py 更新逐列缓存"):
             script = _REPO / "scripts" / "sync_progress_from_dingtalk.py"
             with st.spinner("正在读取钉钉 Timeline 表并重建进度缓存…"):
                 try:

@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -1182,6 +1183,11 @@ _NOTES_JSON = _WB_REPO / "references" / "workbench_notes.json"
 # 顶部统一「从钉钉刷新」覆盖的脚本（手动触发；无后台轮询/定时线程）。
 _SYNC_SCRIPTS = ("sync_syllabus_from_dingtalk.py", "sync_progress_from_dingtalk.py")
 
+
+def _can_run_dingtalk_sync() -> bool:
+    """Only show live DingTalk sync where the local dws CLI is available."""
+    return shutil.which("dws") is not None
+
 # 布局调宽预设：Streamlit 折中——切换 st.columns 比例，不能像浏览器自由拖拽分隔条。
 # "专注中栏" 用 (0,1,0) 标记为「只渲染中栏全宽」。
 _LAYOUT_PRESETS: dict[str, tuple[float, float, float]] = {
@@ -1307,19 +1313,30 @@ def _render_dingtalk_sync_bar(stats: dict[str, Any]) -> None:
     )
     st.markdown(f"<div class='wb-sync-bar'>{chips}</div>", unsafe_allow_html=True)
 
+    can_sync = _can_run_dingtalk_sync()
     c1, c2 = st.columns([1, 4])
     with c1:
-        do_sync = st.button(
-            "☁️ 从钉钉刷新",
-            key="wb_sync_all",
-            use_container_width=True,
-            help="手动运行 sync_syllabus + sync_progress，一次覆盖 4 个文档（无后台轮询/定时线程）。",
-        )
+        if can_sync:
+            do_sync = st.button(
+                "☁️ 从钉钉刷新",
+                key="wb_sync_all",
+                use_container_width=True,
+                help="手动运行 sync_syllabus + sync_progress，一次覆盖 4 个文档（无后台轮询/定时线程）。",
+            )
+        else:
+            do_sync = False
+            st.info("线上环境不能直接连接钉钉。请在本地同步后发布。")
     with c2:
-        st.caption(
-            "统一手动刷新：大纲总文档 / L0-2 / L3-6 / 进度表 Timeline。"
-            "各自上次同步时间见上方卡片；钉钉为只读取数，不回写。"
-        )
+        if can_sync:
+            st.caption(
+                "统一手动刷新：大纲总文档 / L0-2 / L3-6 / 进度表 Timeline。"
+                "各自上次同步时间见上方卡片；钉钉为只读取数，不回写。"
+            )
+        else:
+            st.caption(
+                "钉钉同步依赖本机 dws 登录状态，Streamlit Cloud 无法扫码登录。"
+                "更新大纲后，请在本地执行同步脚本并 git push，线上会随 GitHub 自动重部署。"
+            )
     if do_sync:
         with st.spinner("正在从钉钉刷新 4 个文档（大纲 + 进度表）…"):
             results = _run_sync_scripts(_SYNC_SCRIPTS)
