@@ -24,6 +24,7 @@ import secrets
 import shutil
 import sys
 import time
+import traceback
 import zipfile
 from concurrent.futures import (
     ThreadPoolExecutor, FIRST_COMPLETED, wait, as_completed,
@@ -2226,8 +2227,9 @@ def _write_teaching_extract_txt(outline: BookOutline, ec, dest: Path) -> Path:
         "（上传成品绘本路径：不含 image_prompts / 出图 SOP；仅 AI 抽取的教辅内容摘要）",
         "",
     ]
-    if outline.vocabulary_for_display():
-        lines += ["## Vocabulary", ", ".join(outline.vocabulary_for_display()), ""]
+    vocab_words = outline.vocabulary_for_display
+    if vocab_words:
+        lines += ["## Vocabulary", ", ".join(vocab_words), ""]
     if outline.phonics:
         lines += ["## Phonics", outline.phonics, ""]
     if outline.grammar_focus:
@@ -2601,6 +2603,8 @@ def _render_upload_single_mode() -> None:
         )
     except Exception as e:
         st.error(f"组装失败：{e}")
+        with st.expander("错误详情（请截图给研发）", expanded=True):
+            st.code(traceback.format_exc(), language="python")
         return
 
     progress.progress(1.0, "完成 ✅")
