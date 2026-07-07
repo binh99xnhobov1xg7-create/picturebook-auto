@@ -2295,13 +2295,10 @@ def _build_and_assemble_teaching_kit(
 
     kit_zip = run_dir / f"{name_prefix}_Teaching_Kit.zip"
     with zipfile.ZipFile(kit_zip, "w", zipfile.ZIP_DEFLATED) as z:
-        for p in (ws_path, rr_path, tg_path, extract_path, check_report, rrws_result.final_pdf):
+        for p in (ws_path, rr_path, tg_path):
             if p and Path(p).is_file():
                 pp = Path(p)
                 z.write(pp, arcname=pp.name)
-        for img in image_paths:
-            if img.exists():
-                z.write(img, arcname=f"images/{img.name}")
 
     return {
         "ws": ws_path, "rr": rr_path, "tg": tg_path,
@@ -2628,21 +2625,20 @@ def _render_upload_single_mode() -> None:
 
 
 def _render_upload_download_row(paths: dict) -> None:
-    """单本上传完成后：ZIP + 分项 + Teaching Extract 下载。"""
+    """单本上传完成后：只交付 WS / RR / TG 三件套。"""
     zip_p = Path(paths.get("zip", ""))
     if zip_p.is_file():
         with open(zip_p, "rb") as fh:
             st.download_button(
-                "⬇️ 下载 ZIP（WS + RR + TG + 抽取摘要 + 页图）",
+                "⬇️ 下载 ZIP（WS + RR + TG）",
                 fh.read(), file_name=zip_p.name, mime="application/zip",
                 key="up_dl_zip_main",
             )
-    cols = st.columns(4)
+    cols = st.columns(3)
     labels = [
         ("ws", "📋 Worksheet"),
         ("rr", "📝 RR"),
         ("tg", "👩‍🏫 TG"),
-        ("extract", "📄 抽取摘要"),
     ]
     for col, (key, label) in zip(cols, labels):
         p = Path(paths.get(key, ""))
@@ -2650,17 +2646,6 @@ def _render_upload_download_row(paths: dict) -> None:
             if p.is_file():
                 with open(p, "rb") as fh:
                     st.download_button(f"⬇️ {label}", fh.read(), file_name=p.name, key=f"up_dl_{key}")
-    extra_cols = st.columns(2)
-    with extra_cols[0]:
-        final_pdf_raw = paths.get("rr_ws_final_pdf")
-        final_pdf = Path(final_pdf_raw) if final_pdf_raw else None
-        if final_pdf and final_pdf.is_file():
-            _download_button(final_pdf, "📄 教研版 PDF", primary=True)
-    with extra_cols[1]:
-        report_raw = paths.get("rr_ws_check_report")
-        report = Path(report_raw) if report_raw else None
-        if report and report.is_file():
-            _download_button(report, "🧪 RR/WS 自检报告")
 
 
 def _render_upload_batch_mode() -> None:
