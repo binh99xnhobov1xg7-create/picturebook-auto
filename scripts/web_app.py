@@ -2652,12 +2652,14 @@ def _render_upload_download_row(paths: dict) -> None:
                     st.download_button(f"⬇️ {label}", fh.read(), file_name=p.name, key=f"up_dl_{key}")
     extra_cols = st.columns(2)
     with extra_cols[0]:
-        final_pdf = Path(paths.get("rr_ws_final_pdf", ""))
-        if final_pdf.is_file():
+        final_pdf_raw = paths.get("rr_ws_final_pdf")
+        final_pdf = Path(final_pdf_raw) if final_pdf_raw else None
+        if final_pdf and final_pdf.is_file():
             _download_button(final_pdf, "📄 教研版 PDF", primary=True)
     with extra_cols[1]:
-        report = Path(paths.get("rr_ws_check_report", ""))
-        if report.is_file():
+        report_raw = paths.get("rr_ws_check_report")
+        report = Path(report_raw) if report_raw else None
+        if report and report.is_file():
             _download_button(report, "🧪 RR/WS 自检报告")
 
 
