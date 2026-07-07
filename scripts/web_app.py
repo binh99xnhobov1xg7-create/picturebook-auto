@@ -2296,7 +2296,7 @@ def _build_and_assemble_teaching_kit(
     kit_zip = run_dir / f"{name_prefix}_Teaching_Kit.zip"
     with zipfile.ZipFile(kit_zip, "w", zipfile.ZIP_DEFLATED) as z:
         for p in (ws_path, rr_path, tg_path, extract_path, check_report, rrws_result.final_pdf):
-            if p and Path(p).exists():
+            if p and Path(p).is_file():
                 pp = Path(p)
                 z.write(pp, arcname=pp.name)
         for img in image_paths:
@@ -2306,7 +2306,7 @@ def _build_and_assemble_teaching_kit(
     return {
         "ws": ws_path, "rr": rr_path, "tg": tg_path,
         "extract": extract_path, "zip": kit_zip,
-        "rr_ws_final_pdf": rrws_result.final_pdf or Path(""),
+        "rr_ws_final_pdf": rrws_result.final_pdf,
         "rr_ws_check_report": check_report,
         "name_prefix": name_prefix,  # type: ignore[dict-item]
     }
@@ -2630,7 +2630,7 @@ def _render_upload_single_mode() -> None:
 def _render_upload_download_row(paths: dict) -> None:
     """单本上传完成后：ZIP + 分项 + Teaching Extract 下载。"""
     zip_p = Path(paths.get("zip", ""))
-    if zip_p.exists():
+    if zip_p.is_file():
         with open(zip_p, "rb") as fh:
             st.download_button(
                 "⬇️ 下载 ZIP（WS + RR + TG + 抽取摘要 + 页图）",
@@ -2647,17 +2647,17 @@ def _render_upload_download_row(paths: dict) -> None:
     for col, (key, label) in zip(cols, labels):
         p = Path(paths.get(key, ""))
         with col:
-            if p.exists():
+            if p.is_file():
                 with open(p, "rb") as fh:
                     st.download_button(f"⬇️ {label}", fh.read(), file_name=p.name, key=f"up_dl_{key}")
     extra_cols = st.columns(2)
     with extra_cols[0]:
         final_pdf = Path(paths.get("rr_ws_final_pdf", ""))
-        if final_pdf.exists():
+        if final_pdf.is_file():
             _download_button(final_pdf, "📄 教研版 PDF", primary=True)
     with extra_cols[1]:
         report = Path(paths.get("rr_ws_check_report", ""))
-        if report.exists():
+        if report.is_file():
             _download_button(report, "🧪 RR/WS 自检报告")
 
 
@@ -6862,7 +6862,7 @@ def _render_deliverable_previews(
 
 
 def _download_button(path: Path, label: str, *, primary: bool = False) -> None:
-    if not path.exists():
+    if not path.is_file():
         st.error(f"{label}: 文件不存在")
         return
     with open(path, "rb") as f:
