@@ -1,9 +1,9 @@
 {
  "_meta": {
-  "source_l36": "l36_20260707_123550.xlsx",
-  "source_l02": "l02_20260707_123550.xlsx",
+  "source_l36": "l36_20260707_165108.xlsx",
+  "source_l02": "l02_20260707_165108.xlsx",
   "book_count": 638,
-  "synced_at": "2026-07-07T04:36:07.152159+00:00",
+  "synced_at": "2026-07-07T08:51:20.258715+00:00",
   "sync_via": "dingtalk-workspace-cli"
  },
  "books": {
@@ -20607,7 +20607,7 @@
    "extension": "Build cotton-ball snowmen; sequence picture cards.",
    "lexile": "210L - 400L",
    "cefr": "A1",
-   "phonics_rule": "long a (favorite open syllable), long oo (food)",
+   "phonics_rule": "short vowel phonics patterns in closed syllables",
    "syntax_focus": "Adjective modifying noun",
    "morphology_focus": "Comparative awareness (favorite)"
   },
