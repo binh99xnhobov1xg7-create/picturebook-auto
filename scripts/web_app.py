@@ -2342,7 +2342,7 @@ def _build_and_assemble_teaching_kit(
             official_story = _format_syllabus_story(outline.syllabus).strip()
         except Exception:
             official_story = ""
-    if official_story and (not raw or len(official_story.split()) > len(raw.split())):
+    if official_story:
         raw = official_story
 
     ec = None
@@ -2581,6 +2581,17 @@ def _render_upload_single_mode() -> None:
         else:
             st.session_state["_up_auto_hit"] = False
         st.session_state["_up_auto_sig"] = sig
+    else:
+        entry0 = _lookup_syllabus_entry(
+            st.session_state.get("up_level", LEVEL_OPTIONS[4]),
+            st.session_state.get("up_title", ""),
+            st.session_state.get("up_book_number", ""),
+        )
+    if entry0 is not None:
+        official0 = _format_syllabus_story(entry0)
+        current0 = str(st.session_state.get("up_raw_text", "") or "").strip()
+        if official0 and (not current0 or len(official0.split()) > len(current0.split()) + 8):
+            st.session_state["up_raw_text"] = official0
 
     c0, c1, c2 = st.columns([1, 1, 3])
     with c0:
@@ -2647,10 +2658,12 @@ def _render_upload_single_mode() -> None:
     if not files:
         st.error("请至少上传 1 个文件（PDF / PPTX / 图片）。")
         return
+    official_upload_story = _format_syllabus_story(entry) if entry is not None else ""
+    story_for_generation = official_upload_story or (up_text or "").strip()
 
     outline = _build_outline(
         title=up_title, level=up_level, book_number=up_book_number, cefr="", theme="",
-        ip_age=int(resolve_ip_age(up_level)), raw_story=(up_text or "").strip(),
+        ip_age=int(resolve_ip_age(up_level)), raw_story=story_for_generation,
         custom_chars_text="",
     )
     run_dir, img_dir, name_prefix = _upload_run_paths(outline)
@@ -2675,7 +2688,7 @@ def _render_upload_single_mode() -> None:
             "生成教辅三件套",
             _build_and_assemble_teaching_kit,
             title=up_title, level=up_level, book_number=up_book_number,
-            raw_story=(up_text or "").strip(), image_paths=image_paths,
+            raw_story=story_for_generation, image_paths=image_paths,
             run_dir=run_dir, rr_answers=rr_answers, ws_reading_q_count=rqc,
         )
     except Exception as e:
