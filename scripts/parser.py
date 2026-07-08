@@ -421,6 +421,42 @@ def _normalize_pages(raw: list[dict], title: str) -> list[PageSpec]:
     return pages
 
 
+def _syllabus_story_text(entry) -> str:
+    return re.sub(
+        r"\s+",
+        " ",
+        (
+            (getattr(entry, "text_7page", "") or "")
+            or (getattr(entry, "pure_text", "") or "")
+        ).strip(),
+    )
+
+
+def _split_story_to_pages(story: str, n_pages: int = 7) -> list[str]:
+    sents = [s.strip() for s in re.split(r"(?<=[.!?])\s+", (story or "").replace("\n", " ")) if s.strip()]
+    if not sents:
+        return [""] * n_pages
+    chunks: list[list[str]] = [[] for _ in range(n_pages)]
+    for i, sent in enumerate(sents):
+        idx = min(n_pages - 1, int(i * n_pages / max(1, len(sents))))
+        chunks[idx].append(sent)
+    return [" ".join(chunk).strip() for chunk in chunks]
+
+
+def _apply_syllabus_story_if_more_complete(outline: BookOutline, entry) -> None:
+    story = _syllabus_story_text(entry)
+    if not story:
+        return
+    current = (outline.story_text or "").strip()
+    if current and len(story.split()) <= len(current.split()) + 5:
+        return
+    for idx, text in enumerate(_split_story_to_pages(story, 7), start=1):
+        if idx < len(outline.pages) and text:
+            outline.pages[idx].text = text
+            if not (outline.pages[idx].scene or "").strip():
+                outline.pages[idx].scene = text[:120]
+
+
 # ---------- 官方 S&S 大纲注入 ----------
 def enrich_from_syllabus(outline: BookOutline) -> bool:
     """用官方 S&S 大纲（references/syllabus）补强 outline。
@@ -475,6 +511,7 @@ def enrich_from_syllabus(outline: BookOutline) -> bool:
         outline.phonics = entry.phonics_rule
     if entry.sentence_pattern:
         outline.grammar_focus = entry.sentence_pattern
+    _apply_syllabus_story_if_more_complete(outline, entry)
     if not outline.fiction_type and entry.genre in ("fiction", "nonfiction"):
         outline.fiction_type = "non-fiction" if entry.genre == "nonfiction" else "fiction"
 
