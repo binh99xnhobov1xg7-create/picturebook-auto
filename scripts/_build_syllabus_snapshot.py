@@ -28,6 +28,7 @@ DL = Path.home() / "下载"
 #   ~/下载/VIPKID/大纲/  ← 以后所有 S&S Excel 都放这里，优先从此处取最新版。
 # 兜底仍递归扫描整个 ~/下载（兼容历史/临时放置）。
 SEARCH_DIRS = [
+    REPO / "references" / "syllabus",
     DL / "VIPKID" / "大纲",
     DL / "VIPKID",
     DL,
@@ -350,7 +351,7 @@ def main() -> None:
 
     files = _scan_xlsx()
     f_l36 = next((p for n, p in files.items() if "3-6" in n), None)
-    f_l02 = next((p for n, p in files.items() if "0-Level 2" in n or "0-Level2" in n or "Level 0-Level" in n), None)
+    f_l02 = next((p for n, p in files.items() if "0-2" in n or "0-Level 2" in n or "0-Level2" in n or "Level 0-Level" in n), None)
 
     books: dict[str, dict] = {}
     sor_strategies: dict[str, dict] = {}

@@ -1,10 +1,8 @@
 {
  "_meta": {
-  "source_l36": "l36_20260708_211405.xlsx",
-  "source_l02": "l02_20260708_211405.xlsx",
-  "book_count": 637,
-  "synced_at": "2026-07-08T13:14:16.896342+00:00",
-  "sync_via": "dingtalk-workspace-cli"
+  "source_l36": "Level 3-6  S&S-7.8.xlsx",
+  "source_l02": "Level 0-2 S&S-7.8.xlsx",
+  "book_count": 637
  },
  "books": {
   "3::miaandthesevendayplan": {
@@ -38,9 +36,9 @@
     }
    ],
    "core_vocab_raw": "week, homework, plan, practice",
-   "text_7page": "Mia has many things to do this week. She has homework to finish. Her room is messy. The piano show is on Sunday. Mia wants to play well. Mia feels worried. She makes a seven-day plan. She will do homework first. She will clean her room on Tuesday. She will practice the piano every day. She will play for one hour a day. Mia is happy and proud of her plan. She will do homework first. She will clean her room on Tuesday. She will practice the piano every day. She will play for one hour a day. Mia is happy and proud of her plan.",
-   "pure_text": "Mia has many things to do this week. She has homework to finish. Her room is messy. The piano show is on Sunday. Mia wants to play well. Mia feels worried. She makes a seven-day plan. She will do homework first. She will clean her room on Tuesday. She will practice the piano every day. She will play for one hour a day. Mia is happy and proud of her plan. She will do homework first. She will clean her room on Tuesday. She will practice the piano every day. She will play for one hour a day. Mia is happy and proud of her plan.",
-   "word_count": "72",
+   "text_7page": "Mia has many things to do this week. She has homework to finish. Her room is messy. The piano show is on Sunday. Mia wants to play well. Mia feels worried. She makes a seven-day plan. She will do homework first. She will clean her room on Tuesday. She will practice the piano every day. She will play for one hour a day. Mia is happy and proud of her plan.",
+   "pure_text": "Mia has many things to do this week. She has homework to finish. Her room is messy. The piano show is on Sunday. Mia wants to play well. Mia feels worried. She makes a seven-day plan. She will do homework first. She will clean her room on Tuesday. She will practice the piano every day. She will play for one hour a day. Mia is happy and proud of her plan.",
+   "word_count": "71",
    "lexile": "210L - 400L",
    "cefr": "A1",
    "decoding_label": "Phonics Rule",
@@ -24798,83 +24796,5 @@
    "morphology_focus": "-ing ending; plural -s"
   }
  },
- "sor_strategies": {
-  "0": {
-   "before": [
-    "Build Background Knowledge & Oral Language",
-    "Explicit Vocabulary Instruction (2–3 Words)",
-    "Phonological Awareness Warm-Up (1–2 Minutes)",
-    "Preview a Target High-Frequency Word (if applicable)",
-    "Set a Purpose for Reading"
-   ],
-   "during": [
-    "Model Decoding Behaviors (Teacher Think-Aloud)",
-    "Finger Tracking to Reinforce Print Concepts",
-    "Echo Reading & Choral Reading",
-    "Use Picture–Text Integration to Support Meaning",
-    "Prompt Students Using the Scarborough Rope Components",
-    "Repeated Reading for Automaticity",
-    "Oral Language Check-ins (Comprehension)"
-   ],
-   "after": [
-    "Retell With Pictures Only",
-    "Sequencing With Visuals",
-    "Reinforce the Taught High-Frequency Word",
-    "Vocabulary Revisit",
-    "Phonological Awareness Exit Task (30 seconds)",
-    "Text-to-Self Connection (Simple + Concrete)",
-    "Draw-and-Tell Response"
-   ]
-  },
-  "1": {
-   "before": [
-    "Build Background Knowledge (Short + Explicit)",
-    "Phonological Awareness Warm-Up (2 minutes)",
-    "Phonics Review of Taught Patterns",
-    "High-Frequency Word Preview (1–2 words)",
-    "Set a Purpose for Reading"
-   ],
-   "during": [
-    "Prompt Students to Decode (NOT Guess)",
-    "Echo and Choral Reading for Fluency",
-    "Text-Based Questions That Support Comprehension",
-    "Integrate Decoding + Meaning",
-    "Reread for Automaticity",
-    "Monitor Understanding (Simple Checks)"
-   ],
-   "after": [
-    "Retell the Story Using Sequence Words",
-    "Word Work: Phonics Transfer",
-    "High-Frequency Word Review",
-    "Vocabulary Reinforcement",
-    "Simple Text-to-Self Connection",
-    "Writing or Drawing Response (Optional)"
-   ]
-  },
-  "2": {
-   "before": [
-    "Build Background Knowledge With Specific, Targeted Input",
-    "Phonological Awareness Warm-Up (Advanced PA)",
-    "Phonics Pattern Review",
-    "Preview 1–2 High-Frequency Words",
-    "Set a Meaning-Based Purpose for Reading"
-   ],
-   "during": [
-    "Encourage Accurate Decoding Before Meaning Checks",
-    "Soft Checks for Understanding",
-    "Decode → Clarify Meaning Loop",
-    "Model and Prompt Mental Imagery",
-    "Use Controlled Text-Based Discussion",
-    "Reread Sections for Fluency and Comprehension"
-   ],
-   "after": [
-    "Retell Using Story Grammar Elements",
-    "Build Automaticity With Phonics Patterns From the Text",
-    "High-Frequency Word Review and Application",
-    "Vocabulary Deepening",
-    "Short Written Response (Optional)",
-    "Text-to-Self or Text-to-Text Connections"
-   ]
-  }
- }
+ "sor_strategies": {}
 }
