@@ -2317,6 +2317,32 @@ def _official_rr_questions_from_syllabus(outline: BookOutline) -> list[dict]:
     return out[:6]
 
 
+def _sentence_chunks_for_story_pages(story: str, n_pages: int = 7) -> list[str]:
+    sents = [s.strip() for s in re.split(r"(?<=[.!?])\s+", (story or "").replace("\n", " ")) if s.strip()]
+    if not sents:
+        return [""] * n_pages
+    chunks: list[list[str]] = [[] for _ in range(n_pages)]
+    for i, sent in enumerate(sents):
+        idx = min(n_pages - 1, int(i * n_pages / max(1, len(sents))))
+        chunks[idx].append(sent)
+    return [" ".join(chunk).strip() for chunk in chunks]
+
+
+def _apply_official_story_pages(outline: BookOutline, story: str) -> None:
+    chunks = _sentence_chunks_for_story_pages(story, 7)
+    for i, text in enumerate(chunks, start=1):
+        if i < len(outline.pages) and text:
+            outline.pages[i].text = text
+            if not (outline.pages[i].scene or "").strip():
+                outline.pages[i].scene = text[:120]
+
+    full_story = " ".join(chunks).strip()
+    data = getattr(outline, "_worksheet_data", None)
+    if isinstance(data, dict) and full_story:
+        data["reading_text"] = full_story
+        setattr(outline, "_worksheet_data", data)
+
+
 def _build_and_assemble_teaching_kit(
     *,
     title: str,
@@ -2358,6 +2384,8 @@ def _build_and_assemble_teaching_kit(
     official_rr = _official_rr_questions_from_syllabus(outline)
     if official_rr:
         attach_rr_questions(outline, official_rr)
+    if official_story:
+        _apply_official_story_pages(outline, official_story)
 
     name_prefix = _name_prefix(outline)
     ws_path = run_dir / f"{name_prefix}_Worksheet.pptx"
