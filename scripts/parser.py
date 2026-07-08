@@ -462,7 +462,11 @@ def enrich_from_syllabus(outline: BookOutline) -> bool:
     # 仅在 outline 缺失时回填（不覆盖用户大纲里的显式值）
     if not outline.cefr and entry.cefr:
         outline.cefr = entry.cefr
-    if not outline.lexile and entry.lexile:
+    cur_lexile = (outline.lexile or "").strip()
+    # 上传模式偶尔会把 Book No.（如 "1"）带进 Lexile 字段。
+    # 这种裸数字不是合法 Lexile，允许被大纲官方 Lexile 覆盖；人工/分析器值如 450L 不覆盖。
+    lexile_is_book_no = bool(re.fullmatch(r"\d+(?:\.0)?", cur_lexile))
+    if (not cur_lexile or lexile_is_book_no) and entry.lexile:
         outline.lexile = entry.lexile
         outline.lexile_source = "syllabus"   # 块11：大纲官方值（有依据）
     if not outline.word_count_override and entry.word_count:
