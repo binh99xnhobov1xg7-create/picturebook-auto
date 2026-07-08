@@ -2252,6 +2252,71 @@ def _write_teaching_extract_txt(outline: BookOutline, ec, dest: Path) -> Path:
     return dest
 
 
+def _official_rr_questions_from_syllabus(outline: BookOutline) -> list[dict]:
+    """Convert syllabus Reading Report Questions text into the shared RR structure.
+
+    Upload mode should prefer the official syllabus questions whenever present,
+    so downstream RR / Worksheet Reading / TG Pause Points do not fall back to
+    "Question 1?" placeholders.
+    """
+    entry = getattr(outline, "syllabus", None)
+    raw = (getattr(entry, "rr_questions", "") or "").strip()
+    if not raw:
+        return []
+
+    story_pages = [
+        p for p in (getattr(outline, "pages", None) or [])
+        if getattr(p, "page_type", "") == "story" and (getattr(p, "text", "") or "").strip()
+    ]
+
+    def _infer_page(question: str, answer: str, pos: int) -> int | None:
+        hay = f"{question} {answer}".lower()
+        for page in story_pages:
+            txt = (getattr(page, "text", "") or "").lower()
+            if answer and answer.lower().strip(". ") in txt:
+                return int(getattr(page, "index", 0) or 0) + 1
+            words = [
+                w for w in re.findall(r"[a-zA-Z]{4,}", hay)
+                if w.lower() not in {"what", "when", "where", "which", "does", "will", "with", "this", "that", "they", "there", "every", "first"}
+            ]
+            if words and any(w.lower() in txt for w in words[:4]):
+                return int(getattr(page, "index", 0) or 0) + 1
+        if pos <= 4:
+            return min(8, pos + 1)
+        return None
+
+    out: list[dict] = []
+    for raw_line in raw.replace("\r", "").splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        line = re.sub(r"^\s*\d+[\.\)]\s*", "", line)
+        tag_match = re.match(r"^\((Under|On|Above)\)\s*", line, flags=re.I)
+        tag = (tag_match.group(1).lower() if tag_match else "")
+        if tag_match:
+            line = line[tag_match.end():].strip()
+
+        answer = ""
+        ans_match = re.search(r"\(([^()]*)\)\s*$", line)
+        if ans_match:
+            answer = ans_match.group(1).strip()
+            line = line[:ans_match.start()].strip()
+        question = line.strip()
+        if not question:
+            continue
+        if question[-1] not in "?!.":
+            question += "?"
+
+        stars = 3 if tag == "above" or re.search(r"\b(why|your|you ever|think)\b", question, re.I) else (1 if tag == "under" else 2)
+        out.append({
+            "q": question,
+            "answer": answer,
+            "stars": stars,
+            "page": _infer_page(question, answer, len(out) + 1),
+        })
+    return out[:6]
+
+
 def _build_and_assemble_teaching_kit(
     *,
     title: str,
@@ -2278,6 +2343,9 @@ def _build_and_assemble_teaching_kit(
     if ec is not None:
         attach_rr_questions(outline, ec.rr_questions)
         attach_worksheet_questions(outline, ec.worksheet_questions, reading_q_count=ws_reading_q_count)
+    official_rr = _official_rr_questions_from_syllabus(outline)
+    if official_rr:
+        attach_rr_questions(outline, official_rr)
 
     name_prefix = _name_prefix(outline)
     ws_path = run_dir / f"{name_prefix}_Worksheet.pptx"
