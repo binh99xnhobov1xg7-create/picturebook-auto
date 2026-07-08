@@ -2581,6 +2581,7 @@ def _extract_uploaded_page_images(uploaded_files, dest_dir: Path) -> list[Path]:
 
 
 def _render_upload_single_mode() -> None:
+    st.caption("RUN_VERSION=story-debug-cccd8a0")
     """单本：上传已有绘本 → WS + RR + TG。"""
     pending = st.session_state.pop("_up_pending_syllabus", None)
     if isinstance(pending, dict):
@@ -2634,6 +2635,14 @@ def _render_upload_single_mode() -> None:
         )
 
     entry = _lookup_syllabus_entry(up_level, up_title, up_book_number)
+    official_preview_story = _format_syllabus_story(entry) if entry is not None else ""
+    st.caption(
+        "SYLLABUS_STORY_DIAG | "
+        f"official_words={len(official_preview_story.split())} | "
+        f"current_words={len((st.session_state.get('up_raw_text', '') or '').split())} | "
+        f"official_has_end={'happy and proud' in official_preview_story} | "
+        f"current_has_end={'happy and proud' in (st.session_state.get('up_raw_text', '') or '')}"
+    )
     m1, m2 = st.columns([1, 3])
     with m1:
         if st.button("📥 匹配大纲", key="up_pull_syllabus", use_container_width=True):
