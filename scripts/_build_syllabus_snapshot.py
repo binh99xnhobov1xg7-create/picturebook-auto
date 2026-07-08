@@ -99,6 +99,8 @@ def _find(hmap: dict[str, int], *needles, exact: str | None = None) -> int:
         for k, i in hmap.items():
             if k.replace(" ", "") == ex:
                 return i
+        if not needles:
+            return -1
     for k, i in hmap.items():
         if all(n.lower() in k for n in needles):
             return i
@@ -135,11 +137,19 @@ def parse_l36(ws, level: str) -> dict[str, dict]:
     c_title = _find(h, "课文标题")
     c_pattern = _find(h, "句型")
     c_example = _find(h, "文中原句")
+    if c_example < 0:
+        c_example = _find(h, "sample sentence")
     c_focus = _find(h, "教学重点")
     c_text7 = _find(h, "课文正文调整")
     c_pure = _find(h, "纯正文")
+    if c_text7 < 0:
+        c_text7 = _find(h, "正文")
+    if c_pure < 0:
+        c_pure = c_text7
     c_words = _find(h, "总字数")
     c_lex = _find(h, exact="Lexile")
+    if c_lex < 0:
+        c_lex = _find(h, "lexile")
     c_cefr = _find(h, exact="CEFR")
     c_phonics = _find(h, "phonics rule")
     if c_phonics < 0:
