@@ -21,6 +21,7 @@
 """
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import random
 import re
@@ -1456,7 +1457,11 @@ def build_worksheet(
     if use_template and n_template:
         sld_lst = prs.slides._sldIdLst
         for sld in list(sld_lst)[:n_template]:
+            r_id = getattr(sld, "rId", None)
             sld_lst.remove(sld)
+            if r_id:
+                with contextlib.suppress(Exception):
+                    prs.part.drop_rel(r_id)
 
     # 全局收尾：锁死所有方格(自选图形)的 auto_size → 禁止随文字缩放，
     # 保证所有级别、所有页的方格严格等大、排版统一（用户硬要求 2026-06-04）。
@@ -3971,10 +3976,36 @@ def _resolve_worksheet_data(outline: BookOutline) -> dict:
         norm = _normalize_worksheet_data(data)
     else:
         norm = _normalize_worksheet_data(_build_default_data(outline))
+    norm = _apply_official_vocab_to_worksheet_data(outline, norm)
     # L3+ 词汇页（猜词/填缺字母）依赖真实释义 → 保证补全，杜绝 "meaning of X" 占位
     if _level_num(getattr(outline, "level", "") or "") >= 3 and norm.get("match_pairs"):
         norm["match_pairs"] = _ensure_real_vocab_defs(norm["match_pairs"], outline)
     return norm
+
+
+def _apply_official_vocab_to_worksheet_data(outline: BookOutline, data: dict) -> dict:
+    official_words = _verbatim_vocab(outline, 6)
+    if not official_words:
+        return data
+    out = dict(data or {})
+    old_defs = {
+        str(p.get("word", "")).strip().lower(): str(p.get("def", "")).strip()
+        for p in (out.get("match_pairs") or [])
+        if str(p.get("word", "")).strip()
+    }
+    out["match_pairs"] = [
+        {"word": w, "def": old_defs.get(w.lower(), f"word from the story: {w}")}
+        for w in official_words[:5]
+    ]
+    out["word_bank"] = official_words[:6]
+    cloze = _story_cloze_fills(out.get("reading_text", ""), official_words, 4)
+    if len(cloze) >= 2:
+        out["fill_blanks"] = [
+            {"sentence": format_sentence_answer(c["sentence"]),
+             "answer": format_word_answer(c["answer"])}
+            for c in cloze
+        ]
+    return out
 
 
 # ----- v1.8 文本规整：所有英文走美式 + 答案格式 + 难度排序 -----

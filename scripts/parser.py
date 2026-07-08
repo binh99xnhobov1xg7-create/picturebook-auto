@@ -473,6 +473,8 @@ def enrich_from_syllabus(outline: BookOutline) -> bool:
         outline.word_count_override = entry.word_count
     if not outline.phonics and entry.phonics_rule:
         outline.phonics = entry.phonics_rule
+    if entry.sentence_pattern:
+        outline.grammar_focus = entry.sentence_pattern
     if not outline.fiction_type and entry.genre in ("fiction", "nonfiction"):
         outline.fiction_type = "non-fiction" if entry.genre == "nonfiction" else "fiction"
 

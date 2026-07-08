@@ -2335,11 +2335,23 @@ def _build_and_assemble_teaching_kit(
         title=title, level=level, book_number=book_number, cefr="", theme="",
         ip_age=int(ip_age), raw_story=raw, custom_chars_text="",
     )
+    enrich_from_syllabus(outline)
+    official_story = ""
+    if getattr(outline, "syllabus", None) is not None:
+        try:
+            official_story = _format_syllabus_story(outline.syllabus).strip()
+        except Exception:
+            official_story = ""
+    if official_story and (not raw or len(official_story.split()) > len(raw.split())):
+        raw = official_story
+
     ec = None
     if raw:
         ec = extract_all(raw_story=raw, title=title, level=level, cefr="", theme="")
         apply_extracted_to_outline(outline, ec)
     enrich_from_syllabus(outline)
+    if ec is not None:
+        _sync_ec_from_syllabus(ec, outline)
     if ec is not None:
         attach_rr_questions(outline, ec.rr_questions)
         attach_worksheet_questions(outline, ec.worksheet_questions, reading_q_count=ws_reading_q_count)
