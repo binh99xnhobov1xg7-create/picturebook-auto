@@ -1,9 +1,9 @@
 {
  "_meta": {
-  "source_l36": "l36_20260708_134652.xlsx",
-  "source_l02": "l02_20260708_134652.xlsx",
+  "source_l36": "l36_20260708_205227.xlsx",
+  "source_l02": "l02_20260708_205227.xlsx",
   "book_count": 637,
-  "synced_at": "2026-07-08T05:47:03.457042+00:00",
+  "synced_at": "2026-07-08T12:52:41.273491+00:00",
   "sync_via": "dingtalk-workspace-cli"
  },
  "books": {
@@ -11030,9 +11030,9 @@
    "core_vocab_raw": "road, fence, field, barn, cow, tractor, farmer",
    "vocab_mastery": [
     "road",
-    "barn",
-    "cow",
-    "farmer"
+    "fence",
+    "field",
+    "barn"
    ],
    "vocab_exposure": [
     "fence",
@@ -11154,7 +11154,7 @@
    "extension": "Play mini-games; Sort indoor/outdoor games; Draw your favorite game.",
    "lexile": "10L - 200L",
    "cefr": "Pre-A1",
-   "phonics_rule": "Primary Phonics Focus: Long a CVCe (game)",
+   "phonics_rule": "Primary Phonics Focus: Short a sound (tag, catch, baseball, basketball )",
    "syntax_focus": "Morphology Focus: plural -s explicit",
    "morphology_focus": "Syntax Focus: Simple noun labeling",
    "comprehension_tier": "Comprehension Tier: Tier 1",
@@ -15962,7 +15962,7 @@
    "extension": "Draw your bear; describe textures; sort soft vs. hard objects",
    "lexile": "10L - 200L",
    "cefr": "A1",
-   "phonics_rule": "long oy (toy),",
+   "phonics_rule": "long oy (toy)",
    "syntax_focus": "Simple descriptive frame (“My toy is ___.”)",
    "morphology_focus": "None explicit",
    "comprehension_tier": "Gentle narrative tone"
