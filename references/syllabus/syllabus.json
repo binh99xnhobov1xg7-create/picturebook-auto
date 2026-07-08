@@ -1,9 +1,9 @@
 {
  "_meta": {
-  "source_l36": "l36_20260708_205227.xlsx",
-  "source_l02": "l02_20260708_205227.xlsx",
+  "source_l36": "l36_20260708_211405.xlsx",
+  "source_l02": "l02_20260708_211405.xlsx",
   "book_count": 637,
-  "synced_at": "2026-07-08T12:52:41.273491+00:00",
+  "synced_at": "2026-07-08T13:14:16.896342+00:00",
   "sync_via": "dingtalk-workspace-cli"
  },
  "books": {
@@ -38,8 +38,8 @@
     }
    ],
    "core_vocab_raw": "week, homework, plan, practice",
-   "text_7page": "Mia has many things to do this week. She has homework to finish. Her room is messy. The piano show is on Sunday. Mia wants to play well. Mia feels worried. She makes a seven-day plan. She will do homework first. She will clean her room on Tuesday. She will practice the piano every day. She will play for one hour a day. Mia is happy and proud of her plan.",
-   "pure_text": "Mia has many things to do this week. She has homework to finish. Her room is messy. The piano show is on Sunday. Mia wants to play well. Mia feels worried. She makes a seven-day plan. She will do homework first. She will clean her room on Tuesday. She will practice the piano every day. She will play for one hour a day. Mia is happy and proud of her plan.",
+   "text_7page": "Mia has many things to do this week. She has homework to finish. Her room is messy. The piano show is on Sunday. Mia wants to play well. Mia feels worried. She makes a seven-day plan. She will do homework first. She will clean her room on Tuesday. She will practice the piano every day. She will play for one hour a day. Mia is happy and proud of her plan. She will do homework first. She will clean her room on Tuesday. She will practice the piano every day. She will play for one hour a day. Mia is happy and proud of her plan.",
+   "pure_text": "Mia has many things to do this week. She has homework to finish. Her room is messy. The piano show is on Sunday. Mia wants to play well. Mia feels worried. She makes a seven-day plan. She will do homework first. She will clean her room on Tuesday. She will practice the piano every day. She will play for one hour a day. Mia is happy and proud of her plan. She will do homework first. She will clean her room on Tuesday. She will practice the piano every day. She will play for one hour a day. Mia is happy and proud of her plan.",
    "word_count": "72",
    "lexile": "210L - 400L",
    "cefr": "A1",
