@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import math
+import re
 from pathlib import Path
 from typing import Optional
 
@@ -758,6 +759,7 @@ def _resolve_rr_questions(outline: BookOutline) -> list[dict]:
     """
     raw = getattr(outline, "_rr_questions", None)
     dist = config.rr_question_distribution(outline.level)
+    page_lookup = _story_page_lookup(outline)
 
     def _page_for(i: int, stars: int) -> int | None:
         # 末尾开放拓展题 ⭐⭐⭐ 无页码；事实题落在 P2-P8（i 从 0 起 → i+2）。
@@ -767,12 +769,16 @@ def _resolve_rr_questions(outline: BookOutline) -> list[dict]:
         normalized: list[dict] = []
         for i, q in enumerate(raw[:len(dist)]):
             stars = dist[i]
-            page = None if _rr_omit_page(stars) else (q.get("page") or (i + 2))
+            answer = str(q.get("answer") or q.get("sample") or "").strip()
+            question = str(q.get("q") or q.get("question") or "").strip()
+            page = None if _rr_omit_page(stars) else (
+                _page_from_question_answer(question, answer, page_lookup) or q.get("page") or (i + 2)
+            )
             normalized.append({
-                "q": str(q.get("q") or q.get("question") or "").strip(),
+                "q": question,
                 "stars": stars,
                 "page": page,
-                "answer": str(q.get("answer") or q.get("sample") or "").strip(),
+                "answer": answer,
             })
         while len(normalized) < len(dist):
             i = len(normalized)
@@ -801,6 +807,43 @@ def _rr_omit_page(stars: int) -> bool:
         return int(stars) >= 3
     except (TypeError, ValueError):
         return False
+
+
+def _story_page_lookup(outline: BookOutline) -> list[tuple[int, str]]:
+    pages: list[tuple[int, str]] = []
+    for page in outline.pages:
+        text = (getattr(page, "text", "") or "").strip()
+        if getattr(page, "page_type", "") == "story" and text:
+            pages.append((page.index + 1, text.lower()))
+    return pages
+
+
+def _page_from_question_answer(question: str, answer: str, page_lookup: list[tuple[int, str]]) -> int | None:
+    q = (question or "").strip().lower()
+    ans = (answer or "").strip().lower()
+    if not (q or ans):
+        return None
+    for page_no, text in page_lookup:
+        if ans and ans in text and len(ans) >= 12:
+            return page_no
+    stop = {
+        "what", "when", "where", "which", "will", "does", "did", "the", "and",
+        "this", "that", "with", "many", "much", "next",
+    }
+    words = [
+        w for w in re.findall(r"[a-zA-Z]+", f"{q} {ans}")
+        if len(w) >= 4 and w not in stop
+    ]
+    if not words:
+        return None
+    best_page = None
+    best_score = 0
+    for page_no, text in page_lookup:
+        score = sum(1 for w in words if w.lower() in text)
+        if score > best_score:
+            best_page = page_no
+            best_score = score
+    return best_page if best_score >= min(2, len(words)) else None
 
 
 def _default_reader_type(outline) -> str:

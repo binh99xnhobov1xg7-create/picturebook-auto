@@ -97,7 +97,7 @@ FONT_BLANK = "Arial"
 TITLE_PT = 40
 SUBTITLE_PT = 20
 BODY_PT = 18
-READING_PT = 13
+READING_PT = 14
 QNUM_PT = 18
 HEADER_PT = 20  # mind map 表头
 LOGO_TEXT_PT = 20
@@ -933,6 +933,28 @@ def _fix_name_badge(slide) -> None:
             except Exception:
                 pass
             return
+    badge = slide.shapes.add_shape(
+        MSO_SHAPE.ROUNDED_RECTANGLE,
+        Inches(NAME_X), Inches(NAME_Y), Inches(NAME_W), Inches(NAME_H),
+    )
+    badge.fill.solid()
+    badge.fill.fore_color.rgb = NAME_FILL
+    badge.line.fill.background()
+    tf = badge.text_frame
+    tf.clear()
+    tf.word_wrap = False
+    try:
+        tf.auto_size = MSO_AUTO_SIZE.NONE
+    except Exception:
+        pass
+    p = tf.paragraphs[0]
+    p.alignment = PP_ALIGN.CENTER
+    r = p.add_run()
+    r.text = "Name"
+    r.font.name = FONT
+    r.font.size = Pt(NAME_PT)
+    r.font.bold = True
+    r.font.color.rgb = WHITE
 
 
 def _retell_writing_scaffold(outline: BookOutline) -> dict:

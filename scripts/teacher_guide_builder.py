@@ -398,9 +398,7 @@ def _build_during_reading(doc, outline: BookOutline, band: str, is_nf: bool) -> 
         _tagged(doc, "Teacher Says:", f"\"Look at this page. {text}\"".strip())
         _tagged(doc, "Teacher Asks:", "\"What do you see here? What do you think is happening?\"")
         _tagged(doc, "Expected Response:", "Students describe or predict what they see.")
-        _tagged(doc, "Teacher Confirms / Expands:",
-                "Introduce any core vocabulary that appears here in context: "
-                "\"Yes! This is called [word] - [brief meaning]. [Sentence from the book].\"")
+        _tagged(doc, "Teacher Confirms / Expands:", _page_vocab_prompt(outline, text))
 
     # --- Detailed Reading ---
     _heading(doc, "Step 2: Detailed Reading (15 minutes)", level=3)
@@ -411,6 +409,9 @@ def _build_during_reading(doc, outline: BookOutline, band: str, is_nf: bool) -> 
         _tagged(doc, "Finger Tracking:",
                 "Point under each word as it is read so students match each spoken word to its printed word "
                 "(left-to-right, return sweep). Have students track with their own finger during choral reading.")
+    _heading(doc, "Page-by-Page Reading Script", level=4)
+    for printed, text in _printed_story_pages(outline):
+        _tagged(doc, f"Page {printed}:", f"Teacher reads: \"{text}\"")
     pause_points = _pause_points(outline, is_nf, band)
     for pp in pause_points:
         _heading(doc, f"\u23f8 {pp['label']} - Pages {pp['pages']}", level=4)
@@ -623,6 +624,32 @@ def _story_page(outline: BookOutline, printed_page: int):
     return None
 
 
+def _printed_story_pages(outline: BookOutline) -> list[tuple[int, str]]:
+    pages: list[tuple[int, str]] = []
+    for p in outline.pages:
+        if p.page_type == "story" and (p.text or "").strip():
+            pages.append((p.index + 1, _clean_quotes((p.text or "").strip())))
+    return pages
+
+
+def _page_vocab_prompt(outline: BookOutline, page_text: str) -> str:
+    text = _clean_quotes(page_text or "").strip()
+    words = _vocab_words(outline)
+    hits = [
+        w for w in words
+        if w and re.search(rf"\b{re.escape(w)}\b", text, flags=re.IGNORECASE)
+    ]
+    if hits:
+        word = hits[0]
+        return (
+            f"Highlight the word \"{word}\" in context: "
+            f"\"Yes, {word} is one of our core words. Listen to the sentence: {text}\""
+        )
+    if text:
+        return f"Confirm the meaning with the actual sentence from this page: \"{text}\""
+    return "Confirm students' ideas using the picture and the sentence on this page."
+
+
 def _pause_points(outline: BookOutline, is_nf: bool, band: str = "mid") -> list[dict]:
     """从 rr_questions 生成 2-3 个 Pause Point，按星级打 [L0]/[L1]/[L2] 标签。
 
@@ -798,8 +825,7 @@ def _build_writing_task(doc, outline: BookOutline, band: str, is_nf: bool) -> No
         sample = ("I learned that bats sleep in the day. One important fact is that they hunt at night, and it helps "
                   "control insects. This matters because it keeps nature in balance.")
     else:
-        sample = ("At the beginning, Sam felt nervous because it was his first day. Then, a new friend said hello, so "
-                  "Sam smiled. In the end, Sam felt happy and learned that friends help us feel brave.")
+        sample = _story_sample_answer(outline)
     _tagged(doc, "Sample Answer:", "")
     _para_italic(doc, sample)
 
@@ -1018,6 +1044,29 @@ def _format_vocab(outline: BookOutline) -> str:
     return ", ".join(_vocab_words(outline)) or "the target vocabulary"
 
 
+def _story_sentences(outline: BookOutline) -> list[str]:
+    sentences: list[str] = []
+    for _, page_text in _printed_story_pages(outline):
+        for part in re.split(r"(?<=[.!?])\s+", page_text):
+            s = _clean_quotes(part).strip()
+            if s:
+                sentences.append(s)
+    return sentences
+
+
+def _story_sample_answer(outline: BookOutline) -> str:
+    sentences = _story_sentences(outline)
+    if not sentences:
+        return (
+            f"At the beginning, the story introduces {capitalize_names(outline.title)}. "
+            "Then, the character faces a problem and makes a plan. In the end, the problem is solved."
+        )
+    first = sentences[0]
+    middle = sentences[len(sentences) // 2] if len(sentences) > 2 else sentences[-1]
+    last = sentences[-1]
+    return f"At the beginning, {first} Then, {middle} In the end, {last}"
+
+
 def _oral_word_count(outline: BookOutline) -> int:
     return min(4, max(2, len(_vocab_words(outline)) or 4))
 
@@ -1134,6 +1183,10 @@ def _divider(doc, color: str = C_BLUE) -> None:
 def _heading(doc, text: str, level: int = 2) -> None:
     """彩色标题：Part(2)=主蓝大号+下分隔线；小节(3)=深蓝；页/活动(4)=深蓝中号。"""
     p = doc.add_paragraph()
+    try:
+        p.style = f"Heading {min(max(int(level), 1), 4)}"
+    except Exception:
+        pass
     p.alignment = WD_ALIGN_PARAGRAPH.LEFT
     p.paragraph_format.space_before = Pt(10 if level <= 2 else 7)
     p.paragraph_format.space_after = Pt(3)
