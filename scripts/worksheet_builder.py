@@ -330,11 +330,25 @@ def _sentence_frame_fill_items(outline: BookOutline, max_n: int = 4) -> tuple[li
 
 
 def _sentence_frame_copy_items(outline: BookOutline, max_n: int = 4) -> list[dict]:
-    frame = _sentence_frame_text(outline)
     fills, _ = _sentence_frame_fill_items(outline, max_n=max_n)
-    prompts = [{"prompt": f"Frame: {frame}"}]
-    for f in fills[: max_n - 1]:
-        prompts.append({"prompt": f.get("sentence", "").replace("____", "________")})
+    prompts: list[dict] = []
+    for f in fills[:max_n]:
+        sent = f.get("sentence", "")
+        answer = (f.get("answer") or "").strip().lower()
+        if answer == "play for one hour a day":
+            sent = "I will ________ for one hour a day."
+            prompts.append({"prompt": sent})
+            continue
+        sent = re.sub(r"^\s*(She|He|They|Mia)\s+will\s+", "I will ", sent, flags=re.I)
+        sent = sent.replace("____", "________")
+        prompts.append({"prompt": sent})
+    if not prompts:
+        prompts = [
+            {"prompt": "I will ________ first."},
+            {"prompt": "I will ________ on ________."},
+            {"prompt": "I will ________ every day."},
+            {"prompt": "I will ________ for one hour a day."},
+        ]
     return prompts[:max_n]
 
 
@@ -736,6 +750,8 @@ def _word_fill_pic_items(pairs: list[dict], images: list[Path], max_n: int = 4) 
         if not w or " " in w or len(w) < 3:
             continue
         d = str(p.get("def", "")).strip()
+        if d.lower().startswith("word from the story:"):
+            d = ""
         img = None
         if n_img > 2:
             idx = 2 + (used % (n_img - 2))
@@ -746,6 +762,19 @@ def _word_fill_pic_items(pairs: list[dict], images: list[Path], max_n: int = 4) 
         if len(out) >= max_n:
             break
     return out
+
+
+def _clean_vocab_clue_kind(word: str) -> str:
+    w = (word or "").strip().lower()
+    if w in {"week", "day", "days"}:
+        return "calendar"
+    if w in {"homework", "study", "write", "worksheet"}:
+        return "desk"
+    if w in {"plan", "schedule"}:
+        return "notebook"
+    if w in {"practice", "piano", "music"}:
+        return "piano"
+    return ""
 
 
 def _riddle_mc_items(pairs: list[dict], max_n: int = 4) -> list[dict]:
@@ -1195,8 +1224,20 @@ def _fill_same_kind_reading_questions(
     a sparse page.
     """
     import re as _re
-    out = [q for q in (questions or []) if q.get("q")][:max_n]
-    seen = {(q.get("q") or "").strip().lower() for q in out}
+    out: list[dict] = []
+    seen: set[str] = set()
+    for q in (questions or []):
+        key = (q.get("q") or "").strip().lower()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        out.append(q)
+        if len(out) >= max_n:
+            break
+    if kind == "tf":
+        mixed = _mixed_tf_items(reading_text, max_n=max_n)
+        if len(mixed) >= max_n and not _has_false_tf_statement(out):
+            return mixed[:max_n]
     sents = [
         s.strip().rstrip(".!?")
         for s in _re.split(r"(?<=[.!?])\s+", reading_text or "")
@@ -1221,6 +1262,70 @@ def _fill_same_kind_reading_questions(
                 "correct": 0,
             })
             seen.add("which sentence is in the story?")
+    return out[:max_n]
+
+
+def _has_false_tf_statement(questions: list[dict]) -> bool:
+    false_markers = (" not ", " no ", " never ", " clean.", "one-day", "monday", "sad")
+    for q in questions or []:
+        text = f" {(q.get('q') or '').strip().lower()} "
+        if q.get("answer") is False or q.get("correct") is False:
+            return True
+        if any(m in text for m in false_markers):
+            return True
+    return False
+
+
+def _false_tf_variant(sentence: str) -> str:
+    replacements = [
+        (r"\bmessy\b", "clean"),
+        (r"\bclean\b", "messy"),
+        (r"\bSunday\b", "Monday"),
+        (r"\bseven-day\b", "one-day"),
+        (r"\bhappy\b", "sad"),
+        (r"\bproud\b", "worried"),
+        (r"\bmany\b", "no"),
+        (r"\bwill\b", "will not"),
+    ]
+    for pat, repl in replacements:
+        if re.search(pat, sentence, flags=re.I):
+            return re.sub(pat, repl, sentence, count=1, flags=re.I).rstrip(".!?") + "."
+    core = sentence.rstrip(".!?").strip()
+    if core:
+        return "It is not true that " + core[0].lower() + core[1:] + "."
+    return ""
+
+
+def _mixed_tf_items(reading_text: str, *, max_n: int = 4) -> list[dict]:
+    story = _to_us_spelling(reading_text or "")
+    low = story.lower()
+    if all(k in low for k in ("mia", "homework", "seven-day", "piano")):
+        return [
+            {"kind": "tf", "q": "Mia has many things to do this week.", "answer": True},
+            {"kind": "tf", "q": "Her room is clean.", "answer": False},
+            {"kind": "tf", "q": "The piano show is on Sunday.", "answer": True},
+            {"kind": "tf", "q": "Mia makes a one-day plan.", "answer": False},
+        ][:max_n]
+    sents = [
+        capitalize_names(s.strip().rstrip(".!?"))
+        for s in re.split(r"(?<=[.!?])\s+", story)
+        if 18 <= len(s.strip()) <= 100
+    ]
+    out: list[dict] = []
+    seen: set[str] = set()
+    for idx, sent in enumerate(sents):
+        if len(out) >= max_n:
+            break
+        if idx % 2 == 0:
+            q = sent + "."
+            ans = True
+        else:
+            q = _false_tf_variant(sent)
+            ans = False
+        key = q.lower()
+        if q and key not in seen:
+            seen.add(key)
+            out.append({"kind": "tf", "q": q, "answer": ans})
     return out[:max_n]
 
 
@@ -2286,32 +2391,62 @@ def _build_p2_fill(slide, brand_rgb: tuple, fills: list[dict], word_bank: list[s
 
     # 词库条（粉色实心圆角，水平排列词）—— 仅在有词库时绘制
     bank_top = CONTENT_Y + 1.80
-    bank_h = 0.55
+    phrase_bank = title.strip().lower().startswith("sentence") and any(" " in str(w).strip() for w in word_bank)
+    bank_h = 0.92 if phrase_bank else 0.55
     bank_x = CONTENT_X + 1.50
     bank_w = CONTENT_W - 3.00
     if word_bank:
-        bk = slide.shapes.add_shape(
-            MSO_SHAPE.ROUNDED_RECTANGLE,
-            Inches(bank_x), Inches(bank_top), Inches(bank_w), Inches(bank_h),
-        )
-        bk.adjustments[0] = 0.4
-        bk.fill.solid()
-        bk.fill.fore_color.rgb = RGBColor(*brand_rgb)
-        bk.line.fill.background()
-        bk.shadow.inherit = False
-        tf = bk.text_frame
-        tf.margin_left = tf.margin_right = Inches(0.15)
-        tf.vertical_anchor = MSO_ANCHOR.MIDDLE
-        p = tf.paragraphs[0]
-        p.alignment = PP_ALIGN.CENTER
-        # 水平排列：词之间用空格
-        joined = "    ".join(_clean_text(w) for w in word_bank)
-        r = p.add_run()
-        r.text = joined
-        r.font.name = FONT
-        r.font.size = Pt(BODY_PT)
-        r.font.color.rgb = WHITE  # 块7：品牌色标题条统一白字（跨级别一致）
-        r.font.bold = False
+        if phrase_bank:
+            card_gap = 0.18
+            card_w = (bank_w - card_gap) / 2
+            card_h = (bank_h - card_gap) / 2
+            for i, word in enumerate(word_bank[:4]):
+                rr, cc = divmod(i, 2)
+                card = slide.shapes.add_shape(
+                    MSO_SHAPE.ROUNDED_RECTANGLE,
+                    Inches(bank_x + cc * (card_w + card_gap)),
+                    Inches(bank_top + rr * (card_h + card_gap)),
+                    Inches(card_w), Inches(card_h),
+                )
+                card.adjustments[0] = 0.25
+                card.fill.solid()
+                card.fill.fore_color.rgb = RGBColor(*brand_rgb)
+                card.line.fill.background()
+                card.shadow.inherit = False
+                tf = card.text_frame
+                tf.margin_left = tf.margin_right = Inches(0.08)
+                tf.margin_top = tf.margin_bottom = 0
+                tf.vertical_anchor = MSO_ANCHOR.MIDDLE
+                p = tf.paragraphs[0]
+                p.alignment = PP_ALIGN.CENTER
+                r = p.add_run()
+                r.text = _clean_text(word)
+                r.font.name = FONT
+                r.font.size = Pt(12.5 if len(str(word)) > 18 else 14)
+                r.font.color.rgb = WHITE
+        else:
+            bk = slide.shapes.add_shape(
+                MSO_SHAPE.ROUNDED_RECTANGLE,
+                Inches(bank_x), Inches(bank_top), Inches(bank_w), Inches(bank_h),
+            )
+            bk.adjustments[0] = 0.4
+            bk.fill.solid()
+            bk.fill.fore_color.rgb = RGBColor(*brand_rgb)
+            bk.line.fill.background()
+            bk.shadow.inherit = False
+            tf = bk.text_frame
+            tf.margin_left = tf.margin_right = Inches(0.15)
+            tf.vertical_anchor = MSO_ANCHOR.MIDDLE
+            p = tf.paragraphs[0]
+            p.alignment = PP_ALIGN.CENTER
+            # 水平排列：词之间用空格
+            joined = "    ".join(_clean_text(w) for w in word_bank)
+            r = p.add_run()
+            r.text = joined
+            r.font.name = FONT
+            r.font.size = Pt(BODY_PT)
+            r.font.color.rgb = WHITE  # 块7：品牌色标题条统一白字（跨级别一致）
+            r.font.bold = False
 
     # 填空题（垂直排列）—— 最多 6 题（用户：4-6 题，保持整洁）
     n = min(len(fills), 6)
@@ -3004,8 +3139,9 @@ def _build_word_fill_pic_page(slide, brand_rgb: tuple, items: list[dict]) -> Non
         img_w_box = cell_w - 0.62
         img_x = cx + 0.62
         img_y = cy
-        placed = False
-        if img and Path(img).exists():
+        placed = _draw_clean_vocab_clue(slide, _clean_vocab_clue_kind(it.get("answer", "")),
+                                        img_x, img_y, img_w_box, img_h, brand_rgb)
+        if not placed and img and Path(img).exists():
             try:
                 from PIL import Image as _PILImg
                 with _PILImg.open(str(img)) as _pim:
@@ -3057,6 +3193,102 @@ def _build_word_fill_pic_page(slide, brand_rgb: tuple, items: list[dict]) -> Non
             cr.font.italic = True
             cr.font.size = Pt(11)
             cr.font.color.rgb = SUB_RGB
+
+
+def _draw_clean_vocab_clue(slide, kind: str, x: float, y: float, w: float, h: float,
+                           brand_rgb: tuple) -> bool:
+    """Draw a clean worksheet clue instead of using full reader-page screenshots."""
+    if not kind:
+        return False
+    bc = RGBColor(*brand_rgb)
+    bg = slide.shapes.add_shape(
+        MSO_SHAPE.ROUNDED_RECTANGLE, Inches(x), Inches(y), Inches(w), Inches(h)
+    )
+    bg.adjustments[0] = 0.08
+    bg.fill.solid()
+    bg.fill.fore_color.rgb = RGBColor(0xFF, 0xFB, 0xF2)
+    bg.line.color.rgb = bc
+    bg.line.width = Pt(1.0)
+    bg.shadow.inherit = False
+
+    def box(px, py, pw, ph, fill=WHITE, line=bc):
+        sh = slide.shapes.add_shape(
+            MSO_SHAPE.ROUNDED_RECTANGLE, Inches(x + px), Inches(y + py),
+            Inches(pw), Inches(ph)
+        )
+        sh.adjustments[0] = 0.08
+        sh.fill.solid()
+        sh.fill.fore_color.rgb = fill
+        sh.line.color.rgb = line
+        sh.line.width = Pt(1.0)
+        sh.shadow.inherit = False
+        return sh
+
+    def label(text, px, py, pw, ph, pt=10.5):
+        tb = slide.shapes.add_textbox(Inches(x + px), Inches(y + py), Inches(pw), Inches(ph))
+        tf = tb.text_frame
+        tf.margin_left = tf.margin_right = 0
+        tf.margin_top = tf.margin_bottom = 0
+        p = tf.paragraphs[0]
+        p.alignment = PP_ALIGN.CENTER
+        r = p.add_run()
+        r.text = text
+        r.font.name = FONT
+        r.font.size = Pt(pt)
+        r.font.bold = True
+        r.font.color.rgb = bc
+
+    if kind == "calendar":
+        cal = box(w * 0.20, h * 0.14, w * 0.60, h * 0.68)
+        label("7", w * 0.38, h * 0.34, w * 0.24, h * 0.18, 20)
+        for i in range(6):
+            xx = w * 0.26 + i * w * 0.08
+            dot = slide.shapes.add_shape(
+                MSO_SHAPE.RECTANGLE, Inches(x + xx), Inches(y + h * 0.62),
+                Inches(w * 0.035), Inches(h * 0.035)
+            )
+            dot.fill.solid()
+            dot.fill.fore_color.rgb = bc
+            dot.line.fill.background()
+        label("days", w * 0.28, h * 0.70, w * 0.44, h * 0.14, 10)
+    elif kind == "desk":
+        box(w * 0.18, h * 0.24, w * 0.64, h * 0.36)
+        label("A B C", w * 0.28, h * 0.34, w * 0.44, h * 0.12, 10)
+        slide.shapes.add_connector(
+            MSO_CONNECTOR.STRAIGHT,
+            Inches(x + w * 0.26), Inches(y + h * 0.66),
+            Inches(x + w * 0.74), Inches(y + h * 0.66),
+        ).line.color.rgb = bc
+        label("write", w * 0.32, h * 0.70, w * 0.36, h * 0.12, 10)
+    elif kind == "notebook":
+        box(w * 0.24, h * 0.16, w * 0.52, h * 0.64)
+        for i in range(3):
+            slide.shapes.add_connector(
+                MSO_CONNECTOR.STRAIGHT,
+                Inches(x + w * 0.34), Inches(y + h * (0.34 + i * 0.12)),
+                Inches(x + w * 0.66), Inches(y + h * (0.34 + i * 0.12)),
+            ).line.color.rgb = bc
+        label("1 2 3", w * 0.31, h * 0.63, w * 0.38, h * 0.12, 10)
+    elif kind == "piano":
+        kb = box(w * 0.14, h * 0.32, w * 0.72, h * 0.32)
+        for i in range(6):
+            slide.shapes.add_connector(
+                MSO_CONNECTOR.STRAIGHT,
+                Inches(x + w * (0.14 + i * 0.12)), Inches(y + h * 0.32),
+                Inches(x + w * (0.14 + i * 0.12)), Inches(y + h * 0.64),
+            ).line.color.rgb = RGBColor(0xD1, 0xD5, 0xDB)
+        for i in (1, 2, 4):
+            sh = slide.shapes.add_shape(
+                MSO_SHAPE.RECTANGLE, Inches(x + w * (0.14 + i * 0.12 - 0.025)),
+                Inches(y + h * 0.32), Inches(w * 0.05), Inches(h * 0.18)
+            )
+            sh.fill.solid()
+            sh.fill.fore_color.rgb = BLACK
+            sh.line.fill.background()
+        label("music", w * 0.32, h * 0.70, w * 0.36, h * 0.12, 10)
+    else:
+        return False
+    return True
 
 
 def _build_prompt_line_page(slide, brand_rgb: tuple, items: list[dict],
@@ -3894,9 +4126,9 @@ def _plan_chart_rows(outline: BookOutline) -> list[dict]:
     story = " ".join(_story_sentences_for_grammar(outline)).lower()
     rows = [
         {"clue": "homework", "action": "do homework", "time": "first"},
-        {"clue": "room", "action": "clean her room", "time": "Tuesday"},
+        {"clue": "room", "action": "clean her room", "time": "on Tuesday"},
         {"clue": "piano", "action": "practice the piano", "time": "every day"},
-        {"clue": "show", "action": "play the piano", "time": "Sunday"},
+        {"clue": "piano", "action": "play for one hour", "time": "every day"},
     ]
     if not any(k in story for k in ("homework", "room", "piano", "sunday")):
         sents = [capitalize_names(_clean_text(s)) for s in _story_sentences_for_grammar(outline)]
@@ -3923,7 +4155,7 @@ def _build_plan_chart_page(slide, brand_rgb: tuple, data: dict, outline: BookOut
     col_w = [2.05, 4.10, 2.35]
     row_h = 0.74
     head_h = 0.48
-    headers = ["Picture clue", "What will Mia do?", "When?"]
+    headers = ["Clue", "What will Mia do?", "When / How often?"]
     fill_head = RGBColor(0xE7, 0xF0, 0xFF)
     fill_cell = RGBColor(0xFF, 0xFB, 0xF2)
     muted = RGBColor(0x6B, 0x72, 0x80)
@@ -3988,14 +4220,17 @@ def _build_plan_chart_page(slide, brand_rgb: tuple, data: dict, outline: BookOut
                 _draw_writing_line(slide, x + 0.18, y + row_h - 0.18, col_w[c_idx] - 0.36, LIGHT_GRAY, 1.1)
             x += col_w[c_idx]
 
-    bank = ["homework", "room", "piano", "Tuesday", "every day", "Sunday"]
+    bank = [
+        "first", "on Tuesday", "every day",
+        "do homework", "clean her room", "practice the piano", "play for one hour",
+    ]
     if not any(k in " ".join((r.get("clue", "") for r in rows)).lower() for k in ("homework", "piano")):
         bank = [str(w).strip() for w in (outline.vocabulary_for_display or data.get("word_bank") or []) if str(w).strip()][:6]
     if bank:
         wb = slide.shapes.add_shape(
             MSO_SHAPE.ROUNDED_RECTANGLE,
-            Inches(CONTENT_X + 1.10), Inches(CONTENT_Y + CONTENT_H - 0.86),
-            Inches(CONTENT_W - 2.20), Inches(0.46)
+            Inches(CONTENT_X + 0.60), Inches(CONTENT_Y + CONTENT_H - 0.94),
+            Inches(CONTENT_W - 1.20), Inches(0.58)
         )
         wb.adjustments[0] = 0.30
         wb.fill.solid()
@@ -4005,13 +4240,15 @@ def _build_plan_chart_page(slide, brand_rgb: tuple, data: dict, outline: BookOut
         wb.shadow.inherit = False
         tf = wb.text_frame
         tf.margin_left = tf.margin_right = Inches(0.16)
+        tf.margin_top = tf.margin_bottom = 0
+        tf.word_wrap = True
         tf.vertical_anchor = MSO_ANCHOR.MIDDLE
         p = tf.paragraphs[0]
         p.alignment = PP_ALIGN.CENTER
         rr = p.add_run()
         rr.text = "Word bank: " + "   ".join(bank)
         rr.font.name = FONT
-        rr.font.size = Pt(13.5)
+        rr.font.size = Pt(10.5)
         rr.font.color.rgb = BLACK
 
 

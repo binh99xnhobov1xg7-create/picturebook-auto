@@ -926,7 +926,8 @@ def _detect_go(outline: BookOutline, is_nf: bool) -> dict | None:
             "\"This chart shows Mia's plan. We match what Mia will do with when she will do it. "
             "Let's do the first row together, then you complete the rest.\"",
             "Use short phrases from the story. Each row needs an action and a time clue.",
-            "homework - first; clean her room - Tuesday; practice the piano - every day; piano show - Sunday.")
+            "do homework - first; clean her room - on Tuesday; practice the piano - every day; "
+            "play for one hour - every day.")
     if actual_mode == "timeline":
         return base(
             "Sequence / Timeline Chart",
