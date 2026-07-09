@@ -7323,7 +7323,36 @@ def _format_syllabus_story(entry) -> str:
     sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", raw) if s.strip()]
     if not sentences:
         return raw
-    return "\n".join(sentences[:7] if len(sentences) > 7 else sentences)
+    if len(sentences) <= 7:
+        return "\n".join(sentences)
+
+    total_words = sum(len(s.split()) for s in sentences)
+    target_words = max(1, round(total_words / 7))
+    pages: list[str] = []
+    current: list[str] = []
+    current_words = 0
+    for i, sentence in enumerate(sentences):
+        remaining_sentences = len(sentences) - i
+        remaining_pages = 7 - len(pages)
+        sentence_words = len(sentence.split())
+        should_close = (
+            current
+            and current_words + sentence_words > target_words
+            and remaining_sentences >= remaining_pages
+        )
+        if should_close:
+            pages.append(" ".join(current))
+            current = []
+            current_words = 0
+        current.append(sentence)
+        current_words += sentence_words
+
+    if current:
+        pages.append(" ".join(current))
+    while len(pages) > 7:
+        pages[-2] = f"{pages[-2]} {pages[-1]}"
+        pages.pop()
+    return "\n".join(pages)
 
 
 def _syllabus_meta_markdown(entry) -> str:
