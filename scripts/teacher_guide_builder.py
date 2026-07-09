@@ -712,7 +712,13 @@ def _pause_points(outline: BookOutline, is_nf: bool, band: str = "mid") -> list[
         last_pp = pps[-1]
         has_l2 = any(qq["tag"] == "L2" for qq in last_pp["questions"])
         if open_q and not has_l2:
-            last_pp["questions"].append({"tag": "L2", "q": _qtext(open_q.get("q", ""))})
+            candidate = _qtext(open_q.get("q", ""))
+            existing = {
+                (qq.get("q") or "").strip().lower()
+                for pp in pps for qq in pp.get("questions", [])
+            }
+            if candidate.strip().lower() not in existing:
+                last_pp["questions"].append({"tag": "L2", "q": candidate})
         # 兜底：每个 PP 至少一个 [L0]
         for pp in pps:
             if not any(qq["tag"] == "L0" for qq in pp["questions"]):
@@ -727,6 +733,20 @@ def _pause_points(outline: BookOutline, is_nf: bool, band: str = "mid") -> list[
                           if is_nf else
                           "What does this moment reveal about the character? Justify with evidence from the text.")
                 penult["questions"].append({"tag": "L2", "q": prompt})
+        seen_questions: set[str] = set()
+        for pp in pps:
+            unique = []
+            for qq in pp["questions"]:
+                key = (qq.get("q") or "").strip().lower()
+                if key and key not in seen_questions:
+                    seen_questions.add(key)
+                    unique.append(qq)
+            pp["questions"] = unique
+        if pps and not any(qq["tag"] == "L2" for qq in pps[-1]["questions"]):
+            pps[-1]["questions"].append({
+                "tag": "L2",
+                "q": "How does the ending connect to the problem in the story?",
+            })
     return [pp for pp in pps if pp["questions"]]
 
 
@@ -768,12 +788,15 @@ _FEELING_BANK = "happy, excited, worried, nervous, proud, surprised"
 
 
 def _has_writing_task(outline: BookOutline) -> bool:
+    actual_mode = (getattr(outline, "_worksheet_second_reading_mode", "") or "").lower()
+    if actual_mode:
+        return actual_mode in {"writing", "writing_official"}
     wd = getattr(outline, "_worksheet_data", None)
-    if isinstance(wd, dict) and wd.get("writing"):
-        return True
     for ws in (getattr(outline, "_worksheet_questions", None) or []):
         if isinstance(ws, dict) and "writ" in (ws.get("type") or "").lower():
             return True
+    if isinstance(wd, dict) and wd.get("writing") and not actual_mode:
+        return True
     return False
 
 

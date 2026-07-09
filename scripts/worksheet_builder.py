@@ -1153,6 +1153,45 @@ def _reading_ext_items(outline: BookOutline, data: dict, exclude: set[str],
     return items[:max_n]
 
 
+def _fill_same_kind_reading_questions(
+    questions: list[dict], kind: str, reading_text: str, *, max_n: int = 4
+) -> list[dict]:
+    """Top up the first Reading page so it does not look unfinished.
+
+    Keep the page one-type-only (MC or T/F). If AI only provides 3 same-kind
+    questions, derive one more simple item from the passage instead of leaving
+    a sparse page.
+    """
+    import re as _re
+    out = [q for q in (questions or []) if q.get("q")][:max_n]
+    seen = {(q.get("q") or "").strip().lower() for q in out}
+    sents = [
+        s.strip().rstrip(".!?")
+        for s in _re.split(r"(?<=[.!?])\s+", reading_text or "")
+        if 18 <= len(s.strip()) <= 100
+    ]
+    for idx, sent in enumerate(sents):
+        if len(out) >= max_n:
+            break
+        if not sent or sent.lower() in seen:
+            continue
+        if kind == "tf":
+            q = sent + "."
+            if idx % 2 == 1:
+                q = "It is not true that " + sent[0].lower() + sent[1:] + "."
+            out.append({"kind": "tf", "q": q})
+            seen.add(q.lower())
+        elif kind == "mc":
+            out.append({
+                "kind": "mc",
+                "q": "Which sentence is in the story?",
+                "options": [sent + ".", "Mia goes to the park.", "Mia has no plan."],
+                "correct": 0,
+            })
+            seen.add("which sentence is in the story?")
+    return out[:max_n]
+
+
 def _build_l4_vocab2(new_page, brand_rgb: tuple, data: dict,
                      images: Optional[list[Path]], seed: int) -> None:
     """L4 词汇②页：在 4 种词汇题型间【按书轮换】（每种版式自身恒定、内容紧扣本书词汇），
@@ -1473,6 +1512,7 @@ def build_worksheet(
     #   l3summary 看故事补全句（fill-in 式小结）
     if (second_reading_mode or "auto").strip().lower() == "auto" and lvl_n == 4:
         mode = _auto_second_reading_mode(outline, lvl_n)
+    setattr(outline, "_worksheet_second_reading_mode", mode)
 
     if mode == "reading":
         ordered = rq_uni
@@ -1496,6 +1536,7 @@ def build_worksheet(
                         break
                     if q.get("q") and q.get("kind") == rq_kind and q not in first_q:
                         first_q.append(q)
+            first_q = _fill_same_kind_reading_questions(first_q, rq_kind, reading_text, max_n=q_cap)
         else:
             by_kind: dict[str, list[dict]] = {}
             for q in rq:
