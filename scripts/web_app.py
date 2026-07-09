@@ -5590,7 +5590,8 @@ def _ws_sentence_mode() -> str:
 
 # 第 2 张 Reading 页内容：UI 文案 → builder 参数
 _SECOND_READING_LABELS: dict[str, str] = {
-    "自动（L0-2 思维导图 / L3-6 写作）": "auto",
+    "自动（按大纲选 Graphic Organizer / Writing）": "auto",
+    "Timeline / Sequence 时间轴": "timeline",
     "思维导图 SWBST 复述": "mindmap",
     "写作脚手架（标题 Reading）": "writing",
     "写作 Writing（官方风格，标题 Writing）": "writing_official",
@@ -5646,7 +5647,7 @@ def _render_worksheet_editor() -> None:
         index=0,
         key="ws_second_reading_mode",
         help="练习册固定 6 页：2 词汇 + 2 句型 + 2 阅读。第 1 张 Reading 是阅读理解，"
-             "第 2 张可选思维导图/写作/PBL/阅读延伸（标题统一 Reading）。默认按级别。",
+             "第 2 张自动按大纲选择 Graphic Organizer 或 Writing（标题统一 Reading）。",
     )
     # Worksheet 题目
     with st.expander("📋 Worksheet 6 道题（题型 + 题项 JSON）", expanded=True):

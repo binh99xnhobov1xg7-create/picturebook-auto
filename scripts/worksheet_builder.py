@@ -994,7 +994,7 @@ def _resolve_second_reading_mode(mode: str, lvl_n: int) -> str:
     """
     m = (mode or "auto").strip().lower()
     if m in ("reading", "mindmap", "writing", "writing_official", "pbl", "color_say",
-             "l3summary", "l3bubble"):
+             "l3summary", "l3bubble", "timeline"):
         return m
     if lvl_n <= 2:
         return "color_say"
@@ -1004,6 +1004,66 @@ def _resolve_second_reading_mode(mode: str, lvl_n: int) -> str:
         return "auto_l3"
     if lvl_n == 4:
         return "mindmap"
+    return "writing"
+
+
+def _second_reading_signal(outline: BookOutline) -> str:
+    """Collect stable syllabus signals used to pick the final Reading page."""
+    parts = [
+        getattr(outline, "title", ""),
+        getattr(outline, "theme", ""),
+        getattr(outline, "fiction_type", ""),
+        getattr(outline, "reading_skill", ""),
+        getattr(outline, "reading_strategy", ""),
+        getattr(outline, "graphic_organizer", ""),
+        getattr(outline, "graphic_organizer_desc", ""),
+    ]
+    syl = getattr(outline, "syllabus", None)
+    if syl is not None:
+        parts.extend([
+            getattr(syl, "reading_skill", ""),
+            getattr(syl, "reading_strategy", ""),
+            getattr(syl, "graphic_organizer", ""),
+            getattr(syl, "go_description", ""),
+        ])
+    return " ".join(str(p or "") for p in parts).lower()
+
+
+def _auto_second_reading_mode(outline: BookOutline, lvl_n: int) -> str:
+    """SOP 6-page default: Reading page 2 is a compact GO/writing task.
+
+    The 8-page SOP is a candidate-page workflow for outsourcing. The app
+    directly outputs the curated 6-page version, so the final Reading page
+    adapts to the book instead of hardcoding Timeline for every title.
+    """
+    signal = _second_reading_signal(outline)
+    is_nonfic = "non" in (getattr(outline, "fiction_type", "") or "").lower()
+
+    if any(k in signal for k in (
+        "timeline", "sequence", "sequencing", "steps in a process",
+        "process", "order", "first", "next", "then", "finally", "plan",
+        "schedule", "seven-day", "seven day",
+    )):
+        return "timeline"
+    if any(k in signal for k in (
+        "main idea", "supporting details", "fact web", "bubble map",
+        "classification", "classify", "category", "categories", "kwl",
+    )) or is_nonfic:
+        return "l3bubble"
+    if any(k in signal for k in (
+        "text-to-self", "text to self", "text-to-world", "text to world",
+        "connection", "connections",
+    )):
+        return "writing" if lvl_n >= 5 else "l3summary"
+    if any(k in signal for k in (
+        "story elements", "character", "setting", "problem", "solution",
+        "before", "event", "after",
+    )):
+        return "mindmap"
+    if lvl_n <= 2:
+        return "color_say"
+    if lvl_n in (3, 4):
+        return "l3summary"
     return "writing"
 
 
@@ -1403,8 +1463,7 @@ def build_worksheet(
         # L3 第②阅读页（用户拍板 2026-06-09）：A1+ 不做长篇自由写作（太难）。按体裁分流增加多样性：
         #   · 非虚构(科普) → 代码原生【气泡思维导图】(中心主题 + 4 个关键点气泡)，更贴合"我学到了什么"；
         #   · 虚构(故事)   → 【看图回想 + 补全句子】引导式小结(fill-in + 词库)。
-        _is_nonfic_l3 = "non" in (getattr(outline, "fiction_type", "") or "").lower()
-        mode = "l3bubble" if _is_nonfic_l3 else "l3summary"
+        mode = _auto_second_reading_mode(outline, lvl_n)
 
     # L4 第②阅读页跨书轮换（Problem 3：减少"每本都 SWBST 复述"）：仅当调用方未显式指定模式
     # （auto，batch 默认）时生效，按书在 4 种读后形式间轮换：
@@ -1413,7 +1472,7 @@ def build_worksheet(
     #   l3bubble  关键信息气泡图（"我学到了什么"，非复述）
     #   l3summary 看故事补全句（fill-in 式小结）
     if (second_reading_mode or "auto").strip().lower() == "auto" and lvl_n == 4:
-        mode = ["reading2", "mindmap", "l3bubble", "l3summary"][_ws_seed(outline) % 4]
+        mode = _auto_second_reading_mode(outline, lvl_n)
 
     if mode == "reading":
         ordered = rq_uni
@@ -1461,6 +1520,8 @@ def build_worksheet(
             _build_l3_summary_page(new_page(), brand_rgb, data, outline, title="Reading")
         elif mode == "l3bubble":
             _build_l3_bubble_map(new_page(), brand_rgb, data, outline, title="Reading")
+        elif mode == "timeline":
+            _build_timeline_page(new_page(), brand_rgb, data, outline, title="Reading")
         elif mode == "reading2":
             # 综合理解延伸页（判断 / 简答 / 填空）；题量不足时回退 SWBST 复述，杜绝空页。
             _used = {(q.get("q") or "").strip().lower() for q in first_q}
@@ -3629,6 +3690,133 @@ def _build_l3_summary_page(slide, brand_rgb: tuple, data: dict, outline: BookOut
         _emit_with_underscore_lock(p, f"{i + 1}. {st} ____________", 22, BLACK, bold=True)
         # 整宽书写线（多写一行的空间）
         _draw_writing_line(slide, x + 0.30, y + slot_h - 0.34, box_w - 0.30, LIGHT_GRAY, 1.3)
+
+
+def _timeline_events(outline: BookOutline, max_n: int = 4) -> list[str]:
+    sents = _story_sentences_for_grammar(outline)
+    cleaned: list[str] = []
+    seen: set[str] = set()
+    for s in sents:
+        text = capitalize_names(_clean_text(s)).strip()
+        if not text:
+            continue
+        key = text.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        if len(text) > 72:
+            words = text.split()
+            text = " ".join(words[:10]).rstrip(",.;:") + "."
+        cleaned.append(text)
+    if len(cleaned) <= max_n:
+        return cleaned[:max_n]
+    idxs = [0, max(1, len(cleaned) // 3), max(2, (len(cleaned) * 2) // 3), len(cleaned) - 1]
+    out: list[str] = []
+    for idx in idxs:
+        if cleaned[idx] not in out:
+            out.append(cleaned[idx])
+    return out[:max_n]
+
+
+def _build_timeline_page(slide, brand_rgb: tuple, data: dict, outline: BookOutline,
+                         *, title: str = "Reading") -> None:
+    """SOP-style GO page for sequence / timeline books.
+
+    A1/A1+ support: four nodes, first and last mostly prefilled, middle nodes
+    write-in. This keeps the worksheet printable and avoids turning every book
+    into a generic comprehension-question page.
+    """
+    _add_title(slide, title, "Fill in the timeline. Write what happened in order.")
+    events = _timeline_events(outline, 4)
+    while len(events) < 4:
+        events.append("")
+
+    labels = ["First", "Next", "Then", "Finally"]
+    bc = RGBColor(*brand_rgb)
+    area_top = CONTENT_Y + 1.55
+    card_w = 2.05
+    card_h = 2.18
+    gap = (CONTENT_W - 0.90 - card_w * 4) / 3
+    x0 = CONTENT_X + 0.45
+    y = area_top + 0.48
+    fill_rgb = RGBColor(0xFF, 0xF7, 0xE8)
+    prompt_rgb = RGBColor(0x6B, 0x72, 0x80)
+
+    for i, label in enumerate(labels):
+        x = x0 + i * (card_w + gap)
+        if i:
+            ln = slide.shapes.add_connector(
+                MSO_CONNECTOR.STRAIGHT,
+                Inches(x - gap + 0.12), Inches(y + card_h / 2),
+                Inches(x - 0.12), Inches(y + card_h / 2),
+            )
+            ln.line.color.rgb = bc
+            ln.line.width = Pt(2.0)
+            ln.shadow.inherit = False
+
+        card = slide.shapes.add_shape(
+            MSO_SHAPE.ROUNDED_RECTANGLE, Inches(x), Inches(y), Inches(card_w), Inches(card_h)
+        )
+        card.adjustments[0] = 0.12
+        card.fill.solid()
+        card.fill.fore_color.rgb = fill_rgb
+        card.line.color.rgb = bc
+        card.line.width = Pt(1.5)
+        card.shadow.inherit = False
+        tf = card.text_frame
+        tf.margin_left = tf.margin_right = Inches(0.14)
+        tf.margin_top = Inches(0.12)
+        tf.word_wrap = True
+
+        p = tf.paragraphs[0]
+        p.alignment = PP_ALIGN.CENTER
+        r = p.add_run()
+        r.text = label
+        r.font.name = FONT
+        r.font.bold = True
+        r.font.size = Pt(18)
+        r.font.color.rgb = bc
+
+        p2 = tf.add_paragraph()
+        p2.alignment = PP_ALIGN.LEFT
+        p2.space_before = Pt(6)
+        if i in (0, 3) and events[i]:
+            txt = events[i]
+        else:
+            txt = "Look back at the story.\nWrite one short sentence."
+        r2 = p2.add_run()
+        r2.text = txt
+        r2.font.name = FONT
+        r2.font.size = Pt(12.5 if len(txt) > 52 else 14)
+        r2.font.color.rgb = prompt_rgb if i not in (0, 3) else BLACK
+
+        if i not in (0, 3):
+            _draw_writing_line(slide, x + 0.18, y + card_h - 0.58, card_w - 0.36, LIGHT_GRAY, 1.2)
+            _draw_writing_line(slide, x + 0.18, y + card_h - 0.34, card_w - 0.36, LIGHT_GRAY, 1.2)
+
+    words = [str(w).strip() for w in (outline.vocabulary_for_display or data.get("word_bank") or []) if str(w).strip()]
+    if words:
+        wb = slide.shapes.add_shape(
+            MSO_SHAPE.ROUNDED_RECTANGLE,
+            Inches(CONTENT_X + 1.15), Inches(CONTENT_Y + CONTENT_H - 0.92),
+            Inches(CONTENT_W - 2.30), Inches(0.46)
+        )
+        wb.adjustments[0] = 0.30
+        wb.fill.solid()
+        wb.fill.fore_color.rgb = WHITE
+        wb.line.color.rgb = bc
+        wb.line.width = Pt(1.0)
+        wb.shadow.inherit = False
+        wtf = wb.text_frame
+        wtf.margin_left = wtf.margin_right = Inches(0.16)
+        wtf.vertical_anchor = MSO_ANCHOR.MIDDLE
+        wp = wtf.paragraphs[0]
+        wp.alignment = PP_ALIGN.CENTER
+        rw = wp.add_run()
+        rw.text = "Word bank: " + "   ".join(words[:8])
+        rw.font.name = FONT
+        rw.font.size = Pt(13.5)
+        rw.font.color.rgb = BLACK
 
 
 def _build_l3_bubble_map(slide, brand_rgb: tuple, data: dict, outline: BookOutline,
