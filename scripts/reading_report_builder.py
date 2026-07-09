@@ -113,7 +113,7 @@ def _plan_layout(outline, shrink_steps: int = 0) -> dict:
     def line_h(pt: float, ls: float) -> int:
         return int(pt * 20 * ls * 1.16)
 
-    grammar = _normalize_grammar_cn(outline.grammar_focus) or "—"
+    grammar = _grammar_difficulty_text(outline) or "—"
     passage = _strip_wrapping_quotes(" ".join(
         _strip_wrapping_quotes((p.text or "").strip())
         for p in outline.pages
@@ -350,10 +350,11 @@ def _build_title_paragraph(doc, outline: BookOutline) -> None:
 
     # 标题尽量一行：按有效字宽（CJK 记 2）反推字号，长标题自动缩小（用户拍板）。
     # L3-6（高级别）页首标题统一四号 14pt 上限（用户反馈 2026-06-08）；其余沿用 TITLE_PT 上限。
-    left_w_in = (TABLE_WIDTH_DXA * 0.72) / 1440.0
+    left_ratio = 0.88
+    left_w_in = (TABLE_WIDTH_DXA * left_ratio) / 1440.0
     eff_len = sum(2 if ord(ch) > 0x2E80 else 1 for ch in title_str)
     high = _is_high_level(outline.level)
-    candidates = (14, 13.5, 13) if high else (TITLE_PT, 16, 15, 14, 13)
+    candidates = (13, 12.5, 12, 11.5, 11) if high else (TITLE_PT, 16, 15, 14, 13, 12)
     title_pt = candidates[0]
     for cand in candidates:
         cap = left_w_in / (cand * 0.0085)
@@ -367,7 +368,7 @@ def _build_title_paragraph(doc, outline: BookOutline) -> None:
     table.autofit = False
     table.alignment = WD_TABLE_ALIGNMENT.CENTER  # 表格整体页面居中（用户反馈 2026-06-08）
     _set_tbl_w(table, TABLE_WIDTH_DXA)
-    _set_tbl_grid(table, [int(TABLE_WIDTH_DXA * 0.72), TABLE_WIDTH_DXA - int(TABLE_WIDTH_DXA * 0.72)])
+    _set_tbl_grid(table, [int(TABLE_WIDTH_DXA * left_ratio), TABLE_WIDTH_DXA - int(TABLE_WIDTH_DXA * left_ratio)])
     _set_tbl_no_borders(table)
 
     left = table.rows[0].cells[0]
@@ -500,7 +501,7 @@ def _fill_difficulty(row, outline: BookOutline) -> None:
         ("类型：", reader_type),
         ("阅读字数：", str(outline.total_words or "—")),
         ("篇章难度：", passage_cefr),
-        ("语法难度：", lp.get("grammar") or _normalize_grammar_cn(outline.grammar_focus) or "—"),
+        ("语法难度：", lp.get("grammar") or _grammar_difficulty_text(outline) or "—"),
     ]
     for i, (label, value) in enumerate(pairs):
         p = cell.paragraphs[0] if i == 0 else cell.add_paragraph()
@@ -771,8 +772,9 @@ def _resolve_rr_questions(outline: BookOutline) -> list[dict]:
             stars = dist[i]
             answer = str(q.get("answer") or q.get("sample") or "").strip()
             question = str(q.get("q") or q.get("question") or "").strip()
-            page = None if _rr_omit_page(stars) else (
-                _page_from_question_answer(question, answer, page_lookup) or q.get("page") or (i + 2)
+            located_page = _page_from_question_answer(question, answer, page_lookup)
+            page = located_page or (
+                None if _rr_omit_page(stars) else (q.get("page") or (i + 2))
             )
             normalized.append({
                 "q": question,
@@ -810,11 +812,39 @@ def _rr_omit_page(stars: int) -> bool:
 
 
 def _story_page_lookup(outline: BookOutline) -> list[tuple[int, str]]:
+    uploaded = getattr(outline, "_uploaded_book_page_lookup", None) or []
+    clean_uploaded: list[tuple[int, str]] = []
+    for page_no, text in uploaded:
+        try:
+            no = int(page_no)
+        except (TypeError, ValueError):
+            continue
+        body = (text or "").strip().lower()
+        if no > 0 and body:
+            clean_uploaded.append((no, body))
+    if clean_uploaded:
+        return clean_uploaded
+
     pages: list[tuple[int, str]] = []
+    sentence_texts: list[str] = []
     for page in outline.pages:
         text = (getattr(page, "text", "") or "").strip()
         if getattr(page, "page_type", "") == "story" and text:
             pages.append((page.index + 1, text.lower()))
+            sentence_texts.extend(
+                s.strip().lower()
+                for s in re.split(r"(?<=[.!?])\s+", text)
+                if s.strip()
+            )
+    if len(sentence_texts) >= 8:
+        sent_pages: list[tuple[int, str]] = []
+        denom = max(1, len(sentence_texts) - 1)
+        for i, sent in enumerate(sentence_texts):
+            printed_page = int(round(2 + i * 6 / denom))
+            printed_page = max(2, min(8, printed_page))
+            sent_pages.append((printed_page, sent))
+        # Prefer sentence-level lookup; keep original page chunks as fallback.
+        return sent_pages + pages
     return pages
 
 
@@ -844,6 +874,25 @@ def _page_from_question_answer(question: str, answer: str, page_lookup: list[tup
             best_page = page_no
             best_score = score
     return best_page if best_score >= min(2, len(words)) else None
+
+
+def _grammar_difficulty_text(outline: BookOutline) -> str:
+    """RR grammar difficulty should name the tense, not only the sentence frame."""
+    story = " ".join(
+        (p.text or "").strip()
+        for p in getattr(outline, "pages", []) or []
+        if getattr(p, "page_type", "") == "story" and (p.text or "").strip()
+    ).lower()
+    found: list[str] = []
+    if re.search(r"\b(am|is|are|has|have|do|does|want|wants|feel|feels|make|makes)\b", story):
+        found.append("一般现在时态")
+    if re.search(r"\bwill\s+[a-z]+\b", story):
+        found.append("一般将来时态")
+    if re.search(r"\b(was|were|had|did|went|saw|felt|made|played|wanted|practiced|cleaned)\b", story):
+        found.append("一般过去时态")
+    if found:
+        return "、".join(dict.fromkeys(found))
+    return _normalize_grammar_cn(getattr(outline, "grammar_focus", "")) or ""
 
 
 def _default_reader_type(outline) -> str:

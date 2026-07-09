@@ -287,6 +287,57 @@ def _sentence_pattern_fallback_items(
     return items[:max_n]
 
 
+def _sentence_frame_text(outline: BookOutline) -> str:
+    entry = getattr(outline, "syllabus", None)
+    frame = (getattr(entry, "sentence_pattern", "") or "").strip() if entry else ""
+    if not frame:
+        frame = (getattr(entry, "example_sentence", "") or "").strip() if entry else ""
+    if not frame:
+        frame = (outline.grammar_focus or "").strip()
+    return frame or "[Subject] will [action]."
+
+
+def _sentence_frame_fill_items(outline: BookOutline, max_n: int = 4) -> tuple[list[dict], list[str]]:
+    """L3 A1 sentence practice: assess the syllabus sentence frame with support."""
+    sents = _story_sentences_for_grammar(outline)
+    candidates: list[tuple[str, str]] = []
+    for sent in sents:
+        low = sent.lower()
+        if " will " not in low:
+            continue
+        # Keep easy, visible chunks from the actual story.
+        replacements = [
+            ("do homework", "do homework"),
+            ("clean her room", "clean her room"),
+            ("practice the piano", "practice the piano"),
+            ("play for one hour a day", "play for one hour a day"),
+        ]
+        for phrase, answer in replacements:
+            if phrase in low:
+                pat = re.compile(re.escape(phrase), re.I)
+                candidates.append((pat.sub("____", sent, count=1), answer))
+                break
+    if not candidates:
+        words = [str(w).strip() for w in (outline.vocabulary_for_display or []) if str(w).strip()]
+        for w in words[:max_n]:
+            candidates.append((f"I will ____ {w}.", "use"))
+    fills = [{"sentence": s, "answer": a} for s, a in candidates[:max_n]]
+    bank = []
+    for _, ans in candidates:
+        if ans not in bank:
+            bank.append(ans)
+    return fills, bank[:max_n]
+
+
+def _sentence_frame_copy_items(outline: BookOutline, max_n: int = 4) -> list[dict]:
+    frame = _sentence_frame_text(outline)
+    fills, _ = _sentence_frame_fill_items(outline, max_n=max_n)
+    prompts = [{"prompt": f"Frame: {frame}"}]
+    for f in fills[: max_n - 1]:
+        prompts.append({"prompt": f.get("sentence", "").replace("____", "________")})
+    return prompts[:max_n]
+
+
 def _render_sentence_fallback(slide, brand_rgb: tuple, items: list[dict]) -> None:
     """在已建好（含标题）的句型页 slide 上渲染兜底书写题：每题 = 提示句 + 整宽作答横线。
 
@@ -920,7 +971,7 @@ def _set_footer(slide, footer_text: str) -> None:
 
 
 def _fix_name_badge(slide) -> None:
-    """关掉模板 Name 角标的自动换行（避免 LibreOffice/字体替换把 'Name' 折成 'Nam e'）。"""
+    """Only adjust the template's built-in Name badge; never add another one."""
     for sh in slide.shapes:
         if not sh.has_text_frame:
             continue
@@ -933,28 +984,6 @@ def _fix_name_badge(slide) -> None:
             except Exception:
                 pass
             return
-    badge = slide.shapes.add_shape(
-        MSO_SHAPE.ROUNDED_RECTANGLE,
-        Inches(NAME_X), Inches(NAME_Y), Inches(NAME_W), Inches(NAME_H),
-    )
-    badge.fill.solid()
-    badge.fill.fore_color.rgb = NAME_FILL
-    badge.line.fill.background()
-    tf = badge.text_frame
-    tf.clear()
-    tf.word_wrap = False
-    try:
-        tf.auto_size = MSO_AUTO_SIZE.NONE
-    except Exception:
-        pass
-    p = tf.paragraphs[0]
-    p.alignment = PP_ALIGN.CENTER
-    r = p.add_run()
-    r.text = "Name"
-    r.font.name = FONT
-    r.font.size = Pt(NAME_PT)
-    r.font.bold = True
-    r.font.color.rgb = WHITE
 
 
 def _retell_writing_scaffold(outline: BookOutline) -> dict:
@@ -994,7 +1023,7 @@ def _resolve_second_reading_mode(mode: str, lvl_n: int) -> str:
     """
     m = (mode or "auto").strip().lower()
     if m in ("reading", "mindmap", "writing", "writing_official", "pbl", "color_say",
-             "l3summary", "l3bubble", "timeline"):
+             "l3summary", "l3bubble", "timeline", "planchart"):
         return m
     if lvl_n <= 2:
         return "color_say"
@@ -1040,9 +1069,12 @@ def _auto_second_reading_mode(outline: BookOutline, lvl_n: int) -> str:
     is_nonfic = "non" in (getattr(outline, "fiction_type", "") or "").lower()
 
     if any(k in signal for k in (
+        "plan", "schedule", "seven-day", "seven day",
+    )):
+        return "planchart"
+    if any(k in signal for k in (
         "timeline", "sequence", "sequencing", "steps in a process",
-        "process", "order", "first", "next", "then", "finally", "plan",
-        "schedule", "seven-day", "seven day",
+        "process", "order", "first", "next", "then", "finally",
     )):
         return "timeline"
     if any(k in signal for k in (
@@ -1366,15 +1398,18 @@ def build_worksheet(
     sent_fb = _sentence_pattern_fallback_items(outline, data.get("word_bank"))
 
     # —— 句型页① ——
-    # L3（用户拍板 2026-06-09）：自适应——能连词成句优先「连词成句」(对齐 L3-8)，
-    #   否则退回「勾选正确句子」(对齐 L3-23) 兜底，杜绝空页。
+    # L3 is still A1/A1+, so assess the syllabus Sentence Frame with support
+    # instead of asking students to solve harder word-order items.
     l3_sent1_done = False
     if lvl_n == 3:
-        unsc = _unscramble_items(_story_sentences_for_grammar(outline), max_n=4)
-        if len(unsc) >= 3:
-            _build_prompt_line_page(new_page(), brand_rgb, unsc, "Sentences",
-                                    "Put the words in order to make a sentence.",
-                                    prompt_key="scrambled", fallback=sent_fb)
+        frame_fills, frame_bank = _sentence_frame_fill_items(outline, max_n=4)
+        if frame_fills:
+            _build_p2_fill(
+                new_page(), brand_rgb, frame_fills, frame_bank, images,
+                title="Sentences",
+                subtitle=f"Use the sentence frame: {_sentence_frame_text(outline)}",
+                fallback=sent_fb,
+            )
             l3_sent1_done = True
     if not l3_sent1_done:
         if tense == "present":
@@ -1403,20 +1438,13 @@ def build_worksheet(
                        fallback=sent_fb)
 
     if lvl_n == 3:
-        # L3 句型②：选词补全句子（finish the sentence，四选一）—— 对齐官方样板 L3-8 slide4。
-        cloze = _cloze_mc_items(data["fill_blanks"], data["word_bank"], max_n=4)
-        if len(cloze) >= 3:
-            _build_mcq_page(new_page(), brand_rgb, "Sentences",
-                            "Choose the correct word to finish each sentence.", cloze)
-        elif tense == "present":
-            _present_fill_page()
-        else:
-            sf, _ = _tense_fill_items(outline, max_n=4)
-            if not sf:
-                sf, _ = _sentence_fill_items(outline, max_n=4)
-            _build_p2_fill(new_page(), brand_rgb, sf, [], images, title="Sentences",
-                           subtitle="Write the correct word to complete each sentence.",
-                           fallback=sent_fb)
+        frame_copy = _sentence_frame_copy_items(outline, max_n=4)
+        _build_prompt_line_page(
+            new_page(), brand_rgb, frame_copy, "Sentences",
+            "Read the sentence frame. Copy or complete the sentences.",
+            prompt_key="prompt",
+            fallback=sent_fb,
+        )
     elif band == "l02":
         unsc = _unscramble_items(_story_sentences_for_grammar(outline), max_n=6)
         if len(unsc) >= 3:
@@ -1563,6 +1591,8 @@ def build_worksheet(
             _build_l3_bubble_map(new_page(), brand_rgb, data, outline, title="Reading")
         elif mode == "timeline":
             _build_timeline_page(new_page(), brand_rgb, data, outline, title="Reading")
+        elif mode == "planchart":
+            _build_plan_chart_page(new_page(), brand_rgb, data, outline, title="Reading")
         elif mode == "reading2":
             # 综合理解延伸页（判断 / 简答 / 填空）；题量不足时回退 SWBST 复述，杜绝空页。
             _used = {(q.get("q") or "").strip().lower() for q in first_q}
@@ -3858,6 +3888,131 @@ def _build_timeline_page(slide, brand_rgb: tuple, data: dict, outline: BookOutli
         rw.font.name = FONT
         rw.font.size = Pt(13.5)
         rw.font.color.rgb = BLACK
+
+
+def _plan_chart_rows(outline: BookOutline) -> list[dict]:
+    story = " ".join(_story_sentences_for_grammar(outline)).lower()
+    rows = [
+        {"clue": "homework", "action": "do homework", "time": "first"},
+        {"clue": "room", "action": "clean her room", "time": "Tuesday"},
+        {"clue": "piano", "action": "practice the piano", "time": "every day"},
+        {"clue": "show", "action": "play the piano", "time": "Sunday"},
+    ]
+    if not any(k in story for k in ("homework", "room", "piano", "sunday")):
+        sents = [capitalize_names(_clean_text(s)) for s in _story_sentences_for_grammar(outline)]
+        simple = [s for s in sents if 12 <= len(s) <= 74][:4]
+        rows = [{"clue": f"part {i + 1}", "action": s, "time": ""} for i, s in enumerate(simple)]
+    while len(rows) < 4:
+        rows.append({"clue": f"part {len(rows) + 1}", "action": "", "time": ""})
+    return rows[:4]
+
+
+def _build_plan_chart_page(slide, brand_rgb: tuple, data: dict, outline: BookOutline,
+                           *, title: str = "Reading") -> None:
+    """A1-supported GO for plan/schedule stories.
+
+    This differs from a pure timeline: students match what the character will do
+    with when it happens, which fits plan stories such as Mia better.
+    """
+    _add_title(slide, title, "Complete the plan chart. Use the clues and word bank to help.")
+    bc = RGBColor(*brand_rgb)
+    rows = _plan_chart_rows(outline)
+
+    x0 = CONTENT_X + 0.45
+    y0 = CONTENT_Y + 1.38
+    col_w = [2.05, 4.10, 2.35]
+    row_h = 0.74
+    head_h = 0.48
+    headers = ["Picture clue", "What will Mia do?", "When?"]
+    fill_head = RGBColor(0xE7, 0xF0, 0xFF)
+    fill_cell = RGBColor(0xFF, 0xFB, 0xF2)
+    muted = RGBColor(0x6B, 0x72, 0x80)
+
+    x = x0
+    for i, h in enumerate(headers):
+        sh = slide.shapes.add_shape(
+            MSO_SHAPE.ROUNDED_RECTANGLE, Inches(x), Inches(y0),
+            Inches(col_w[i]), Inches(head_h)
+        )
+        sh.adjustments[0] = 0.12
+        sh.fill.solid()
+        sh.fill.fore_color.rgb = fill_head
+        sh.line.color.rgb = bc
+        sh.line.width = Pt(1.1)
+        sh.shadow.inherit = False
+        tf = sh.text_frame
+        tf.margin_left = tf.margin_right = Inches(0.10)
+        tf.vertical_anchor = MSO_ANCHOR.MIDDLE
+        p = tf.paragraphs[0]
+        p.alignment = PP_ALIGN.CENTER
+        r = p.add_run()
+        r.text = h
+        r.font.name = FONT
+        r.font.bold = True
+        r.font.size = Pt(13)
+        r.font.color.rgb = bc
+        x += col_w[i]
+
+    for r_idx, row in enumerate(rows):
+        y = y0 + head_h + r_idx * row_h
+        x = x0
+        values = [
+            row.get("clue", ""),
+            row.get("action", "") if r_idx in (0, 2) else "",
+            row.get("time", "") if r_idx in (1, 3) else "",
+        ]
+        placeholders = ["look", "write the action", "write the time"]
+        for c_idx, value in enumerate(values):
+            cell = slide.shapes.add_shape(
+                MSO_SHAPE.ROUNDED_RECTANGLE, Inches(x), Inches(y),
+                Inches(col_w[c_idx]), Inches(row_h)
+            )
+            cell.adjustments[0] = 0.10
+            cell.fill.solid()
+            cell.fill.fore_color.rgb = fill_cell if c_idx else WHITE
+            cell.line.color.rgb = RGBColor(0xD1, 0xD5, 0xDB)
+            cell.line.width = Pt(1.0)
+            cell.shadow.inherit = False
+            tf = cell.text_frame
+            tf.margin_left = tf.margin_right = Inches(0.12)
+            tf.margin_top = Inches(0.08)
+            tf.vertical_anchor = MSO_ANCHOR.MIDDLE
+            p = tf.paragraphs[0]
+            p.alignment = PP_ALIGN.CENTER if c_idx == 0 else PP_ALIGN.LEFT
+            run = p.add_run()
+            run.text = capitalize_names(value) if value else placeholders[c_idx]
+            run.font.name = FONT
+            run.font.size = Pt(12.5 if len(run.text) > 36 else 14)
+            run.font.color.rgb = BLACK if value else muted
+            if not value and c_idx:
+                _draw_writing_line(slide, x + 0.18, y + row_h - 0.18, col_w[c_idx] - 0.36, LIGHT_GRAY, 1.1)
+            x += col_w[c_idx]
+
+    bank = ["homework", "room", "piano", "Tuesday", "every day", "Sunday"]
+    if not any(k in " ".join((r.get("clue", "") for r in rows)).lower() for k in ("homework", "piano")):
+        bank = [str(w).strip() for w in (outline.vocabulary_for_display or data.get("word_bank") or []) if str(w).strip()][:6]
+    if bank:
+        wb = slide.shapes.add_shape(
+            MSO_SHAPE.ROUNDED_RECTANGLE,
+            Inches(CONTENT_X + 1.10), Inches(CONTENT_Y + CONTENT_H - 0.86),
+            Inches(CONTENT_W - 2.20), Inches(0.46)
+        )
+        wb.adjustments[0] = 0.30
+        wb.fill.solid()
+        wb.fill.fore_color.rgb = WHITE
+        wb.line.color.rgb = bc
+        wb.line.width = Pt(1.0)
+        wb.shadow.inherit = False
+        tf = wb.text_frame
+        tf.margin_left = tf.margin_right = Inches(0.16)
+        tf.vertical_anchor = MSO_ANCHOR.MIDDLE
+        p = tf.paragraphs[0]
+        p.alignment = PP_ALIGN.CENTER
+        rr = p.add_run()
+        rr.text = "Word bank: " + "   ".join(bank)
+        rr.font.name = FONT
+        rr.font.size = Pt(13.5)
+        rr.font.color.rgb = BLACK
 
 
 def _build_l3_bubble_map(slide, brand_rgb: tuple, data: dict, outline: BookOutline,

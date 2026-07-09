@@ -1425,6 +1425,22 @@ def apply_extracted_to_outline(outline, ec: ExtractedContent) -> None:
     """把抽取结果填入已有的 BookOutline（in-place）。"""
     from parser import PageSpec  # avoid circular at import time
 
+    reader_page_lookup: list[tuple[int, str]] = []
+    for p in ec.pages:
+        text = (p.get("text") or "").strip()
+        if not text:
+            continue
+        try:
+            idx = int(p.get("index") or 0)
+        except (TypeError, ValueError):
+            idx = 0
+        if idx >= 1:
+            # PageSpec story pages use index 1-7, while RR displays printed reader
+            # pages P2-P8. Keep this before syllabus text overwrites outline.pages.
+            reader_page_lookup.append((idx + 1, text.lower()))
+    if reader_page_lookup:
+        setattr(outline, "_uploaded_book_page_lookup", reader_page_lookup)
+
     if outline.is_dual_vocab_level:
         if ec.mastery:
             outline.vocabulary_mastery = ec.mastery

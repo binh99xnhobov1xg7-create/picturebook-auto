@@ -919,6 +919,22 @@ def _detect_go(outline: BookOutline, is_nf: bool) -> dict | None:
         return {"name": name, "briefing": briefing, "word_bank": word_bank,
                 "guidance": guidance, "answer_key": answer}
 
+    actual_mode = (getattr(outline, "_worksheet_second_reading_mode", "") or "").lower()
+    if actual_mode == "planchart":
+        return base(
+            "Plan Chart",
+            "\"This chart shows Mia's plan. We match what Mia will do with when she will do it. "
+            "Let's do the first row together, then you complete the rest.\"",
+            "Use short phrases from the story. Each row needs an action and a time clue.",
+            "homework - first; clean her room - Tuesday; practice the piano - every day; piano show - Sunday.")
+    if actual_mode == "timeline":
+        return base(
+            "Sequence / Timeline Chart",
+            "\"This chart shows what happened in order. Let's find the FIRST one together, then you fill in "
+            "the rest.\"",
+            "Each box: one short sentence or phrase from the book. Use sequence words only when they fit the text.",
+            "Provide the complete ordered sequence from the book.")
+
     # 1) 大纲精确 GO（命中 syllabus 时）：按名称匹配六模板，未列出走通用四要素
     syl_go = _en(getattr(outline, "graphic_organizer", ""))
     if syl_go:
