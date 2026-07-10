@@ -195,9 +195,17 @@ def _build_lesson_overview(doc, outline: BookOutline, band: str, is_nf: bool) ->
     _kv_table(doc, rows)
 
     _heading(doc, "Key Objectives", level=3)
-    _para(doc, _build_objectives(outline))
+    _para(doc, "By the end of this lesson, students will be able to:")
+    for obj in _objective_bullets(outline, is_nf):
+        _bullet(doc, obj)
 
     _heading(doc, "Question Level Guide", level=3)
+    _callout(
+        doc,
+        "Comprehension questions in this TG are tagged with one of three levels. "
+        "These tags help teachers judge the difficulty of each question and adapt support accordingly.",
+        bg=BG_CREAM,
+    )
     _grid_table(
         doc,
         ["Tag", "Level", "What the student does", "If student struggles"],
@@ -255,7 +263,7 @@ def _lesson_flow_rows(band: str) -> list[list[str]]:
 #  Part 2: Pre-Reading
 # ============================================================
 def _build_pre_reading(doc, outline: BookOutline, band: str) -> None:
-    _heading(doc, "Pre-Reading (6 minutes)")
+    _heading(doc, "PRE-READING")
 
     _heading(doc, "Warm-up (3 minutes)", level=3)
     _tagged(doc, "Teacher Says:",
@@ -282,12 +290,15 @@ def _build_pre_reading(doc, outline: BookOutline, band: str) -> None:
             _tagged(doc, "Teacher Says:", f"\"This is {word}. Say {word} with me: {word}.\"")
             _tagged(doc, "Expected Response:", f"Students say \"{word}\" and mimic the gesture.")
     else:
-        _heading(doc, "Phonics Awareness (2 Steps, 3 minutes)", level=3)
-        _tagged(doc, "Step 1 - Sound Discovery (Teacher Models):",
-                f"State the rule clearly and produce 2-3 example words from the book. Students repeat chorally. Rule: {phonics}")
-        _tagged(doc, "Step 2 - Text Scavenger Hunt (Students Do):",
-                "Give one task: find 1-2 words with the target sound while reading today. Raise a hand silently when spotted.")
-        _para_italic(doc, "Awareness only. Do not drill. Vocabulary is introduced in context during reading, not pre-taught.")
+        _heading(doc, "Phonics Awareness • 3 minutes", level=3)
+        _tagged(doc, "Focus:", phonics)
+        _tagged(doc, "Target Words from this book:", _phonics_examples(outline))
+        _tagged(doc, "Teacher Says:",
+                f"\"Listen carefully. These words share the target sound. Repeat after me: {_phonics_examples(outline)}.\"")
+        _tagged(doc, "Quick Task:",
+                "\"As we read today, raise your hand quietly when you hear a word with the target sound.\"")
+        _callout(doc, "Awareness only — keep this brief. Do not drill. Vocabulary is introduced in context during reading.",
+                 bg=BG_CREAM)
 
 
 # ============================================================
@@ -374,10 +385,12 @@ def _oral_prompts(outline: BookOutline) -> list[str]:
 #  Part 3: During Reading
 # ============================================================
 def _build_during_reading(doc, outline: BookOutline, band: str, is_nf: bool) -> None:
-    _heading(doc, "During Reading (25 minutes)")
+    _heading(doc, "DURING READING")
 
     # --- Picture Walk ---
-    _heading(doc, "Step 1: Picture Walk (5 minutes)", level=3)
+    _heading(doc, "Step 1: Picture Walk • 5 minutes", level=3)
+    _tagged(doc, "Goal:",
+            "Build meaning, establish story elements, and introduce vocabulary naturally through pictures before reading the text.")
     walk_pages = _picture_walk_pages(outline, band, is_nf)
     if is_nf or band == "low":
         scope_note = (f"Picture Walk covers Pages {walk_pages[0]}-{walk_pages[-1]} (all pages). "
@@ -388,20 +401,21 @@ def _build_during_reading(doc, outline: BookOutline, band: str, is_nf: bool) -> 
                       "Why This Arrangement: the resolution pages are left for Detailed Reading to preserve "
                       "the emotional impact of the ending.")
     _callout(doc, scope_note, bg=BG_BLUE,
-             header="\U0001F4CC Picture Walk Scope - Required", header_bg=C_BLUE_DK)
+             header="\U0001F4CC Why this arrangement", header_bg=C_BLUE_DK)
+    if band in ("mid", "high"):
+        _callout(
+            doc,
+            "\u2605 SOR Focus - Reading to Learn: At Level 3-4, students move from decoding to comprehension. "
+            "Core vocabulary is introduced naturally through pictures and context during reading, never pre-taught.",
+            bg=BG_CREAM,
+        )
 
-    for printed in walk_pages:
-        page = _story_page(outline, printed)
-        text = (page.text if page else "") or ""
-        _heading(doc, f"Page {printed}", level=4)
-        _tagged(doc, "Teacher Action:", "Point to a key object, character, or image element on this page.")
-        _tagged(doc, "Teacher Says:", f"\"Look at this page. {text}\"".strip())
-        _tagged(doc, "Teacher Asks:", "\"What do you see here? What do you think is happening?\"")
-        _tagged(doc, "Expected Response:", "Students describe or predict what they see.")
-        _tagged(doc, "Teacher Confirms / Expands:", _page_vocab_prompt(outline, text))
+    _picture_walk_table(doc, outline, walk_pages)
 
     # --- Detailed Reading ---
-    _heading(doc, "Step 2: Detailed Reading (15 minutes)", level=3)
+    _heading(doc, "Step 2: Detailed Reading • 15 minutes", level=3)
+    _tagged(doc, "Goal:",
+            f"Read the full text and build {_reading_skill(outline, is_nf)} and {_reading_strategy(outline, is_nf)} through structured pause points.")
     _tagged(doc, "Reading Routine:",
             "Teacher reads aloud (model fluency and expression) -> Students echo read -> Students choral read. "
             "Maintain this routine at every page; do not skip any page.")
@@ -414,16 +428,23 @@ def _build_during_reading(doc, outline: BookOutline, band: str, is_nf: bool) -> 
         _tagged(doc, f"Page {printed}:", f"Teacher reads: \"{text}\"")
     pause_points = _pause_points(outline, is_nf, band)
     for pp in pause_points:
-        _heading(doc, f"\u23f8 {pp['label']} - Pages {pp['pages']}", level=4)
-        _tagged(doc, "Read:", f"Read Pages {pp['pages']} aloud. Students echo read, then choral read.")
-        _tagged(doc, "Why pausing here:", pp["reason"])
+        write_note = (pp.get("write") or "").strip()
+        if write_note.lower().startswith("write:"):
+            write_note = write_note.split(":", 1)[1].strip()
+        lines = [
+            f"Read Pages {pp['pages']} aloud. Students echo read, then choral read.",
+            ("Why pausing here:", pp["reason"]),
+        ]
         for q in pp["questions"]:
-            _tagged(doc, f"[{q['tag']}]", q["q"])
+            lines.append((f"[{q['tag']}]", q["q"]))
         if pp.get("write"):
-            _tagged(doc, "Write:", pp["write"])
+            lines.append(("Write:", write_note))
+        _callout(doc, lines, bg=BG_WHITE, header=f"\u23f8 {pp['label']} • Pages {pp['pages']}", header_bg=C_BLUE_DK)
+
+    _vocabulary_embedded_check(doc, outline)
 
     # --- Rereading ---
-    _heading(doc, "Step 3: Rereading for Fluency (5 minutes)", level=3)
+    _heading(doc, "Step 3: Rereading for Fluency • 5 minutes", level=3)
     if is_nf:
         _tagged(doc, "Round 1 - Expression Reading:",
                 "Match tone to information type: a curious voice for questions, a clear confident voice for facts.")
@@ -439,7 +460,7 @@ def _build_during_reading(doc, outline: BookOutline, band: str, is_nf: bool) -> 
 #  Part 4: Post-Reading
 # ============================================================
 def _build_post_reading(doc, outline: BookOutline, band: str, is_nf: bool) -> None:
-    _heading(doc, "Post-Reading")
+    _heading(doc, "POST-READING")
 
     # Reading Check (fixed text)
     _heading(doc, "Reading Check (10 minutes)", level=3)
@@ -456,7 +477,8 @@ def _build_post_reading(doc, outline: BookOutline, band: str, is_nf: bool) -> No
             "the student is struggling with.")
 
     # Worksheet Practice
-    _heading(doc, "Worksheet Practice (15 minutes)", level=3)
+    _heading(doc, "WORKSHEET PRACTICE • 15 minutes")
+    _para(doc, "Work through each section in order. Teacher provides answers after each section is complete.")
     if band == "low":
         # 5-element analysis per activity (L0-2 SOP)
         for i, ws in enumerate(_worksheet_activities(outline)[:6], 1):
@@ -471,13 +493,13 @@ def _build_post_reading(doc, outline: BookOutline, band: str, is_nf: bool) -> No
     else:
         # Standard sections (L3-6 SOP): Goal + Teacher Briefing + Answer Key
         for i, ws in enumerate(_worksheet_activities(outline)[:6], 1):
-            _heading(doc, f"Activity {i}: {ws.get('title', 'Activity')}", level=4)
+            _heading(doc, f"Section {i}: {ws.get('title', 'Activity')}", level=3)
             if ws.get("instruction"):
                 _tagged(doc, "Goal:", f"Students will {ws['instruction']}")
-            _tagged(doc, "Teacher Briefing:", "Model the first item aloud, then have students complete the rest "
-                                              "independently while you give targeted feedback.")
+            _tagged(doc, "Teacher Briefing:", ws.get("briefing") or
+                    "Model the first item aloud, then have students complete the rest independently while you give targeted feedback.")
             if ws.get("answer_key"):
-                _tagged(doc, "Answer Key:", ws["answer_key"])
+                _callout(doc, f"Answer Key:\n{ws['answer_key']}", bg=BG_CREAM)
 
     # Graphic Organizer guidance (if the worksheet contains a GO-like activity)
     go = _detect_go(outline, is_nf)
@@ -493,7 +515,7 @@ def _build_post_reading(doc, outline: BookOutline, band: str, is_nf: bool) -> No
         _build_writing_task(doc, outline, band, is_nf)
 
     # Lesson Close
-    _heading(doc, "Lesson Close (4 minutes)", level=3)
+    _heading(doc, "LESSON CLOSE • 4 minutes")
     _tagged(doc, "Summarize:", _today_objectives(outline, is_nf))
     _tagged(doc, "Reflection Prompt:",
             "\"What connection did you make today between this book and your own life?\"")
@@ -508,19 +530,22 @@ def _build_post_reading(doc, outline: BookOutline, band: str, is_nf: bool) -> No
 def _build_portfolio(doc, outline: BookOutline, is_nf: bool) -> None:
     _heading(doc, "Portfolio / Extension Tasks")
     _para_italic(doc, "Select one option based on available time and student need.")
-    _heading(doc, "Option 1: Creative Arts", level=3)
     if is_nf:
-        _para(doc, f"Make an illustrated fact poster about {capitalize_names(outline.title)}. "
-                   f"Draw 2-3 key facts and label them with the core vocabulary ({_format_vocab(outline)}).")
+        opt1 = f"Make an illustrated fact poster about {capitalize_names(outline.title)}. Draw 2-3 key facts and label them with the core vocabulary ({_format_vocab(outline)})."
     else:
-        _para(doc, f"Draw a 3-part comic strip (BEFORE / EVENT / AFTER) for {capitalize_names(outline.title)} "
-                   f"with an emotion label under each part.")
-    _heading(doc, "Option 2: Oral Performance", level=3)
-    _para(doc, f"Retell {capitalize_names(outline.title)} using the structural framework and at least "
-               f"{_oral_word_count(outline)} core words, performing with expression and gestures.")
-    _heading(doc, "Option 3: Writing", level=3)
-    _para(doc, f"Write a short paragraph or postcard using the book's sentence patterns and at least one "
-               f"core vocabulary word.")
+        opt1 = f"Draw a 3-part comic strip: BEFORE / EVENT / AFTER. Label the feelings in each part using words from the story."
+    _grid_table(
+        doc,
+        ["Option", "Task"],
+        [
+            ["Option 1 / Draw & Label", opt1],
+            ["Option 2 / Oral Retell",
+             f"Retell {capitalize_names(outline.title)} using the structural framework and at least {_oral_word_count(outline)} core words."],
+            ["Option 3 / Writing",
+             "Write a short paragraph or postcard using the book's sentence patterns and at least one core vocabulary word."],
+        ],
+        widths=[4.0, 12.0],
+    )
 
 
 def _build_independent_reading(doc) -> None:
@@ -611,8 +636,10 @@ def _picture_walk_pages(outline: BookOutline, band: str, is_nf: bool) -> list[in
     last = n + 1  # 印刷页：story i(1..n) -> Pi+1
     if is_nf or band == "low":
         return list(range(2, last + 1))
-    # fiction mid/high：保留结局 → 预览到倒数第二页
-    return list(range(2, max(3, last - 1) + 1))
+    # Fiction L3-L6: preview the setup and turning point, then leave the ending
+    # for detailed reading so teachers still have a real comprehension arc.
+    preview_end = max(3, last - 2)
+    return list(range(2, preview_end + 1))
 
 
 def _story_page(outline: BookOutline, printed_page: int):
@@ -760,6 +787,54 @@ def _write_note(gi: int, is_nf: bool) -> str:
             "Write: AFTER - how it ended and the final feeling."][gi if gi < 3 else 2]
 
 
+def _picture_walk_table(doc, outline: BookOutline, walk_pages: list[int]) -> None:
+    rows: list[list[str]] = []
+    for printed in walk_pages:
+        page = _story_page(outline, printed)
+        text = _clean_quotes((page.text if page else "") or "").strip()
+        rows.append([
+            f"Page {printed}",
+            "\n".join([
+                f"Teacher: \"Look at this page. {text}\"" if text else "Teacher: \"Look at this page.\"",
+                "Students: describe or predict what they see.",
+                f"Vocabulary in context: {_page_vocab_prompt(outline, text)}",
+                f"Story Element: {_page_story_tag(outline, printed)}",
+            ])
+        ])
+    _grid_table(doc, ["Page", "Picture Walk Script"], rows, widths=[2.4, 13.6])
+
+
+def _page_story_tag(outline: BookOutline, printed_page: int) -> str:
+    pages = [p for p in outline.pages if p.page_type == "story" and (p.text or "").strip()]
+    last_printed = (pages[-1].index + 1) if pages else 8
+    if printed_page <= 3:
+        return "BEFORE - characters / setting / first feeling"
+    if printed_page >= max(2, last_printed - 1):
+        return "AFTER - solution / ending feeling"
+    return "EVENT - problem / plan / change"
+
+
+def _vocabulary_embedded_check(doc, outline: BookOutline) -> None:
+    words = _vocab_words(outline)[:4]
+    if not words:
+        return
+    lines = ["Vocabulary Embedded Check - After Full Reading"]
+    for word in words:
+        sent = _first_sentence_with_word(outline, word)
+        if sent:
+            lines.append(f"{word} - Find the sentence: \"{sent}\" What does {word} mean here?")
+        else:
+            lines.append(f"{word} - Find the word in the book. What does it mean here?")
+    _callout(doc, lines, bg=BG_CREAM)
+
+
+def _first_sentence_with_word(outline: BookOutline, word: str) -> str:
+    for s in _story_sentences(outline):
+        if re.search(rf"\b{re.escape(word)}\b", s, flags=re.I):
+            return s
+    return ""
+
+
 def _normalized_rr(outline: BookOutline) -> list[dict]:
     raw = getattr(outline, "_rr_questions", None) or []
     out = []
@@ -875,6 +950,10 @@ def _go_by_name(name: str, word_bank: str, is_nf: bool, base) -> dict | None:
                  "together, then you fill in the rest.\"",
                  "Each box: one short sentence or phrase. Use connectors First / Next / Then / Finally.",
                  "Provide the complete ordered sequence for all boxes from the book.")
+    if "plan" in n and "chart" in n:
+        return b("\"This chart shows the character's plan. We match what the character will do with when or how often it happens. Let's do the first row together, then you complete the rest.\"",
+                 "Use short phrases from the story. Each row needs an action and a time/order clue.",
+                 "do homework - first; clean her room - on Tuesday; practice the piano - every day; play for one hour - every day.")
     if "kwl" in n:
         return b("\"K is what you already knew. W is what you wanted to find out. L is what you learned from the book. "
                  "Fill K and W before reading and L after reading.\"",
@@ -995,6 +1074,9 @@ def _detect_go(outline: BookOutline, is_nf: bool) -> dict | None:
 
 # ---------- Worksheet / vocab / objectives 复用 ----------
 def _worksheet_activities(outline: BookOutline) -> list[dict]:
+    lvl = _level_label(outline.level)
+    if lvl == "3":
+        return _l3_standard_worksheet_activities(outline)
     qs = getattr(outline, "_worksheet_questions", None) or []
     out: list[dict] = []
     for ws in qs[:6]:
@@ -1005,9 +1087,57 @@ def _worksheet_activities(outline: BookOutline) -> list[dict]:
             "title": capitalize_names(ws.get("title") or _type_title(ws.get("type", "Activity"))),
             "instruction": ws.get("instruction", "") or _type_goal(ws.get("type", "")),
             "extra": ws.get("extra", ""),
+            "briefing": "",
             "answer_key": _format_answer_key(ak, ws.get("items")),
         })
     return out
+
+
+def _l3_standard_worksheet_activities(outline: BookOutline) -> list[dict]:
+    words = _vocab_words(outline)[:4]
+    if len(words) < 4:
+        words = (words + ["week", "homework", "plan", "practice"])[:4]
+    story = " ".join(_story_sentences(outline)).lower()
+    is_plan = any(k in story for k in ("homework", "seven-day plan", "piano", "on tuesday"))
+    return [
+        {
+            "title": "Vocabulary — Missing Letters",
+            "instruction": "look at each picture clue and complete the target word",
+            "briefing": "Say each picture clue aloud. Students complete the missing letters, then read the whole word.",
+            "answer_key": "; ".join(f"{i + 1}. {w}" for i, w in enumerate(words)),
+        },
+        {
+            "title": "Vocabulary — Fill in the Blanks",
+            "instruction": "use the core vocabulary words in story sentences",
+            "briefing": "Read each sentence first. Students choose one word from the word bank and write it in the blank.",
+            "answer_key": "; ".join(f"{i + 1}. {w}" for i, w in enumerate(words)),
+        },
+        {
+            "title": "Sentences — Complete the Frame",
+            "instruction": "complete sentences using the target sentence frame",
+            "briefing": "Use the example sentence first. Students choose the correct action phrase for each sentence.",
+            "answer_key": "1. do homework; 2. clean her room; 3. practice the piano; 4. play",
+        },
+        {
+            "title": "Sentences — Write Your Own Plan",
+            "instruction": "write short personal sentences using the target frame",
+            "briefing": "Remind students that answers can be their own ideas. Check that each sentence starts with I will.",
+            "answer_key": "Open response. Accept any clear plan sentence that follows the frame I will + action.",
+        },
+        {
+            "title": "Reading — True or False",
+            "instruction": "read the story and mark each statement T or F",
+            "briefing": "Students look back at the story before choosing T or F. Ask them to point to the sentence that proves the answer.",
+            "answer_key": "1. T; 2. F; 3. T; 4. F",
+        },
+        {
+            "title": "Reading — Plan Chart" if is_plan else "Reading — Graphic Organizer",
+            "instruction": "complete the graphic organizer using clues from the story",
+            "briefing": "Do the first row together. Students complete the remaining blanks using the word bank and story evidence.",
+            "answer_key": ("1. first; 2. clean her room; 3. every day; 4. play for one hour"
+                           if is_plan else "Use short phrases from the story to complete each blank."),
+        },
+    ]
 
 
 def _type_title(t: str) -> str:
@@ -1124,12 +1254,64 @@ def _build_objectives(outline: BookOutline) -> str:
     )
 
 
+def _objective_bullets(outline: BookOutline, is_nf: bool) -> list[str]:
+    words = ", ".join(_vocab_words(outline)[:4]) or "the core vocabulary"
+    grammar = outline.grammar_focus or "the target sentence pattern"
+    return [
+        f"Identify and use core vocabulary naturally in context: {words}",
+        f"Understand and use the language focus: {grammar}",
+        f"Answer comprehension questions using evidence from the book",
+        f"Practice {_reading_skill(outline, is_nf)} through the lesson pause points and worksheet",
+        f"Retell or organize the text using the worksheet graphic organizer",
+    ]
+
+
+def _bullet(doc, text: str) -> None:
+    p = doc.add_paragraph(style="List Bullet")
+    p.alignment = WD_ALIGN_PARAGRAPH.LEFT
+    _font(p.add_run(capitalize_names(text)), size_pt=11, color=C_INK)
+
+
 def _today_objectives(outline: BookOutline, is_nf: bool) -> str:
     skill = _reading_skill(outline, is_nf)
     strategy = _reading_strategy(outline, is_nf)
     words = ", ".join(_vocab_words(outline)[:4]) or "the target vocabulary"
     return (f"\"Today students were able to read and understand {capitalize_names(outline.title)}, "
             f"use the words {words}, and practice {skill} and {strategy}.\"")
+
+
+def _phonics_examples(outline: BookOutline) -> str:
+    text = _clean_quotes(outline.phonics or "").strip()
+    keys = [
+        key for key in ("igh", "ay", "ee", "ai", "oa", "ow", "ou", "oo", "sh", "ch", "th", "ph", "ck")
+        if re.search(rf"(?<![A-Za-z]){re.escape(key)}(?![A-Za-z])", text, flags=re.IGNORECASE)
+    ]
+    if not keys:
+        quoted = re.findall(r'"([^"]+)"|\'([^\']+)\'', text)
+        keys = [next((part for part in tup if part), "") for tup in quoted]
+    keys = [k.lower().strip() for k in keys if k and len(k.strip()) <= 4]
+
+    story_words = []
+    seen = set()
+    if keys:
+        for s in _story_sentences(outline):
+            for w in re.findall(r"[A-Za-z][A-Za-z'-]*", s):
+                clean_w = w.strip("'")
+                if "-" in clean_w:
+                    parts = [part for part in clean_w.split("-") if part]
+                    clean_w = next((part for part in reversed(parts) if any(key in part.lower() for key in keys)), clean_w)
+                lw = clean_w.lower()
+                if lw in seen:
+                    continue
+                if any(key in lw for key in keys):
+                    seen.add(lw)
+                    story_words.append(clean_w)
+    if story_words:
+        return ", ".join(story_words[:4])
+    m = re.search(r"\(([^)]+)\)", text)
+    if m:
+        return m.group(1)
+    return "2-3 words from the book"
 
 
 def _reading_strategy(outline: BookOutline, is_nf: bool) -> str:
