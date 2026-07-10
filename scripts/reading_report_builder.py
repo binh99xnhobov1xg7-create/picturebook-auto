@@ -66,9 +66,10 @@ def _normalize_student_punctuation(text: str) -> str:
         str(text or "")
         .replace("\u201c", '"').replace("\u201d", '"')
         .replace("\u2018", "'").replace("\u2019", "'")
-        .replace("\u02bc", "'")
+        .replace("\u02bc", "'").replace("\u2032", "'").replace("\u00b4", "'").replace("`", "'")
+        .replace("\u2033", '"')
         .replace("\uff02", '"').replace("\uff07", "'")
-        .replace("\ufffe", "-").replace("\u00ad", "-")
+        .replace("\ufffe", "-").replace("\ufffd", "-").replace("\u00ad", "-")
         .replace("\u2010", "-").replace("\u2011", "-")
         .replace("\u2012", "-").replace("\u2013", "-").replace("\u2014", "-")
     )
@@ -251,10 +252,10 @@ def _plan_layout(outline, shrink_steps: int = 0) -> dict:
         # 不在某一块堆出大片空白（对齐官方模板均衡的版面），词汇/拼读/参与度保持紧凑。
         fill_keys = ["diff_h", "fluency_h", "questions_h"]
         base = sum(mins[k] for k in fill_keys) or 1
-        # 铺满系数（用户拍板 2026-06-06：底部不能留大片空白）：首轮吃掉 ~92% 余量，
-        # 降档重排时每档少给 12%（防被撑大又溢出到第二页）。
-        fill_factor = max(0.15, 0.35 - 0.12 * shrink_steps)
-        give = int(leftover * fill_factor)   # 留安全余量，严格防溢出到第二页
+        # 铺满系数：比上一版更积极吃掉余量，让一页内容尽量铺满；仍保留缓冲，
+        # 并依靠 build_reading_report 的实测页数降档机制兜底。
+        fill_factor = max(0.25, 0.58 - 0.14 * shrink_steps)
+        give = int(leftover * fill_factor)
         natural = {k: max(1, mins[k]) for k in fill_keys}
         for k in fill_keys:
             mins[k] += int(give * mins[k] / base)

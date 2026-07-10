@@ -92,10 +92,11 @@ FONT = "Poppins"
 FONT_BOLD = "Poppins"
 # underscore 字符在 Poppins 下被压扁，改用 Arial 才显示得清晰粗实
 FONT_BLANK = "Arial"
+ANSWER_BLANK = "_" * 20
 
-# 验收口径：大标题 40pt 黑、副标题 20pt 浅灰（完整句指令）
+# 验收口径：大标题 40pt 黑；副标题/command 控制为 14pt，避免指令抢占作答区
 TITLE_PT = 40
-SUBTITLE_PT = 20
+SUBTITLE_PT = 14
 BODY_PT = 18
 READING_PT = 14
 QNUM_PT = 18
@@ -294,6 +295,8 @@ def _sentence_frame_text(outline: BookOutline) -> str:
         frame = (getattr(entry, "example_sentence", "") or "").strip() if entry else ""
     if not frame:
         frame = (outline.grammar_focus or "").strip()
+    if re.search(r"[\u3400-\u9fff]", frame) or re.fullmatch(r"\?{3,}", frame):
+        return "She will do homework first."
     if "[" in frame and "]" in frame:
         return "She will do homework first."
     return frame or "She will do homework first."
@@ -309,10 +312,10 @@ def _sentence_frame_fill_items(outline: BookOutline, max_n: int = 4) -> tuple[li
             continue
         # Keep easy, visible chunks from the actual story.
         replacements = [
-            ("do homework", "do homework", "________"),
-            ("clean her room", "clean her room", "________"),
-            ("practice the piano", "practice the piano", "________"),
-            ("play for one hour a day", "play", "________ for one hour a day"),
+            ("do homework", "do homework", ANSWER_BLANK),
+            ("clean her room", "clean her room", ANSWER_BLANK),
+            ("practice the piano", "practice the piano", ANSWER_BLANK),
+            ("play for one hour a day", "play", f"{ANSWER_BLANK} for one hour a day"),
         ]
         for phrase, answer, blanked in replacements:
             if phrase in low:
@@ -322,7 +325,7 @@ def _sentence_frame_fill_items(outline: BookOutline, max_n: int = 4) -> tuple[li
     if not candidates:
         words = [str(w).strip() for w in (outline.vocabulary_for_display or []) if str(w).strip()]
         for w in words[:max_n]:
-            candidates.append((f"I will ____ {w}.", "use"))
+            candidates.append((f"I will {ANSWER_BLANK} {w}.", "use"))
     fills = [{"sentence": s, "answer": a} for s, a in candidates[:max_n]]
     bank = []
     for _, ans in candidates:
@@ -338,18 +341,18 @@ def _sentence_frame_copy_items(outline: BookOutline, max_n: int = 4) -> list[dic
         sent = f.get("sentence", "")
         answer = (f.get("answer") or "").strip().lower()
         if answer in {"play", "play for one hour a day"}:
-            sent = "I will ________ for one hour a day."
+            sent = f"I will {ANSWER_BLANK} for one hour a day."
             prompts.append({"prompt": sent})
             continue
         sent = re.sub(r"^\s*(She|He|They|Mia)\s+will\s+", "I will ", sent, flags=re.I)
-        sent = sent.replace("____", "________")
+        sent = re.sub(r"_{3,}", ANSWER_BLANK, sent)
         prompts.append({"prompt": sent})
     if not prompts:
         prompts = [
-            {"prompt": "I will ________ first."},
-            {"prompt": "I will ________ on ________."},
-            {"prompt": "I will ________ every day."},
-            {"prompt": "I will ________ for one hour a day."},
+            {"prompt": f"I will {ANSWER_BLANK} first."},
+            {"prompt": f"I will {ANSWER_BLANK} on {ANSWER_BLANK}."},
+            {"prompt": f"I will {ANSWER_BLANK} every day."},
+            {"prompt": f"I will {ANSWER_BLANK} for one hour a day."},
         ]
     return prompts[:max_n]
 
@@ -652,9 +655,10 @@ def _clean_text(s) -> str:
         str(s if s is not None else "")
         .replace("\u201c", '"').replace("\u201d", '"')
         .replace("\u2018", "'").replace("\u2019", "'")
-        .replace("\u02bc", "'")
+        .replace("\u02bc", "'").replace("\u2032", "'").replace("\u00b4", "'").replace("`", "'")
+        .replace("\u2033", '"')
         .replace("\uff02", '"').replace("\uff07", "'")
-        .replace("\ufffe", "-").replace("\u00ad", "-")
+        .replace("\ufffe", "-").replace("\ufffd", "-").replace("\u00ad", "-")
         .replace("\u2010", "-").replace("\u2011", "-")
         .replace("\u2012", "-").replace("\u2013", "-").replace("\u2014", "-")
     )
@@ -2208,13 +2212,13 @@ def _add_title(slide, title: str, subtitle: str) -> None:
     # Subtitle —— 自动缩字号保证【一行】，避免长指令换行压到下方内容框
     sub_pt = float(SUBTITLE_PT)
     sub_w = CONTENT_W - 0.40
-    for cand in (20.0, 18.0, 16.0, 15.0, 14.0):
+    for cand in (14.0, 13.0, 12.0):
         cpl = max(10, int(sub_w / (cand / 72.0 * 0.50)))
         if len(subtitle or "") <= cpl:
             sub_pt = cand
             break
     else:
-        sub_pt = 14.0
+        sub_pt = 12.0
     # 副标题（=command 指令）：与大标题拉开一段距离（用户反馈大标题/副标题贴太近），
     #   同时仍把下方空间留给首题。
     sb = slide.shapes.add_textbox(
@@ -3384,11 +3388,7 @@ def _build_prompt_line_page(slide, brand_rgb: tuple, items: list[dict],
         p = tf.paragraphs[0]
         p.alignment = PP_ALIGN.LEFT
         p.line_spacing = 1.14
-        r = p.add_run()
-        r.text = prompt
-        r.font.name = FONT
-        r.font.size = Pt(pt)
-        r.font.color.rgb = BLACK
+        _emit_with_underscore_lock(p, prompt, int(round(pt)), BLACK)
         # 作答横线：落在题槽下部，与题干之间留足书写区（≥ WRITE_MIN）
         q_bottom = y_q + q_h
         line_y = y_q + slot_h - 0.20
@@ -4267,7 +4267,7 @@ def _build_plan_chart_page(slide, brand_rgb: tuple, data: dict, outline: BookOut
         rr = p.add_run()
         rr.text = "Word bank: " + "   ".join(bank)
         rr.font.name = FONT
-        rr.font.size = Pt(12.0)
+        rr.font.size = Pt(14.0)
         rr.font.color.rgb = BLACK
 
 
