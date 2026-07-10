@@ -294,7 +294,9 @@ def _sentence_frame_text(outline: BookOutline) -> str:
         frame = (getattr(entry, "example_sentence", "") or "").strip() if entry else ""
     if not frame:
         frame = (outline.grammar_focus or "").strip()
-    return frame or "[Subject] will [action]."
+    if "[" in frame and "]" in frame:
+        return "She will do homework first."
+    return frame or "She will do homework first."
 
 
 def _sentence_frame_fill_items(outline: BookOutline, max_n: int = 4) -> tuple[list[dict], list[str]]:
@@ -307,10 +309,10 @@ def _sentence_frame_fill_items(outline: BookOutline, max_n: int = 4) -> tuple[li
             continue
         # Keep easy, visible chunks from the actual story.
         replacements = [
-            ("do homework", "do homework", "____"),
-            ("clean her room", "clean her room", "____"),
-            ("practice the piano", "practice the piano", "____"),
-            ("play for one hour a day", "play", "____ for one hour a day"),
+            ("do homework", "do homework", "________"),
+            ("clean her room", "clean her room", "________"),
+            ("practice the piano", "practice the piano", "________"),
+            ("play for one hour a day", "play", "________ for one hour a day"),
         ]
         for phrase, answer, blanked in replacements:
             if phrase in low:
@@ -646,7 +648,19 @@ def _clean_text(s) -> str:
     不可见的异形空白，渲染时这些空白宽度与普通空格不同 → 同一行词距忽大忽小。
     本函数把所有连续空白（含 Unicode 空白）统一压成单个普通空格并去首尾，
     保证整行左对齐时词距均匀（不动可见字符，不影响标点/大小写）。"""
-    return re.sub(r"\s+", " ", str(s if s is not None else "")).strip()
+    text = (
+        str(s if s is not None else "")
+        .replace("\u201c", '"').replace("\u201d", '"')
+        .replace("\u2018", "'").replace("\u2019", "'")
+        .replace("\u02bc", "'")
+        .replace("\uff02", '"').replace("\uff07", "'")
+        .replace("\ufffe", "-").replace("\u00ad", "-")
+        .replace("\u2010", "-").replace("\u2011", "-")
+        .replace("\u2012", "-").replace("\u2013", "-").replace("\u2014", "-")
+    )
+    text = re.sub(r"(?<=[A-Za-z])\?(?=s\b)", "'", text)
+    text = re.sub(r"\?([A-Za-z]{1,12})\?", r'"\1"', text)
+    return re.sub(r"\s+", " ", text).strip()
 
 
 def _first_letter_mask(word: str) -> str:
@@ -1512,7 +1526,7 @@ def build_worksheet(
             _build_p2_fill(
                 new_page(), brand_rgb, frame_fills, frame_bank, images,
                 title="Sentences",
-                subtitle=f"Use the sentence frame: {_sentence_frame_text(outline)}",
+                subtitle=f"Use the example: {_sentence_frame_text(outline)}",
                 fallback=sent_fb,
             )
             l3_sent1_done = True
@@ -3318,8 +3332,8 @@ def _build_prompt_line_page(slide, brand_rgb: tuple, items: list[dict],
         return
     _add_title(slide, title, subtitle)
     area_top = CONTENT_Y + 1.28
-    x = CONTENT_X + 0.62
-    box_w = CONTENT_W - 1.24            # 题目 + 横线统一宽度（更宽 → 书写空间更大）
+    x = CONTENT_X + 0.42
+    box_w = CONTENT_W - 0.84            # 题目 + 横线统一宽度（更宽 → 书写空间更大）
     if example:
         eb = slide.shapes.add_textbox(
             Inches(x), Inches(area_top), Inches(box_w), Inches(0.34),
@@ -3345,7 +3359,7 @@ def _build_prompt_line_page(slide, brand_rgb: tuple, items: list[dict],
     def _max_qlines(pt: float) -> int:
         return max(_est_lines(pr, box_w, pt) for pr in prompts)
 
-    WRITE_MIN = 0.36       # 题干底 → 横线 的最小书写空间
+    WRITE_MIN = 0.42       # 题干底 → 横线 的最小书写空间
     pt = 14.0
     for cand in (20.0, 18.0, 16.0, 15.0, 14.0):
         lh = cand / 72.0 * 1.16
@@ -3489,9 +3503,9 @@ def _build_reading_page(
                 break
         lh = tf_pt / 72.0 * 1.18
         heights = [l * lh for l in _tf_lines(tf_pt)]
-        gap = max(0.12, (tf_avail - sum(heights)) / (n_tf + 1))
-        y = list_top + gap
+        slot_h = tf_avail / max(1, n_tf)
         for i, q in enumerate(qs):
+            y = list_top + i * slot_h + max(0, (slot_h - heights[i]) / 2)
             tb = slide.shapes.add_textbox(
                 Inches(tf_x), Inches(y), Inches(tf_w), Inches(heights[i] + 0.06))
             tfb = tb.text_frame
@@ -3506,7 +3520,6 @@ def _build_reading_page(
             r.font.name = FONT
             r.font.size = Pt(tf_pt)
             r.font.color.rgb = BLACK
-            y += heights[i] + gap
         return
 
     list_bottom = CONTENT_Y + CONTENT_H - 0.18  # 贴近白卡底边，让题目区竖向铺满
@@ -4235,8 +4248,8 @@ def _build_plan_chart_page(slide, brand_rgb: tuple, data: dict, outline: BookOut
     if bank:
         wb = slide.shapes.add_shape(
             MSO_SHAPE.ROUNDED_RECTANGLE,
-            Inches(CONTENT_X + 0.60), Inches(CONTENT_Y + CONTENT_H - 0.94),
-            Inches(CONTENT_W - 1.20), Inches(0.58)
+            Inches(CONTENT_X + 0.38), Inches(CONTENT_Y + CONTENT_H - 1.02),
+            Inches(CONTENT_W - 0.76), Inches(0.68)
         )
         wb.adjustments[0] = 0.30
         wb.fill.solid()
@@ -4254,7 +4267,7 @@ def _build_plan_chart_page(slide, brand_rgb: tuple, data: dict, outline: BookOut
         rr = p.add_run()
         rr.text = "Word bank: " + "   ".join(bank)
         rr.font.name = FONT
-        rr.font.size = Pt(10.5)
+        rr.font.size = Pt(12.0)
         rr.font.color.rgb = BLACK
 
 

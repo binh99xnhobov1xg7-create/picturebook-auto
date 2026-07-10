@@ -59,6 +59,23 @@ def _strip_wrapping_quotes(text: str) -> str:
                 break
     return s
 
+
+def _normalize_student_punctuation(text: str) -> str:
+    """Use standard ASCII quotes/apostrophes/hyphens in student-facing text."""
+    out = (
+        str(text or "")
+        .replace("\u201c", '"').replace("\u201d", '"')
+        .replace("\u2018", "'").replace("\u2019", "'")
+        .replace("\u02bc", "'")
+        .replace("\uff02", '"').replace("\uff07", "'")
+        .replace("\ufffe", "-").replace("\u00ad", "-")
+        .replace("\u2010", "-").replace("\u2011", "-")
+        .replace("\u2012", "-").replace("\u2013", "-").replace("\u2014", "-")
+    )
+    out = re.sub(r"(?<=[A-Za-z])\?(?=s\b)", "'", out)
+    out = re.sub(r"\?([A-Za-z]{1,12})\?", r'"\1"', out)
+    return out
+
 # 表格列宽（严格按 sample，dxa 即 1/20 pt）
 COL_WIDTHS_DXA = [1428, 1307, 1293, 1246, 1369, 1308, 1292, 1243]
 TABLE_WIDTH_DXA = sum(COL_WIDTHS_DXA)  # 10486
@@ -103,7 +120,7 @@ def _plan_layout(outline, shrink_steps: int = 0) -> dict:
     MARGINS = 1020           # 上下各 0.9cm
     TITLE_BLOCK = 1520       # 标题行（含 logo）估高；按长书名折成两行预留（防溢出第二页）
     NAME_LINE = 380          # 姓名/日期行
-    SAFETY = 760             # 安全余量（边框/取整/渲染误差）→ 严格守住 1 页（用户硬要求）
+    SAFETY = 1260            # 安全余量加大：RR 必须严格压在 1 页内
     budget = PAGE_H - MARGINS - TITLE_BLOCK - NAME_LINE - SAFETY
 
     def cpl(pt: float) -> int:
@@ -140,18 +157,17 @@ def _plan_layout(outline, shrink_steps: int = 0) -> dict:
     # 对齐人工模板（L5-1 5.27）：正文/难度/章节标题统一 12pt（标题 14pt 在别处），
     # 行距适中、学生看着舒服。再往下是兜底小档，仅在内容超多时才用。
     profiles = [
-        dict(body=12.0, diff=12.0, sec=12.0, ls=1.15, pa=1),
-        dict(body=11.5, diff=12.0, sec=12.0, ls=1.12, pa=1),
-        dict(body=11.0, diff=11.5, sec=12.0, ls=1.10, pa=0),
-        dict(body=11.0, diff=11.0, sec=11.0, ls=1.08, pa=0),
-        dict(body=10.5, diff=11.0, sec=11.0, ls=1.05, pa=0),
-        dict(body=10.0, diff=11.0, sec=11.0, ls=1.04, pa=0),
-        dict(body=10.0, diff=10.0, sec=10.0, ls=1.02, pa=0),
+        dict(body=11.5, diff=11.5, sec=11.5, ls=1.06, pa=0),
+        dict(body=11.0, diff=11.0, sec=11.0, ls=1.04, pa=0),
+        dict(body=10.5, diff=10.5, sec=10.8, ls=1.02, pa=0),
+        dict(body=10.0, diff=10.5, sec=10.5, ls=1.00, pa=0),
+        dict(body=9.8,  diff=10.0, sec=10.2, ls=0.98, pa=0),
+        dict(body=9.5,  diff=10.0, sec=10.0, ls=0.96, pa=0),
+        dict(body=9.2,  diff=9.8,  sec=9.8,  ls=0.94, pa=0),
         # 兜底：更小档，确保内容再多也能压进一页
-        dict(body=9.5,  diff=10.0, sec=10.0, ls=1.00, pa=0),
-        dict(body=9.0,  diff=10.0, sec=10.0, ls=1.00, pa=0),
-        dict(body=8.5,  diff=9.0,  sec=9.5,  ls=0.98, pa=0),
-        dict(body=8.0,  diff=9.0,  sec=9.0,  ls=0.96, pa=0),
+        dict(body=9.0,  diff=9.5,  sec=9.5,  ls=0.94, pa=0),
+        dict(body=8.5,  diff=9.0,  sec=9.2,  ls=0.92, pa=0),
+        dict(body=8.0,  diff=8.8,  sec=9.0,  ls=0.90, pa=0),
     ]
 
     longest_q = max(q_lens) if q_lens else 0
@@ -230,14 +246,14 @@ def _plan_layout(outline, shrink_steps: int = 0) -> dict:
             + mins["fluency_h"] + mins["questions_h"] + mins["engage_h"])
     leftover = budget - used
     # 降档 4 档及以上 = 正在和溢出搏斗，彻底关闭"铺满"扩张（绝不再加高度）。
-    if leftover > 200 and shrink_steps < 4:
+    if leftover > 200 and shrink_steps < 2:
         # 余量按三大内容区（难度/正文/答题）当前高度比例均摊 → 整页均衡铺满、
         # 不在某一块堆出大片空白（对齐官方模板均衡的版面），词汇/拼读/参与度保持紧凑。
         fill_keys = ["diff_h", "fluency_h", "questions_h"]
         base = sum(mins[k] for k in fill_keys) or 1
         # 铺满系数（用户拍板 2026-06-06：底部不能留大片空白）：首轮吃掉 ~92% 余量，
         # 降档重排时每档少给 12%（防被撑大又溢出到第二页）。
-        fill_factor = max(0.40, 0.85 - 0.12 * shrink_steps)
+        fill_factor = max(0.15, 0.35 - 0.12 * shrink_steps)
         give = int(leftover * fill_factor)   # 留安全余量，严格防溢出到第二页
         natural = {k: max(1, mins[k]) for k in fill_keys}
         for k in fill_keys:
@@ -770,20 +786,21 @@ def _resolve_rr_questions(outline: BookOutline) -> list[dict]:
     if raw and isinstance(raw, list) and len(raw) > 0:
         normalized: list[dict] = []
         for i, q in enumerate(raw[:len(dist)]):
-            stars = dist[i]
+            raw_stars = q.get("stars") or q.get("difficulty") or q.get("level")
+            stars = _parse_rr_stars(raw_stars) or dist[i]
             answer = str(q.get("answer") or q.get("sample") or "").strip()
             question = str(q.get("q") or q.get("question") or "").strip()
             located_page = _known_rr_page(outline, question, answer) or _page_from_question_answer(question, answer, page_lookup)
             page = located_page or (
                 None if _rr_omit_page(stars) else (q.get("page") or (i + 2))
             )
-            if _literal_rr_question(question, answer):
+            if not raw_stars and _literal_rr_question(question, answer):
                 stars = 1
             normalized.append({
-                "q": question,
+                "q": _normalize_student_punctuation(question),
                 "stars": stars,
                 "page": page,
-                "answer": answer,
+                "answer": _normalize_student_punctuation(answer),
             })
         while len(normalized) < len(dist):
             i = len(normalized)
@@ -812,6 +829,26 @@ def _rr_omit_page(stars: int) -> bool:
         return int(stars) >= 3
     except (TypeError, ValueError):
         return False
+
+
+def _parse_rr_stars(value) -> int | None:
+    if value is None:
+        return None
+    if isinstance(value, int):
+        return max(1, min(value, 3))
+    text = str(value).strip().lower()
+    if not text:
+        return None
+    if "★★★" in text or "***" in text or "hard" in text or "challenge" in text:
+        return 3
+    if "★★" in text or "**" in text or "medium" in text:
+        return 2
+    if "★" in text or "*" in text or "easy" in text:
+        return 1
+    m = re.search(r"\b([123])\b", text)
+    if m:
+        return int(m.group(1))
+    return None
 
 
 def _story_page_lookup(outline: BookOutline) -> list[tuple[int, str]]:
@@ -929,16 +966,7 @@ def _grammar_difficulty_text(outline: BookOutline) -> str:
 
 
 def _clean_rr_text(text: str) -> str:
-    return (
-        str(text or "")
-        .replace("\ufffe", "-")
-        .replace("\u00ad", "-")
-        .replace("\u2010", "-")
-        .replace("\u2011", "-")
-        .replace("\u2012", "-")
-        .replace("\u2013", "-")
-        .replace("\u2014", "-")
-    )
+    return _normalize_student_punctuation(text)
 
 
 def _default_reader_type(outline) -> str:
@@ -1281,7 +1309,7 @@ def _normalize_phonics(raw: str) -> str:
 
     if not raw:
         return "short vowel pattern"
-    text = str(raw).strip().replace("\r\n", " ").replace("\n", " ")
+    text = _normalize_student_punctuation(str(raw).strip().replace("\r\n", " ").replace("\n", " "))
 
     # 1. curly quote → straight quote
     text = (
