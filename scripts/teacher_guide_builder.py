@@ -708,9 +708,11 @@ def _page_vocab_prompt(outline: BookOutline, page_text: str, *, include_sentence
             f"Highlight the word \"{word}\" in context: "
             f"\"Yes, {word} is one of our core words. Listen to the sentence: {text}\""
         )
-    if text:
+    if text and include_sentence:
         return f"Confirm the meaning with the actual sentence from this page: \"{text}\""
-    return "Confirm students' ideas using the picture and the sentence on this page."
+    if text:
+        return "Confirm students' ideas from the picture only. Students will check the exact sentence during Detailed Reading."
+    return "Confirm students' ideas from the picture only."
 
 
 def _pause_points(outline: BookOutline, is_nf: bool, band: str = "mid") -> list[dict]:
