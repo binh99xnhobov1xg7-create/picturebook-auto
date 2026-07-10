@@ -1338,6 +1338,7 @@ def _enrich_phonics_examples(text: str, outline: BookOutline) -> str:
     chosen = (priority + rest)[:5]
     if not chosen:
         return text
+    chosen = [w.capitalize() if w in {"sunday", "tuesday"} else w for w in chosen]
     base = re.sub(r"\s*\([^)]*\)\s*$", "", text).strip()
     return f"{base} ({', '.join(chosen)})"
 
