@@ -33,6 +33,13 @@ from docx.shared import Cm, Pt, RGBColor
 
 from parser import BookOutline
 from text_format import capitalize_names
+from tg_quality import (
+    assert_behavior_objectives,
+    build_tg_context,
+    tg_doc_text,
+    validate_tg_output,
+    validate_tg_preflight,
+)
 
 
 FONT_EN = "Poppins"
@@ -137,12 +144,14 @@ def _is_nonfiction(outline: BookOutline) -> bool:
 #  主入口
 # ============================================================
 def build_teacher_guide(outline: BookOutline, out_path: Path) -> Path:
+    band = _band(outline.level)
+    is_nf = _is_nonfiction(outline)
+    tg_context = build_tg_context(outline, _worksheet_activities(outline))
+    validate_tg_preflight(tg_context)
+
     doc = Document()
     _set_default_font(doc)
     _set_a4_margins(doc)
-
-    band = _band(outline.level)
-    is_nf = _is_nonfiction(outline)
 
     # 总标题块（对齐 SOP：大蓝标题 + 书名 + 灰副标 + 蓝分隔线）
     _title_block(doc, outline, is_nf)
@@ -158,9 +167,13 @@ def build_teacher_guide(outline: BookOutline, out_path: Path) -> Path:
     # L3-L6 都可能是虚构/非虚构：非虚构一律追加科普制作与教学要求板块
     if band in ("mid", "high") and is_nf:
         _build_nonfiction_notes(doc, outline)
-    _build_quality_checklist(doc, outline, band, is_nf)
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
+    validate_tg_output(
+        tg_context,
+        tg_doc_text(doc),
+        _picture_walk_validation_rows(outline, _picture_walk_pages(outline, band, is_nf)),
+    )
     doc.save(str(out_path))
     return out_path
 
@@ -176,7 +189,7 @@ def _build_lesson_overview(doc, outline: BookOutline, band: str, is_nf: bool) ->
     level_cefr = f"Level {_level_label(outline.level)} \u2022 {cefr}"
     if lexile:
         level_cefr += f" \u2022 Lexile {lexile}"
-    level_cefr += f" \u2022 {outline.total_words or '—'} words"
+    level_cefr += f" \u2022 Word count: {outline.total_words or '—'}"
 
     strategy = _reading_strategy(outline, is_nf)
     skill = _reading_skill(outline, is_nf)
@@ -185,18 +198,21 @@ def _build_lesson_overview(doc, outline: BookOutline, band: str, is_nf: bool) ->
         ("Book Title", capitalize_names(outline.title)),
         ("Level / CEFR", level_cefr),
         ("Genre", "Nonfiction" if is_nf else "Fiction"),
-        ("Time", "60 minutes total"),
+        ("Pages", _pages_label(outline)),
+        ("Time", "60 minutes"),
         ("Core Vocabulary", _format_vocab(outline)),
-        ("Language Focus", outline.grammar_focus or _en(getattr(_syllabus(outline), "sentence_pattern", "") if _syllabus(outline) else "") or "the target sentence patterns from the book"),
+        ("Language Focus", _language_focus_label(outline)),
         ("Reading Strategy", strategy),
         ("Reading Skill", skill),
-        ("Phonics Focus", outline.phonics or "the target phonics rule from the book"),
+        ("Phonics Focus", _phonics_focus_label(outline)),
     ]
     _kv_table(doc, rows)
 
     _heading(doc, "Key Objectives", level=3)
     _para(doc, "By the end of this lesson, students will be able to:")
-    for obj in _objective_bullets(outline, is_nf):
+    objectives = _objective_bullets(outline, is_nf)
+    assert_behavior_objectives(objectives)
+    for obj in objectives:
         _bullet(doc, obj)
 
     _heading(doc, "Question Level Guide", level=3)
@@ -214,13 +230,13 @@ def _build_lesson_overview(doc, outline: BookOutline, band: str, is_nf: bool) ->
              "Re-read the sentence and point to the word or picture together."],
             ["[L1]", "Inferential", "Combine two pieces of information (How / Why / What happened next).",
              "Ask the two smaller questions that lead to the answer."],
-            ["[L2]", "Analytical", "Reason beyond the text (Evaluate / Compare / Predict / Justify).",
+            ["[L2]", "Analytical / Personal Connection", "Reason beyond the text (Evaluate / Compare / Predict / Justify / Connect personally).",
              "Offer a sentence starter and accept any reasoned reply."],
         ],
         widths=[1.6, 3.0, 6.0, 5.4],
     )
-    l2_rule = ("Rule: Every Pause Point includes at least one [L0] and one [L1] question. "
-               "[L2] questions appear at the final Pause Point and are always open-ended.")
+    l2_rule = ("Rule: Each Pause Point must include at least one [L0] and one [L1] question when supported by the text. "
+               "[L2] questions may appear when pedagogically appropriate. The final Pause Point must include at least one open-ended [L2] question.")
     if band == "high":
         l2_rule += (" At this level, raise the cognitive demand: include [L2] analysis/evaluation at the last "
                     "TWO Pause Points and expect longer, evidence-based responses.")
@@ -265,13 +281,11 @@ def _lesson_flow_rows(band: str) -> list[list[str]]:
 def _build_pre_reading(doc, outline: BookOutline, band: str) -> None:
     _heading(doc, "PRE-READING")
 
-    _heading(doc, "Warm-up (3 minutes)", level=3)
-    _tagged(doc, "Teacher Says:",
-            f"\"Today we are going to read a book called {capitalize_names(outline.title)}. "
-            f"Let's think about what we already know.\"")
-    _tagged(doc, "Teacher Asks:",
-            "\"What do you already know about this topic? What comes to mind when you hear the title?\"")
-    _tagged(doc, "Expected Response:", "Students share prior knowledge and predictions. Accept all responses warmly.")
+    _heading(doc, "Warm-up & Purpose \u2022 3 minutes", level=3)
+    says, asks, responses = _warmup_script(outline)
+    _tagged(doc, "Teacher Says:", says)
+    _tagged(doc, "Teacher Asks:", asks)
+    _tagged(doc, "Expected Responses:", responses)
     _para_italic(doc, "Do not reveal the story or pre-teach vocabulary out of context here.")
 
     phonics = outline.phonics or "the target phonics rule from the book"
@@ -290,14 +304,14 @@ def _build_pre_reading(doc, outline: BookOutline, band: str) -> None:
             _tagged(doc, "Teacher Says:", f"\"This is {word}. Say {word} with me: {word}.\"")
             _tagged(doc, "Expected Response:", f"Students say \"{word}\" and mimic the gesture.")
     else:
-        _heading(doc, "Phonics Awareness • 3 minutes", level=3)
-        _tagged(doc, "Focus:", phonics)
+        _heading(doc, "Phonics Awareness \u2022 3 minutes", level=3)
+        _tagged(doc, "Focus:", _phonics_focus_label(outline) if phonics else phonics)
         _tagged(doc, "Target Words from this book:", _phonics_examples(outline))
         _tagged(doc, "Teacher Says:",
                 f"\"Listen carefully. These words share the target sound. Repeat after me: {_phonics_examples(outline)}.\"")
         _tagged(doc, "Quick Task:",
                 "\"As we read today, raise your hand quietly when you hear a word with the target sound.\"")
-        _callout(doc, "Awareness only — keep this brief. Do not drill. Vocabulary is introduced in context during reading.",
+        _callout(doc, "Awareness only - keep this brief. Do not drill. Vocabulary is introduced in context during reading.",
                  bg=BG_CREAM)
 
 
@@ -397,9 +411,7 @@ def _build_during_reading(doc, outline: BookOutline, band: str, is_nf: bool) -> 
                       "Why This Arrangement: previewing every page activates background knowledge for each section; "
                       "there is no narrative suspense to protect.")
     else:
-        scope_note = (f"Picture Walk covers Pages {walk_pages[0]}-{walk_pages[-1]} only. "
-                      "Why This Arrangement: the resolution pages are left for Detailed Reading to preserve "
-                      "the emotional impact of the ending.")
+        scope_note = _picture_walk_scope_note(outline, walk_pages)
     _callout(doc, scope_note, bg=BG_BLUE,
              header="\U0001F4CC Why this arrangement", header_bg=C_BLUE_DK)
     if band in ("mid", "high"):
@@ -450,7 +462,7 @@ def _build_during_reading(doc, outline: BookOutline, band: str, is_nf: bool) -> 
                 "Match tone to information type: a curious voice for questions, a clear confident voice for facts.")
     else:
         _tagged(doc, "Round 1 - Expression Reading:",
-                "Match voice to the emotional arc (excited at the start, worried in the middle, warm at the end).")
+                _fluency_emotion_prompt(outline))
     _tagged(doc, "Round 2 - Phrased Reading:",
             "\"Read at a steady pace, in phrases, not word by word. Pause at commas and full stops.\" "
             "Model one sentence, then students read independently or in pairs.")
@@ -519,8 +531,7 @@ def _build_post_reading(doc, outline: BookOutline, band: str, is_nf: bool) -> No
     # Lesson Close
     _heading(doc, "LESSON CLOSE • 4 minutes")
     _tagged(doc, "Summarize:", _today_objectives(outline, is_nf))
-    _tagged(doc, "Reflection Prompt:",
-            "\"What connection did you make today between this book and your own life?\"")
+    _tagged(doc, "Reflection Prompt:", _lesson_close_reflection(outline, is_nf))
     _tagged(doc, "Final Wrap-up:",
             f"\"Today we read {capitalize_names(outline.title)} together. Great job using our new words - "
             f"see you next time!\"")
@@ -534,17 +545,23 @@ def _build_portfolio(doc, outline: BookOutline, is_nf: bool) -> None:
     _para_italic(doc, "Select one option based on available time and student need.")
     if is_nf:
         opt1 = f"Make an illustrated fact poster about {capitalize_names(outline.title)}. Draw 2-3 key facts and label them with the core vocabulary ({_format_vocab(outline)})."
+        opt2 = f"Retell {capitalize_names(outline.title)} using the main idea and 2-3 supporting details."
+        opt3 = "Write 3-4 true sentences about the topic using at least two core vocabulary words."
+    elif _is_l3_plan_story(outline):
+        opt1 = "Draw Mia's plan and label each action with a time or order clue: first, on Tuesday, every day."
+        opt2 = "Retell the story using Problem - Plan - Result: Mia has many things to do; Mia makes a seven-day plan; Mia feels happy and proud of her plan."
+        opt3 = "Write four sentences about your own weekly plan using I will + base verb."
     else:
         opt1 = f"Draw a 3-part comic strip: BEFORE / EVENT / AFTER. Label the feelings in each part using words from the story."
+        opt2 = f"Retell {capitalize_names(outline.title)} using the structural framework and at least {_oral_word_count(outline)} core words."
+        opt3 = "Write a short paragraph using the book's sentence patterns and at least one core vocabulary word."
     _grid_table(
         doc,
         ["Option", "Task"],
         [
             ["Option 1 / Draw & Label", opt1],
-            ["Option 2 / Oral Retell",
-             f"Retell {capitalize_names(outline.title)} using the structural framework and at least {_oral_word_count(outline)} core words."],
-            ["Option 3 / Writing",
-             "Write a short paragraph or postcard using the book's sentence patterns and at least one core vocabulary word."],
+            ["Option 2 / Oral Retell", opt2],
+            ["Option 3 / Writing", opt3],
         ],
         widths=[4.0, 12.0],
     )
@@ -644,6 +661,19 @@ def _picture_walk_pages(outline: BookOutline, band: str, is_nf: bool) -> list[in
     return list(range(2, preview_end + 1))
 
 
+def _picture_walk_scope_note(outline: BookOutline, walk_pages: list[int]) -> str:
+    if _is_l3_plan_story(outline):
+        return (
+            f"Picture Walk covers Pages {walk_pages[0]}-{walk_pages[-1]}. "
+            "Page 7 shows Mia's daily piano practice, and Page 8 reveals her final feeling. "
+            "These pages are left for Detailed Reading so students discover the complete plan and emotional resolution through the text."
+        )
+    return (
+        f"Picture Walk covers Pages {walk_pages[0]}-{walk_pages[-1]} only. "
+        "Why This Arrangement: later resolution pages are left for Detailed Reading so students discover the ending through the text."
+    )
+
+
 def _story_page(outline: BookOutline, printed_page: int):
     """印刷页码 -> PageSpec（印刷 P2 = story index 1）。"""
     idx = printed_page - 1
@@ -661,7 +691,7 @@ def _printed_story_pages(outline: BookOutline) -> list[tuple[int, str]]:
     return pages
 
 
-def _page_vocab_prompt(outline: BookOutline, page_text: str) -> str:
+def _page_vocab_prompt(outline: BookOutline, page_text: str, *, include_sentence: bool = True) -> str:
     text = _clean_quotes(page_text or "").strip()
     words = _vocab_words(outline)
     hits = [
@@ -670,6 +700,10 @@ def _page_vocab_prompt(outline: BookOutline, page_text: str) -> str:
     ]
     if hits:
         word = hits[0]
+        if not include_sentence:
+            return (
+                f"Introduce \"{word}\" briefly from the picture. Students will confirm the exact sentence during Detailed Reading."
+            )
         return (
             f"Highlight the word \"{word}\" in context: "
             f"\"Yes, {word} is one of our core words. Listen to the sentence: {text}\""
@@ -798,7 +832,7 @@ def _picture_walk_table(doc, outline: BookOutline, walk_pages: list[int]) -> Non
         page = _story_page(outline, printed)
         text = _clean_quotes((page.text if page else "") or "").strip()
         action, ask, expected = _picture_walk_prompts(outline, printed, text)
-        vocab_line = _page_vocab_prompt(outline, text)
+        vocab_line = _page_vocab_prompt(outline, text, include_sentence=False)
         rows.append([
             f"Page {printed}",
             "\n".join([
@@ -813,26 +847,53 @@ def _picture_walk_table(doc, outline: BookOutline, walk_pages: list[int]) -> Non
     _grid_table(doc, ["Page", "Picture Walk Script"], rows, widths=[2.4, 13.6])
 
 
+def _picture_walk_validation_rows(outline: BookOutline, walk_pages: list[int]) -> list[dict]:
+    rows = []
+    for printed in walk_pages:
+        page = _story_page(outline, printed)
+        text = _clean_quotes((page.text if page else "") or "").strip()
+        action, ask, expected = _picture_walk_prompts(outline, printed, text)
+        rows.append({
+            "page": printed,
+            "teacher_action": action,
+            "teacher_asks": ask,
+            "expected_response": expected,
+        })
+    return rows
+
+
 def _picture_walk_prompts(outline: BookOutline, printed_page: int, text: str) -> tuple[str, str, str]:
     low = (text or "").lower()
     if _is_l3_plan_story(outline):
-        if printed_page <= 3 or any(k in low for k in ("many things", "homework", "messy", "show")):
+        if printed_page == 2 or "many things" in low:
             return (
-                "Point to Mia, her room/homework, and the piano-show clue.",
-                "What does Mia need to do this week? How do you think she feels?",
-                "She has homework. Her room is messy. She has a piano show. She may feel worried.",
+                "Point to Mia and the things around her that suggest a busy week.",
+                "What clues show that Mia has many things to do?",
+                "Students may notice books, schoolwork, toys, or a busy-looking room.",
             )
-        if any(k in low for k in ("plan", "first", "tuesday")):
+        if printed_page == 3 or any(k in low for k in ("homework", "messy")):
+            return (
+                "Point to the homework and the messy-room clues.",
+                "What two jobs can you see Mia may need to finish?",
+                "She needs to finish homework and tidy or clean her room.",
+            )
+        if printed_page == 4 or "show" in low:
+            return (
+                "Point to the piano or performance clue.",
+                "What important event is coming soon? What might Mia need to do before it?",
+                "There is a piano show soon, so Mia may need to practice.",
+            )
+        if printed_page in (5, 6) or any(k in low for k in ("plan", "first", "tuesday")):
             return (
                 "Point to the plan/notebook and any order or time clues.",
-                "What is Mia doing to solve her problem? What words tell us the order?",
-                "She makes a plan. She will do homework first and clean her room on Tuesday.",
+                "What do you predict Mia will do to organize her week?",
+                "Students predict that Mia may make a plan or choose an order for her tasks.",
             )
         if any(k in low for k in ("practice", "hour", "happy", "proud")):
             return (
-                "Point to Mia practising piano and then to her final feeling.",
+                "Point to Mia practicing piano and then to her final feeling.",
                 "What does Mia do every day? How does the plan help her at the end?",
-                "She practises the piano every day. She is happy and proud of her plan.",
+                "She practices the piano every day. She is happy and proud of her plan.",
             )
     if any(k in low for k in ("worried", "problem", "messy", "lost", "grabbed")):
         return (
@@ -897,7 +958,8 @@ def _plan_story_pause_points() -> list[dict]:
                 {"tag": "L0", "q": "What kind of plan does Mia make?"},
                 {"tag": "L0", "q": "What will Mia do first?"},
                 {"tag": "L1", "q": "How does the plan make Mia's jobs easier?"},
-                {"tag": "L1", "q": "Which time word or order word helps you understand the plan?"},
+                {"tag": "L0", "q": "Which word tells us what Mia will do before the other tasks?"},
+                {"tag": "L0", "q": "Which word tells us the day when Mia will clean her room?"},
             ],
             "write": "EVENT - Mia makes a seven-day plan and starts with homework.",
         },
@@ -911,7 +973,7 @@ def _plan_story_pause_points() -> list[dict]:
                 {"tag": "L1", "q": "How did Mia's feeling change from worried to proud?"},
                 {"tag": "L2", "q": "Why is making a plan a good way to solve Mia's problem?"},
             ],
-            "write": "AFTER - Mia follows her plan. She is happy and proud.",
+            "write": "AFTER - Mia practices piano every day. She is happy and proud of her plan.",
         },
     ]
 
@@ -1102,13 +1164,15 @@ def _detect_go(outline: BookOutline, is_nf: bool) -> dict | None:
 
     actual_mode = (getattr(outline, "_worksheet_second_reading_mode", "") or "").lower()
     if actual_mode == "planchart":
-        return base(
-            "Plan Chart",
-            "\"This chart shows Mia's plan. A good plan tells us two things: what to do and when to do it. "
-            "Let's do the first row together: Mia will do homework first. Now you find the other actions and time clues in the story.\"",
-            "Each row needs one action and one time/order clue. Keep answers short. Students should look back at Pages 6-7 for evidence.",
-            "homework - do homework - first; room - clean her room - on Tuesday; piano - practice the piano - every day; "
-            "piano - play for one hour - every day.")
+        return {
+            "name": "Plan Chart",
+            "briefing": "\"This chart shows Mia's plan. A good plan tells us two things: what to do and when to do it. "
+                         "Let's do the first row together: Mia will do homework first. Now you find the other actions and time clues in the story.\"",
+            "word_bank": "first, clean her room, every day, play for one hour",
+            "guidance": "Each row needs one action and one time/order clue. Keep answers short. Students should look back at Pages 6-7 for evidence.",
+            "answer_key": "homework - do homework - first; room - clean her room - on Tuesday; piano - practice the piano - every day; "
+                          "piano - play for one hour - every day.",
+        }
     if actual_mode == "timeline":
         return base(
             "Sequence / Timeline Chart",
@@ -1236,6 +1300,7 @@ def _l3_standard_worksheet_activities(outline: BookOutline) -> list[dict]:
             "title": "Reading — Plan Chart" if is_plan else "Reading — Graphic Organizer",
             "instruction": "complete the graphic organizer using clues from the story",
             "briefing": "Do the first row together. Students complete the remaining blanks using the word bank and story evidence.",
+            "word_bank": ["first", "clean her room", "every day", "play for one hour"] if is_plan else [],
             "answer_key": ("1. first; 2. clean her room; 3. every day; 4. play for one hour"
                            if is_plan else "Use short phrases from the story to complete each blank."),
             "discussion_prompt": ("How does Mia's plan help her feel happy and proud at the end?"
@@ -1318,6 +1383,77 @@ def _format_vocab(outline: BookOutline) -> str:
     return ", ".join(_vocab_words(outline)) or "the target vocabulary"
 
 
+def _pages_label(outline: BookOutline) -> str:
+    pages = _printed_story_pages(outline)
+    if not pages:
+        return "Book pages unavailable"
+    lo, hi = pages[0][0], pages[-1][0]
+    return f"{len(pages) + 1} story pages: Pages {lo}-{hi}, plus title and back cover"
+
+
+def _language_focus_label(outline: BookOutline) -> str:
+    raw = outline.grammar_focus or _en(getattr(_syllabus(outline), "sentence_pattern", "") if _syllabus(outline) else "")
+    raw = _clean_quotes(raw).strip()
+    if not raw:
+        return "Target sentence patterns from the book"
+    if "[subject]" in raw.lower() and "will" in raw.lower():
+        return "Subject + will + base verb"
+    raw = raw.replace("[Subject]", "Subject").replace("[subject]", "subject")
+    raw = raw.replace("[action]", "base verb").replace("[Action]", "base verb")
+    return raw
+
+
+def _phonics_focus_label(outline: BookOutline) -> str:
+    raw = _clean_quotes(outline.phonics or "").strip()
+    if not raw:
+        return "Target phonics rule from the book"
+    low = raw.lower()
+    if "ay" in low:
+        return 'Long /eɪ/ sound spelled "ay," as in day'
+    if "ee" in low:
+        return 'Long /iː/ sound spelled "ee," as in sheep'
+    return raw
+
+
+def _theme_fallback(outline: BookOutline, is_nf: bool) -> str:
+    if is_nf:
+        return "Informational Reading"
+    if _is_l3_plan_story(outline):
+        return "Planning and Responsibility"
+    skill = _reading_skill(outline, is_nf)
+    return skill or "Reading to Learn"
+
+
+def _warmup_script(outline: BookOutline) -> tuple[str, str, str]:
+    title = capitalize_names(outline.title)
+    if _is_l3_plan_story(outline):
+        return (
+            f"\"Today we are going to read {title}. Before we read, let's think about busy days and how people organize what they need to do.\"",
+            "\"When you have many things to do in one week, what can help you remember them? Have you ever made a simple plan or list?\"",
+            "Students may say: make a list, use a calendar, ask a parent, do one thing first, practice every day.",
+        )
+    if "predict" in _reading_strategy(outline, _is_nonfiction(outline)).lower():
+        return (
+            f"\"Today we are going to read {title}. We will use the title and pictures to make careful predictions before we read.\"",
+            "\"What can a title or picture help you guess? What should we do after we read to check our guess?\"",
+            "Students may say: guess what happens, look for clues, read to check, change the prediction.",
+        )
+    return (
+        f"\"Today we are going to read {title}. Let's connect the topic to something you already know before we read.\"",
+        "\"Have you seen or experienced something like this topic before? What detail would you like to find out?\"",
+        "Students share brief personal experience or curiosity. Accept all reasonable responses.",
+    )
+
+
+def _fluency_emotion_prompt(outline: BookOutline) -> str:
+    if _is_l3_plan_story(outline):
+        return (
+            "Match voice to the emotions stated or supported by the book: concerned when Mia has many things to do, "
+            "worried when she makes the plan, clear and steady for the plan sentences, and happy/proud on the final page."
+        )
+    return "Match voice to the feelings shown in the text and pictures. Use a different voice only when the book gives evidence for that feeling."
+
+
 def _story_sentences(outline: BookOutline) -> list[str]:
     sentences: list[str] = []
     for _, page_text in _printed_story_pages(outline):
@@ -1360,13 +1496,21 @@ def _build_objectives(outline: BookOutline) -> str:
 
 def _objective_bullets(outline: BookOutline, is_nf: bool) -> list[str]:
     words = ", ".join(_vocab_words(outline)[:4]) or "the core vocabulary"
-    grammar = outline.grammar_focus or "the target sentence pattern"
+    grammar = _language_focus_label(outline)
+    if _is_l3_plan_story(outline):
+        return [
+            "Identify Mia's problem, plan, and final feeling.",
+            "Match four actions with their correct time or order clues.",
+            f"Use {words} in story-based sentences.",
+            f"Use {grammar} to describe a future plan.",
+            "Make and confirm one prediction using evidence from the book.",
+        ]
     return [
-        f"Identify and use core vocabulary naturally in context: {words}",
-        f"Understand and use the language focus: {grammar}",
-        f"Answer comprehension questions using evidence from the book",
-        f"Practice {_reading_skill(outline, is_nf)} through the lesson pause points and worksheet",
-        f"Retell or organize the text using the worksheet graphic organizer",
+        f"Identify and use core vocabulary in context: {words}.",
+        f"Use the language focus in a sentence: {grammar}.",
+        "Answer comprehension questions using evidence from the book.",
+        f"Practice {_reading_skill(outline, is_nf)} through pause points and worksheet tasks.",
+        "Retell or organize the text using the worksheet graphic organizer.",
     ]
 
 
@@ -1380,8 +1524,21 @@ def _today_objectives(outline: BookOutline, is_nf: bool) -> str:
     skill = _reading_skill(outline, is_nf)
     strategy = _reading_strategy(outline, is_nf)
     words = ", ".join(_vocab_words(outline)[:4]) or "the target vocabulary"
+    if _is_l3_plan_story(outline):
+        return (
+            "\"Today you identified Mia's problem, plan, and final feeling. You used time and order clues "
+            "to understand her seven-day plan, and you checked whether your predictions were correct.\""
+        )
     return (f"\"Today students were able to read and understand {capitalize_names(outline.title)}, "
             f"use the words {words}, and practice {skill} and {strategy}.\"")
+
+
+def _lesson_close_reflection(outline: BookOutline, is_nf: bool) -> str:
+    if _is_l3_plan_story(outline):
+        return "\"What prediction did you make about Mia's plan? Which page confirmed or changed your idea?\""
+    strategy = _reading_strategy(outline, is_nf)
+    skill = _reading_skill(outline, is_nf)
+    return f"\"How did {strategy} help you understand {skill} in this book? Which page gives your evidence?\""
 
 
 def _phonics_examples(outline: BookOutline) -> str:
@@ -1481,11 +1638,12 @@ def _title_block(doc, outline: BookOutline, is_nf: bool) -> None:
     h.alignment = WD_ALIGN_PARAGRAPH.LEFT
     _font(h.add_run(capitalize_names(outline.title)), size_pt=26, bold=True, color=C_BLUE)
 
-    cefr = (outline.cefr or "").strip() or _cefr_default(outline.level)
     genre = "Nonfiction" if is_nf else "Fiction"
+    theme = (outline.theme or "").strip() or _theme_fallback(outline, is_nf)
     sub = doc.add_paragraph()
     sub.alignment = WD_ALIGN_PARAGRAPH.LEFT
-    _font(sub.add_run(f"Level {_level_label(outline.level)}  \u2022  {cefr}  \u2022  {genre}  \u2022  Reading to Learn"),
+    book_no = (getattr(outline, "book_number", "") or "").strip() or "1"
+    _font(sub.add_run(f"Level {_level_label(outline.level)}  \u2022  Book {book_no}  \u2022  {genre}  \u2022  {theme}"),
           size_pt=12, italic=True, color=C_GRAY)
     _divider(doc)
 
