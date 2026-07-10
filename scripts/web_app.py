@@ -60,6 +60,7 @@ from prompt_builder import build_page_prompt  # legacy: fallback only
 from reading_report_builder import attach_rr_questions, build_reading_report
 from seedream_client import generate_image, generate_image_for_level, is_placeholder_image
 from teacher_guide_builder import build_teacher_guide
+from tg_page_overrides import official_page_text_override
 from worksheet_builder import attach_worksheet_questions, build_worksheet
 from curriculum_display import (
     curriculum_section_tables,
@@ -2329,7 +2330,7 @@ def _sentence_chunks_for_story_pages(story: str, n_pages: int = 7) -> list[str]:
 
 
 def _apply_official_story_pages(outline: BookOutline, story: str) -> None:
-    chunks = _sentence_chunks_for_story_pages(story, 7)
+    chunks = official_page_text_override(outline) or _sentence_chunks_for_story_pages(story, 7)
     for i, text in enumerate(chunks, start=1):
         if i < len(outline.pages) and text:
             outline.pages[i].text = text

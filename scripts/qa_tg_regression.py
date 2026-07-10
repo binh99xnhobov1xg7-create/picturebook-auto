@@ -16,6 +16,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from parser import BookOutline, PageSpec  # noqa: E402
 from teacher_guide_builder import build_teacher_guide  # noqa: E402
 from tg_quality import TGQualityError  # noqa: E402
+from tg_page_overrides import official_page_text_override  # noqa: E402
 
 
 def _outline(title: str, level: str, book: str, texts: list[str], **kwargs) -> BookOutline:
@@ -137,6 +138,32 @@ def test_l3_mia_bad_pages_block(tmp: Path) -> None:
     raise AssertionError("Bad L3-1 page split should be blocked.")
 
 
+def test_l3_mia_official_story_page_override() -> None:
+    outline = _mia_outline([""] * 7)
+    official_story = " ".join([
+        "Mia has many things to do this week.",
+        "She has homework to finish.",
+        "Her room is messy.",
+        "The piano show is on Sunday.",
+        "Mia wants to play well.",
+        "Mia feels worried.",
+        "She makes a seven-day plan.",
+        "She will do homework first.",
+        "She will clean her room on Tuesday.",
+        "She will practice the piano every day.",
+        "She will play for one hour a day.",
+        "Mia is happy and proud of her plan.",
+    ])
+    chunks = official_page_text_override(outline)
+    assert chunks is not None
+    for i, text in enumerate(chunks, start=1):
+        outline.pages[i].text = text
+    assert outline.pages[1].text == "Mia has many things to do this week."
+    assert outline.pages[2].text == "She has homework to finish. Her room is messy."
+    assert outline.pages[3].text == "The piano show is on Sunday. Mia wants to play well."
+    assert outline.pages[4].text == "Mia feels worried. She makes a seven-day plan."
+
+
 def test_l4_scotland_smoke(tmp: Path) -> None:
     path = tmp / "scotland_tg.docx"
     build_teacher_guide(_scotland_outline(), path)
@@ -154,6 +181,8 @@ def main() -> None:
         print("PASS L3-1 correct-pages TG generation")
         test_l3_mia_bad_pages_block(tmp)
         print("PASS L3-1 bad-pages blocker")
+        test_l3_mia_official_story_page_override()
+        print("PASS L3-1 official-story page override")
         test_l4_scotland_smoke(tmp)
         print("PASS L4B13 smoke regression")
 
