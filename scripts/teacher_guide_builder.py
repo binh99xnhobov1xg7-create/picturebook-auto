@@ -500,6 +500,8 @@ def _build_post_reading(doc, outline: BookOutline, band: str, is_nf: bool) -> No
                     "Model the first item aloud, then have students complete the rest independently while you give targeted feedback.")
             if ws.get("answer_key"):
                 _callout(doc, f"Answer Key:\n{ws['answer_key']}", bg=BG_CREAM)
+            if ws.get("discussion_prompt"):
+                _tagged(doc, "Quick Discussion Prompt:", ws["discussion_prompt"])
 
     # Graphic Organizer guidance (if the worksheet contains a GO-like activity)
     go = _detect_go(outline, is_nf)
@@ -683,6 +685,9 @@ def _pause_points(outline: BookOutline, is_nf: bool, band: str = "mid") -> list[
     band=high 时认知上调：除最后一个 Pause 外，倒数第二个 Pause 也补一道 [L2]
     分析/评价题（开放性），体现 L5-6 更高的分析要求。
     """
+    if not is_nf and _is_l3_plan_story(outline):
+        return _plan_story_pause_points()
+
     story = [p for p in outline.pages if p.page_type == "story" and (p.text or "").strip()]
     n = len(story) or 7
     last = n + 1
@@ -792,16 +797,60 @@ def _picture_walk_table(doc, outline: BookOutline, walk_pages: list[int]) -> Non
     for printed in walk_pages:
         page = _story_page(outline, printed)
         text = _clean_quotes((page.text if page else "") or "").strip()
+        action, ask, expected = _picture_walk_prompts(outline, printed, text)
+        vocab_line = _page_vocab_prompt(outline, text)
         rows.append([
             f"Page {printed}",
             "\n".join([
-                f"Teacher: \"Look at this page. {text}\"" if text else "Teacher: \"Look at this page.\"",
-                "Students: describe or predict what they see.",
-                f"Vocabulary in context: {_page_vocab_prompt(outline, text)}",
+                f"Teacher Action: {action}",
+                f"Teacher Says: \"Look carefully at this page. What clues can we use before we read?\"",
+                f"Teacher Asks: \"{ask}\"",
+                f"Expected Response: {expected}",
+                f"Teacher Confirms / Expands: {vocab_line}",
                 f"Story Element: {_page_story_tag(outline, printed)}",
             ])
         ])
     _grid_table(doc, ["Page", "Picture Walk Script"], rows, widths=[2.4, 13.6])
+
+
+def _picture_walk_prompts(outline: BookOutline, printed_page: int, text: str) -> tuple[str, str, str]:
+    low = (text or "").lower()
+    if _is_l3_plan_story(outline):
+        if printed_page <= 3 or any(k in low for k in ("many things", "homework", "messy", "show")):
+            return (
+                "Point to Mia, her room/homework, and the piano-show clue.",
+                "What does Mia need to do this week? How do you think she feels?",
+                "She has homework. Her room is messy. She has a piano show. She may feel worried.",
+            )
+        if any(k in low for k in ("plan", "first", "tuesday")):
+            return (
+                "Point to the plan/notebook and any order or time clues.",
+                "What is Mia doing to solve her problem? What words tell us the order?",
+                "She makes a plan. She will do homework first and clean her room on Tuesday.",
+            )
+        if any(k in low for k in ("practice", "hour", "happy", "proud")):
+            return (
+                "Point to Mia practising piano and then to her final feeling.",
+                "What does Mia do every day? How does the plan help her at the end?",
+                "She practises the piano every day. She is happy and proud of her plan.",
+            )
+    if any(k in low for k in ("worried", "problem", "messy", "lost", "grabbed")):
+        return (
+            "Point to the character's face and the problem clue in the picture.",
+            "What problem can you see? How does the character feel?",
+            "Students describe the problem and name a feeling such as worried, sad, or surprised.",
+        )
+    if any(k in low for k in ("happy", "proud", "help", "solved", "finally")):
+        return (
+            "Point to the character's final action and facial expression.",
+            "What changed from the beginning? How do the characters feel now?",
+            "Students notice the solution and describe the final feeling.",
+        )
+    return (
+        "Point to the main character, setting, and one important object.",
+        "Who do you see? Where are they? What do you think may happen next?",
+        "Students name characters, setting, and a reasonable prediction from the picture.",
+    )
 
 
 def _page_story_tag(outline: BookOutline, printed_page: int) -> str:
@@ -812,6 +861,59 @@ def _page_story_tag(outline: BookOutline, printed_page: int) -> str:
     if printed_page >= max(2, last_printed - 1):
         return "AFTER - solution / ending feeling"
     return "EVENT - problem / plan / change"
+
+
+def _is_l3_plan_story(outline: BookOutline) -> bool:
+    if _level_label(outline.level) != "3":
+        return False
+    text = " ".join(_story_sentences(outline)).lower()
+    vocab = " ".join(_vocab_words(outline)).lower()
+    return (
+        "plan" in text
+        and any(k in text for k in ("homework", "piano", "practice", "tuesday", "first"))
+        and ("homework" in vocab or "practice" in vocab or "plan" in vocab)
+    )
+
+
+def _plan_story_pause_points() -> list[dict]:
+    return [
+        {
+            "label": "Pause 1 - BEFORE",
+            "pages": "2-4",
+            "reason": "Pause here because Mia's responsibilities and worried feeling are established.",
+            "questions": [
+                {"tag": "L0", "q": "What things does Mia need to do this week?"},
+                {"tag": "L0", "q": "What show is on Sunday?"},
+                {"tag": "L1", "q": "Why does Mia feel worried?"},
+                {"tag": "L1", "q": "What might help Mia when she has many things to do?"},
+            ],
+            "write": "BEFORE - Mia has many things to do. She feels worried.",
+        },
+        {
+            "label": "Pause 2 - EVENT",
+            "pages": "5-6",
+            "reason": "Pause here because Mia starts to solve the problem by making and using a plan.",
+            "questions": [
+                {"tag": "L0", "q": "What kind of plan does Mia make?"},
+                {"tag": "L0", "q": "What will Mia do first?"},
+                {"tag": "L1", "q": "How does the plan make Mia's jobs easier?"},
+                {"tag": "L1", "q": "Which time word or order word helps you understand the plan?"},
+            ],
+            "write": "EVENT - Mia makes a seven-day plan and starts with homework.",
+        },
+        {
+            "label": "Pause 3 - AFTER",
+            "pages": "7-8",
+            "reason": "Pause at the resolution because students can connect Mia's plan to her final feeling.",
+            "questions": [
+                {"tag": "L0", "q": "What will Mia practice every day?"},
+                {"tag": "L1", "q": "How does Mia feel at the end?"},
+                {"tag": "L1", "q": "How did Mia's feeling change from worried to proud?"},
+                {"tag": "L2", "q": "Why is making a plan a good way to solve Mia's problem?"},
+            ],
+            "write": "AFTER - Mia follows her plan. She is happy and proud.",
+        },
+    ]
 
 
 def _vocabulary_embedded_check(doc, outline: BookOutline) -> None:
@@ -951,9 +1053,9 @@ def _go_by_name(name: str, word_bank: str, is_nf: bool, base) -> dict | None:
                  "Each box: one short sentence or phrase. Use connectors First / Next / Then / Finally.",
                  "Provide the complete ordered sequence for all boxes from the book.")
     if "plan" in n and "chart" in n:
-        return b("\"This chart shows the character's plan. We match what the character will do with when or how often it happens. Let's do the first row together, then you complete the rest.\"",
-                 "Use short phrases from the story. Each row needs an action and a time/order clue.",
-                 "do homework - first; clean her room - on Tuesday; practice the piano - every day; play for one hour - every day.")
+        return b("\"This chart shows the character's plan. A good plan tells us two things: what to do and when to do it. Let's do the first row together: Mia will do homework first. Now you find the other actions and time clues in the story.\"",
+                 "Each row needs one action and one time/order clue. Keep answers short. Students should look back at Pages 6-7 for evidence.",
+                 "homework - do homework - first; room - clean her room - on Tuesday; piano - practice the piano - every day; piano - play for one hour - every day.")
     if "kwl" in n:
         return b("\"K is what you already knew. W is what you wanted to find out. L is what you learned from the book. "
                  "Fill K and W before reading and L after reading.\"",
@@ -1002,11 +1104,11 @@ def _detect_go(outline: BookOutline, is_nf: bool) -> dict | None:
     if actual_mode == "planchart":
         return base(
             "Plan Chart",
-            "\"This chart shows Mia's plan. We match what Mia will do with when she will do it. "
-            "Let's do the first row together, then you complete the rest.\"",
-            "Use short phrases from the story. Each row needs an action and a time clue.",
-            "do homework - first; clean her room - on Tuesday; practice the piano - every day; "
-            "play for one hour - every day.")
+            "\"This chart shows Mia's plan. A good plan tells us two things: what to do and when to do it. "
+            "Let's do the first row together: Mia will do homework first. Now you find the other actions and time clues in the story.\"",
+            "Each row needs one action and one time/order clue. Keep answers short. Students should look back at Pages 6-7 for evidence.",
+            "homework - do homework - first; room - clean her room - on Tuesday; piano - practice the piano - every day; "
+            "piano - play for one hour - every day.")
     if actual_mode == "timeline":
         return base(
             "Sequence / Timeline Chart",
@@ -1136,6 +1238,8 @@ def _l3_standard_worksheet_activities(outline: BookOutline) -> list[dict]:
             "briefing": "Do the first row together. Students complete the remaining blanks using the word bank and story evidence.",
             "answer_key": ("1. first; 2. clean her room; 3. every day; 4. play for one hour"
                            if is_plan else "Use short phrases from the story to complete each blank."),
+            "discussion_prompt": ("How does Mia's plan help her feel happy and proud at the end?"
+                                  if is_plan else "How does this organizer help you understand the book?"),
         },
     ]
 
