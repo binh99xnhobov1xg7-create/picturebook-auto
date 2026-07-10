@@ -307,15 +307,15 @@ def _sentence_frame_fill_items(outline: BookOutline, max_n: int = 4) -> tuple[li
             continue
         # Keep easy, visible chunks from the actual story.
         replacements = [
-            ("do homework", "do homework"),
-            ("clean her room", "clean her room"),
-            ("practice the piano", "practice the piano"),
-            ("play for one hour a day", "play for one hour a day"),
+            ("do homework", "do homework", "____"),
+            ("clean her room", "clean her room", "____"),
+            ("practice the piano", "practice the piano", "____"),
+            ("play for one hour a day", "play", "____ for one hour a day"),
         ]
-        for phrase, answer in replacements:
+        for phrase, answer, blanked in replacements:
             if phrase in low:
                 pat = re.compile(re.escape(phrase), re.I)
-                candidates.append((pat.sub("____", sent, count=1), answer))
+                candidates.append((pat.sub(blanked, sent, count=1), answer))
                 break
     if not candidates:
         words = [str(w).strip() for w in (outline.vocabulary_for_display or []) if str(w).strip()]
@@ -335,7 +335,7 @@ def _sentence_frame_copy_items(outline: BookOutline, max_n: int = 4) -> list[dic
     for f in fills[:max_n]:
         sent = f.get("sentence", "")
         answer = (f.get("answer") or "").strip().lower()
-        if answer == "play for one hour a day":
+        if answer in {"play", "play for one hour a day"}:
             sent = "I will ________ for one hour a day."
             prompts.append({"prompt": sent})
             continue
@@ -1546,7 +1546,7 @@ def build_worksheet(
         frame_copy = _sentence_frame_copy_items(outline, max_n=4)
         _build_prompt_line_page(
             new_page(), brand_rgb, frame_copy, "Sentences",
-            "Read the sentence frame. Copy or complete the sentences.",
+            "Write about your own plan. Use your own ideas.",
             prompt_key="prompt",
             fallback=sent_fb,
         )
@@ -3240,7 +3240,7 @@ def _draw_clean_vocab_clue(slide, kind: str, x: float, y: float, w: float, h: fl
 
     if kind == "calendar":
         cal = box(w * 0.20, h * 0.14, w * 0.60, h * 0.68)
-        label("7", w * 0.38, h * 0.34, w * 0.24, h * 0.18, 20)
+        # Draw a seven-block calendar without extra English cue words.
         for i in range(6):
             xx = w * 0.26 + i * w * 0.08
             dot = slide.shapes.add_shape(
@@ -3250,25 +3250,35 @@ def _draw_clean_vocab_clue(slide, kind: str, x: float, y: float, w: float, h: fl
             dot.fill.solid()
             dot.fill.fore_color.rgb = bc
             dot.line.fill.background()
-        label("days", w * 0.28, h * 0.70, w * 0.44, h * 0.14, 10)
     elif kind == "desk":
         box(w * 0.18, h * 0.24, w * 0.64, h * 0.36)
-        label("A B C", w * 0.28, h * 0.34, w * 0.44, h * 0.12, 10)
+        for i in range(3):
+            slide.shapes.add_connector(
+                MSO_CONNECTOR.STRAIGHT,
+                Inches(x + w * 0.30), Inches(y + h * (0.34 + i * 0.08)),
+                Inches(x + w * 0.66), Inches(y + h * (0.34 + i * 0.08)),
+            ).line.color.rgb = RGBColor(0xD1, 0xD5, 0xDB)
         slide.shapes.add_connector(
             MSO_CONNECTOR.STRAIGHT,
             Inches(x + w * 0.26), Inches(y + h * 0.66),
             Inches(x + w * 0.74), Inches(y + h * 0.66),
         ).line.color.rgb = bc
-        label("write", w * 0.32, h * 0.70, w * 0.36, h * 0.12, 10)
     elif kind == "notebook":
         box(w * 0.24, h * 0.16, w * 0.52, h * 0.64)
-        for i in range(3):
+        for i in range(4):
+            cb = slide.shapes.add_shape(
+                MSO_SHAPE.RECTANGLE,
+                Inches(x + w * 0.32), Inches(y + h * (0.28 + i * 0.10)),
+                Inches(w * 0.05), Inches(h * 0.05),
+            )
+            cb.fill.solid()
+            cb.fill.fore_color.rgb = WHITE
+            cb.line.color.rgb = bc
             slide.shapes.add_connector(
                 MSO_CONNECTOR.STRAIGHT,
-                Inches(x + w * 0.34), Inches(y + h * (0.34 + i * 0.12)),
-                Inches(x + w * 0.66), Inches(y + h * (0.34 + i * 0.12)),
+                Inches(x + w * 0.42), Inches(y + h * (0.305 + i * 0.10)),
+                Inches(x + w * 0.66), Inches(y + h * (0.305 + i * 0.10)),
             ).line.color.rgb = bc
-        label("1 2 3", w * 0.31, h * 0.63, w * 0.38, h * 0.12, 10)
     elif kind == "piano":
         kb = box(w * 0.14, h * 0.32, w * 0.72, h * 0.32)
         for i in range(6):
@@ -3285,7 +3295,6 @@ def _draw_clean_vocab_clue(slide, kind: str, x: float, y: float, w: float, h: fl
             sh.fill.solid()
             sh.fill.fore_color.rgb = BLACK
             sh.line.fill.background()
-        label("music", w * 0.32, h * 0.70, w * 0.36, h * 0.12, 10)
     else:
         return False
     return True
@@ -4155,7 +4164,7 @@ def _build_plan_chart_page(slide, brand_rgb: tuple, data: dict, outline: BookOut
     col_w = [2.05, 4.10, 2.35]
     row_h = 0.74
     head_h = 0.48
-    headers = ["Clue", "What will Mia do?", "When / How often?"]
+    headers = ["Clue", "What will Mia do?", "Time / Order"]
     fill_head = RGBColor(0xE7, 0xF0, 0xFF)
     fill_cell = RGBColor(0xFF, 0xFB, 0xF2)
     muted = RGBColor(0x6B, 0x72, 0x80)
@@ -4220,10 +4229,7 @@ def _build_plan_chart_page(slide, brand_rgb: tuple, data: dict, outline: BookOut
                 _draw_writing_line(slide, x + 0.18, y + row_h - 0.18, col_w[c_idx] - 0.36, LIGHT_GRAY, 1.1)
             x += col_w[c_idx]
 
-    bank = [
-        "first", "on Tuesday", "every day",
-        "do homework", "clean her room", "practice the piano", "play for one hour",
-    ]
+    bank = ["first", "clean her room", "every day", "play for one hour"]
     if not any(k in " ".join((r.get("clue", "") for r in rows)).lower() for k in ("homework", "piano")):
         bank = [str(w).strip() for w in (outline.vocabulary_for_display or data.get("word_bank") or []) if str(w).strip()][:6]
     if bank:
