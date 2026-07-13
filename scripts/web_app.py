@@ -2473,6 +2473,52 @@ def _build_teacher_guide_only(
     return {"tg": tg_path, "extract": extract_path, "source": source_path, "name_prefix": name_prefix}  # type: ignore[dict-item]
 
 
+def _build_worksheet_only(
+    *,
+    title: str,
+    level: str,
+    book_number: str,
+    raw_story: str,
+    image_paths: list[Path],
+    run_dir: Path,
+    ws_reading_q_count: int = 4,
+) -> dict[str, Path]:
+    """Standalone WS flow: outline -> AI extract/syllabus sync -> Worksheet PPTX only."""
+    ip_age = resolve_ip_age(level)
+    raw = (raw_story or "").strip()
+    outline = _build_outline(
+        title=title, level=level, book_number=book_number, cefr="", theme="",
+        ip_age=int(ip_age), raw_story=raw, custom_chars_text="",
+    )
+    enrich_from_syllabus(outline)
+    official_story = ""
+    if getattr(outline, "syllabus", None) is not None:
+        try:
+            official_story = _format_syllabus_story(outline.syllabus).strip()
+        except Exception:
+            official_story = ""
+    if official_story:
+        raw = official_story
+
+    ec = None
+    if raw:
+        ec = extract_all(raw_story=raw, title=title, level=level, cefr="", theme="")
+        apply_extracted_to_outline(outline, ec)
+    enrich_from_syllabus(outline)
+    if ec is not None:
+        _sync_ec_from_syllabus(ec, outline)
+        attach_worksheet_questions(outline, ec.worksheet_questions, reading_q_count=ws_reading_q_count)
+    if official_story:
+        _apply_official_story_pages(outline, official_story)
+
+    name_prefix = _name_prefix(outline)
+    ws_path = run_dir / f"{name_prefix}_Worksheet.pptx"
+    extract_path = run_dir / f"{name_prefix}_Teaching_Extract.txt"
+    build_worksheet(outline, ws_path, image_paths=image_paths)
+    _write_teaching_extract_txt(outline, ec, extract_path)
+    return {"ws": ws_path, "extract": extract_path, "name_prefix": name_prefix}  # type: ignore[dict-item]
+
+
 def _merge_tg_worksheet_sections(uploaded: list[dict], fallback: list[dict]) -> list[dict]:
     merged: list[dict] = []
     for i, row in enumerate(uploaded[:6]):
@@ -3200,6 +3246,116 @@ def _render_upload_batch_mode() -> None:
                     )
 
 
+def _render_upload_ws_only_mode() -> None:
+    """Standalone Worksheet entry for courses whose Reader is already ready."""
+    st.info("用于已有 Reader 后单独生成 Worksheet。这个入口不会生成 RR 或 TG。")
+    pending = st.session_state.pop("_ws_only_pending_syllabus", None)
+    if isinstance(pending, dict):
+        st.session_state["ws_only_title"] = pending.get("title", "")
+        st.session_state["ws_only_book_number"] = pending.get("book_number", "")
+        st.session_state["ws_only_raw_text"] = pending.get("raw_text", "")
+        st.session_state["_ws_only_meta"] = pending.get("meta", "")
+
+    c1, c2, c3 = st.columns([1, 1, 3])
+    with c1:
+        ws_level = st.selectbox("Level", LEVEL_OPTIONS, index=4, key="ws_only_level")
+    with c2:
+        ws_book_number = st.text_input("Book#", key="ws_only_book_number")
+    with c3:
+        ws_title = st.text_input("Book Title", key="ws_only_title")
+
+    entry = _lookup_syllabus_entry(ws_level, ws_title, ws_book_number)
+    if st.button("📚 匹配大纲", key="ws_only_pull_syllabus", use_container_width=True):
+        if entry is None:
+            st.warning("未命中大纲，请核对 Level / Book# / Book Title。")
+        else:
+            st.session_state["_ws_only_pending_syllabus"] = {
+                "title": entry.title,
+                "book_number": entry.book_number,
+                "raw_text": _format_syllabus_story(entry),
+                "meta": _syllabus_meta_markdown(entry),
+            }
+            st.rerun()
+    if st.session_state.get("_ws_only_meta"):
+        st.info(st.session_state["_ws_only_meta"])
+
+    files = st.file_uploader(
+        "Reader PDF / PPTX / 页面图（用于 Worksheet 配图）",
+        type=["pdf", "pptx", "png", "jpg", "jpeg", "webp"],
+        accept_multiple_files=True,
+        key="ws_only_files",
+    )
+    raw_text = st.text_area(
+        "故事英文正文（大纲自动填入，可微调；未命中大纲时必填）",
+        height=160,
+        key="ws_only_raw_text",
+    )
+    rqc = st.select_slider(
+        "Reading 页题量",
+        options=[4, 6, 8],
+        value=4,
+        key="ws_only_reading_q_count",
+        help="通常 L3-L4 用 4 或 6；高年级可用 8。",
+    )
+
+    if not st.button("📋 只生成 Worksheet", type="primary", key="ws_only_run"):
+        return
+    if not (ws_title or "").strip():
+        st.error("请先填写 Book Title，或点击“匹配大纲”。")
+        return
+    if not files:
+        st.error("请至少上传 1 个 Reader 文件（PDF / PPTX / 图片）。")
+        return
+    official_story = _format_syllabus_story(entry) if entry is not None else ""
+    story_for_generation = official_story or (raw_text or "").strip()
+    if not story_for_generation:
+        st.error("没有可用正文。请先匹配大纲，或手动粘贴故事英文正文。")
+        return
+
+    temp_outline = _build_outline(
+        title=ws_title, level=ws_level, book_number=ws_book_number,
+        cefr="", theme="", ip_age=int(resolve_ip_age(ws_level)),
+        raw_story=story_for_generation, custom_chars_text="",
+    )
+    run_dir, img_dir, _ = _upload_run_paths(temp_outline)
+    with st.spinner("解析上传 Reader，抽取页图..."):
+        image_paths = _extract_uploaded_page_images(files, img_dir)
+    if not image_paths:
+        st.error("没有从上传文件里解析出任何页图。请确认 PDF/PPTX 是否含图。")
+        return
+    st.success(f"已解析出 {len(image_paths)} 张页面图。")
+
+    try:
+        paths = run_with_live_timer(
+            "生成 Worksheet",
+            _build_worksheet_only,
+            title=ws_title,
+            level=ws_level,
+            book_number=ws_book_number,
+            raw_story=story_for_generation,
+            image_paths=image_paths,
+            run_dir=run_dir,
+            ws_reading_q_count=int(rqc),
+            done_note="Worksheet 已生成",
+        )
+    except Exception as e:
+        st.error(f"Worksheet 生成失败：{e}")
+        with st.expander("错误详情（请截图给研发）", expanded=True):
+            st.code(traceback.format_exc(), language="python")
+        return
+
+    st.success("Worksheet 已单独生成。")
+    ws_path = Path(paths.get("ws", ""))
+    extract_path = Path(paths.get("extract", ""))
+    cols = st.columns(2)
+    with cols[0]:
+        if ws_path.is_file():
+            _download_button(ws_path, "⬇️ 下载 Worksheet PPTX", primary=True)
+    with cols[1]:
+        if extract_path.is_file():
+            _download_button(extract_path, "⬇️ 下载抽取摘要")
+
+
 def _render_upload_tg_only_mode() -> None:
     """Standalone TG entry for courses whose Reader / WS / RR are handled first."""
     st.info(
@@ -3327,11 +3483,13 @@ def _render_upload_mode() -> None:
         "上传现有 Reader PDF/PPTX/散图后，系统自动匹配大纲并生成 Worksheet、Reading Report 和 TG。"
         "如果需要先精修图片或重出 Reader PPT，请走「绘本图片精修 / 终稿编辑」。"
     )
-    tab_single, tab_batch, tab_tg_only = st.tabs(["📕 单本", "📚 批量", "👩‍🏫 只生成 TG"])
+    tab_single, tab_batch, tab_ws_only, tab_tg_only = st.tabs(["📕 单本", "📚 批量", "📋 只生成 WS", "👩‍🏫 只生成 TG"])
     with tab_single:
         _render_upload_single_mode()
     with tab_batch:
         _render_upload_batch_mode()
+    with tab_ws_only:
+        _render_upload_ws_only_mode()
     with tab_tg_only:
         _render_upload_tg_only_mode()
 
