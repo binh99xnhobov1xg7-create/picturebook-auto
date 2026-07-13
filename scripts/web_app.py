@@ -3206,6 +3206,13 @@ def _render_upload_tg_only_mode() -> None:
         "用于先完成 Reader、Worksheet 和 Reading Report，再单独补生成 Teacher's Guide。"
         "当前版本会读取大纲/正文生成 TG；后续可继续升级为读取 Final Worksheet 后再生成。"
     )
+    pending = st.session_state.pop("_tg_only_pending_syllabus", None)
+    if isinstance(pending, dict):
+        st.session_state["tg_only_title"] = pending.get("title", "")
+        st.session_state["tg_only_book_number"] = pending.get("book_number", "")
+        st.session_state["tg_only_raw_text"] = pending.get("raw_text", "")
+        st.session_state["_tg_only_meta"] = pending.get("meta", "")
+
     c1, c2, c3 = st.columns([1, 1, 3])
     with c1:
         tg_level = st.selectbox("Level", LEVEL_OPTIONS, index=4, key="tg_only_level")
@@ -3219,10 +3226,12 @@ def _render_upload_tg_only_mode() -> None:
         if entry is None:
             st.warning("未命中大纲，请核对 Level / Book# / Book Title。")
         else:
-            st.session_state["tg_only_title"] = entry.title
-            st.session_state["tg_only_book_number"] = entry.book_number
-            st.session_state["tg_only_raw_text"] = _format_syllabus_story(entry)
-            st.session_state["_tg_only_meta"] = _syllabus_meta_markdown(entry)
+            st.session_state["_tg_only_pending_syllabus"] = {
+                "title": entry.title,
+                "book_number": entry.book_number,
+                "raw_text": _format_syllabus_story(entry),
+                "meta": _syllabus_meta_markdown(entry),
+            }
             st.rerun()
     if st.session_state.get("_tg_only_meta"):
         st.info(st.session_state["_tg_only_meta"])
