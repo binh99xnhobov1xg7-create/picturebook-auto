@@ -304,6 +304,211 @@ def _sentence_frame_text(outline: BookOutline) -> str:
     return frame or "She will do homework first."
 
 
+def _syllabus_sentence_source(outline: BookOutline) -> tuple[str, str]:
+    """Return the official sentence pattern and example when the syllabus has them."""
+    entry = getattr(outline, "syllabus", None)
+    pattern = (getattr(entry, "sentence_pattern", "") or "").strip() if entry else ""
+    example = (getattr(entry, "example_sentence", "") or "").strip() if entry else ""
+    if not pattern:
+        pattern = (getattr(entry, "sentence_frames", "") or "").strip() if entry else ""
+    if not pattern:
+        pattern = (getattr(entry, "syntax_focus", "") or "").strip() if entry else ""
+    if not pattern:
+        pattern = (outline.grammar_focus or "").strip()
+    pattern = _clean_text(pattern)
+    example = _clean_text(example)
+    if re.search(r"[\u3400-\u9fff]", pattern) or re.fullmatch(r"\?{3,}", pattern or ""):
+        pattern = ""
+    if re.search(r"[\u3400-\u9fff]", example) or re.fullmatch(r"\?{3,}", example or ""):
+        example = ""
+    return pattern, example
+
+
+def _display_sentence_frame(outline: BookOutline) -> str:
+    """Student-facing frame text. Prefer a real example over bracket notation."""
+    pattern, example = _syllabus_sentence_source(outline)
+    if example:
+        return example
+    if pattern:
+        return re.sub(r"\[[^\]]+\]", ANSWER_BLANK, pattern)
+    return _sentence_frame_text(outline)
+
+
+def _frame_signature(text: str) -> str:
+    low = (text or "").lower()
+    if " will " in f" {low} ":
+        return "will"
+    if re.search(r"\bthere\s+(is|are|was|were)\b", low):
+        return "there"
+    if re.search(r"\b(could|can)\b", low):
+        return "modal"
+    if " because " in f" {low} ":
+        return "because"
+    if " when " in f" {low} ":
+        return "when"
+    if " to " in f" {low} ":
+        return "to"
+    return ""
+
+
+def _blank_for_frame(sentence: str, signature: str) -> tuple[str, str] | None:
+    """Blank one teachable chunk while preserving the official sentence frame."""
+    s = _clean_text(sentence).strip()
+    if not s:
+        return None
+    if signature == "will":
+        m = re.search(r"\bwill\s+(.+?)([.!?])?$", s, flags=re.I)
+        if m:
+            ans = (m.group(1) or "").strip().rstrip(".!?")
+            if ans:
+                return s[:m.start(1)] + ANSWER_BLANK + (m.group(2) or "."), ans
+    if signature == "there":
+        m = re.search(r"\b(there\s+(?:is|are|was|were)\s+)(.+?)([.!?])?$", s, flags=re.I)
+        if m:
+            ans = (m.group(2) or "").strip().rstrip(".!?")
+            if ans:
+                return s[:m.start(2)] + ANSWER_BLANK + (m.group(3) or "."), ans
+    if signature == "modal":
+        m = re.search(r"\b((?:can|could|could not|cannot|can't)\s+)(.+?)([.!?])?$", s, flags=re.I)
+        if m:
+            ans = (m.group(2) or "").strip().rstrip(".!?")
+            if ans:
+                return s[:m.start(2)] + ANSWER_BLANK + (m.group(3) or "."), ans
+    if signature == "because":
+        m = re.search(r"\bbecause\s+(.+?)([.!?])?$", s, flags=re.I)
+        if m:
+            ans = (m.group(1) or "").strip().rstrip(".!?")
+            if ans:
+                return s[:m.start(1)] + ANSWER_BLANK + (m.group(2) or "."), ans
+    if signature == "when":
+        m = re.search(r"\bwhen\s+(.+?)([.!?])?$", s, flags=re.I)
+        if m:
+            ans = (m.group(1) or "").strip().rstrip(".!?")
+            if ans:
+                return s[:m.start(1)] + ANSWER_BLANK + (m.group(2) or "."), ans
+    if signature == "to":
+        m = re.search(r"\bto\s+(.+?)([.!?])?$", s, flags=re.I)
+        if m:
+            ans = (m.group(1) or "").strip().rstrip(".!?")
+            if ans:
+                return s[:m.start(1)] + ANSWER_BLANK + (m.group(2) or "."), ans
+
+    words = re.findall(r"[A-Za-z][A-Za-z'-]*", s)
+    if len(words) >= 5:
+        ans = words[-2] if len(words[-1]) <= 3 else words[-1]
+        return re.sub(rf"\b{re.escape(ans)}\b", ANSWER_BLANK, s, count=1), ans
+    return None
+
+
+def _official_sentence_frame_fill_items(outline: BookOutline, max_n: int = 4) -> tuple[list[dict], list[str]]:
+    """Build sentence items from the official syllabus frame across L3-L6."""
+    pattern, example = _syllabus_sentence_source(outline)
+    if not (pattern or example):
+        return [], []
+    signature = _frame_signature(pattern or example)
+    candidates: list[tuple[str, str]] = []
+    sources = []
+    if example:
+        sources.append(example)
+    sources.extend(_story_sentences_for_grammar(outline))
+    seen: set[str] = set()
+    for sent in sources:
+        key = sent.strip().lower()
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        low = f" {sent.lower()} "
+        if signature == "will" and " will " not in low:
+            continue
+        if signature == "there" and not re.search(r"\bthere\s+(is|are|was|were)\b", low):
+            continue
+        if signature == "modal" and not re.search(r"\b(can|could|cannot|can't)\b", low):
+            continue
+        if signature == "because" and " because " not in low:
+            continue
+        if signature == "when" and " when " not in low:
+            continue
+        blanked = _blank_for_frame(sent, signature)
+        if blanked:
+            candidates.append(blanked)
+        if len(candidates) >= max_n:
+            break
+
+    if not candidates and example:
+        blanked = _blank_for_frame(example, signature)
+        if blanked:
+            candidates.append(blanked)
+    if not candidates and pattern:
+        prompt = re.sub(r"\[[^\]]+\]", ANSWER_BLANK, pattern)
+        candidates.append((prompt, "own answer"))
+
+    fills = [{"sentence": s, "answer": a} for s, a in candidates[:max_n]]
+    bank: list[str] = []
+    for _, ans in candidates:
+        if ans and ans != "own answer" and ans not in bank:
+            bank.append(ans)
+    return fills, bank[:max_n]
+
+
+def _official_sentence_frame_practice_items(outline: BookOutline, max_n: int = 4) -> list[dict]:
+    """Second sentence page: guided production using the same official frame."""
+    pattern, example = _syllabus_sentence_source(outline)
+    if not (pattern or example):
+        return []
+    display = re.sub(r"\[[^\]]+\]", ANSWER_BLANK, pattern) if pattern else ""
+    prompts: list[dict] = []
+    if display and ANSWER_BLANK in display and "[" not in pattern:
+        prompts.append({"prompt": display})
+    elif example:
+        blanked = _blank_for_frame(example, _frame_signature(pattern or example))
+        prompts.append({"prompt": blanked[0] if blanked else example})
+
+    sig = _frame_signature(pattern or example)
+    if sig == "will":
+        prompts.extend([
+            {"prompt": f"I will {ANSWER_BLANK} first."},
+            {"prompt": f"I will {ANSWER_BLANK} every day."},
+            {"prompt": f"I will {ANSWER_BLANK} on {ANSWER_BLANK}."},
+        ])
+    elif sig == "there":
+        prompts.extend([
+            {"prompt": f"There is {ANSWER_BLANK}."},
+            {"prompt": f"There are {ANSWER_BLANK}."},
+            {"prompt": f"There was {ANSWER_BLANK}."},
+            {"prompt": f"There were {ANSWER_BLANK}."},
+        ])
+    elif sig == "modal":
+        prompts.extend([
+            {"prompt": f"I can {ANSWER_BLANK}."},
+            {"prompt": f"We can {ANSWER_BLANK}."},
+            {"prompt": f"The character could {ANSWER_BLANK}."},
+        ])
+    elif sig == "because":
+        prompts.extend([
+            {"prompt": f"It is {ANSWER_BLANK} because {ANSWER_BLANK}."},
+            {"prompt": f"The character feels {ANSWER_BLANK} because {ANSWER_BLANK}."},
+        ])
+    elif sig == "when":
+        prompts.extend([
+            {"prompt": f"I wear {ANSWER_BLANK} when {ANSWER_BLANK}."},
+            {"prompt": f"The character {ANSWER_BLANK} when {ANSWER_BLANK}."},
+        ])
+    else:
+        for word in _verbatim_vocab(outline, 3):
+            prompts.append({"prompt": f"Write a sentence with {word}: {ANSWER_BLANK}"})
+
+    out: list[dict] = []
+    seen: set[str] = set()
+    for item in prompts:
+        p = item.get("prompt", "").strip()
+        if p and p.lower() not in seen:
+            seen.add(p.lower())
+            out.append({"prompt": p})
+        if len(out) >= max_n:
+            break
+    return out
+
+
 def _sentence_frame_fill_items(outline: BookOutline, max_n: int = 4) -> tuple[list[dict], list[str]]:
     """L3 A1 sentence practice: assess the syllabus sentence frame with support."""
     sents = _story_sentences_for_grammar(outline)
@@ -1523,20 +1728,20 @@ def build_worksheet(
     sent_fb = _sentence_pattern_fallback_items(outline, data.get("word_bank"))
 
     # —— 句型页① ——
-    # L3 is still A1/A1+, so assess the syllabus Sentence Frame with support
-    # instead of asking students to solve harder word-order items.
-    l3_sent1_done = False
-    if lvl_n == 3:
-        frame_fills, frame_bank = _sentence_frame_fill_items(outline, max_n=4)
+    # L3-L6: the syllabus Sentence Pattern / Example Sentence is authoritative.
+    # Only fall back to tense heuristics when the syllabus has no usable frame.
+    official_sentences_done = False
+    if lvl_n >= 3:
+        frame_fills, frame_bank = _official_sentence_frame_fill_items(outline, max_n=4)
         if frame_fills:
             _build_p2_fill(
                 new_page(), brand_rgb, frame_fills, frame_bank, images,
                 title="Sentences",
-                subtitle=f"Use the example: {_sentence_frame_text(outline)}",
+                subtitle=f"Use the example: {_display_sentence_frame(outline)}",
                 fallback=sent_fb,
             )
-            l3_sent1_done = True
-    if not l3_sent1_done:
+            official_sentences_done = True
+    if not official_sentences_done:
         if tense == "present":
             sent_mcs = _present_agreement_mc_items(outline, max_n=4)
             if len(sent_mcs) < 3:
@@ -1562,7 +1767,15 @@ def build_worksheet(
                        subtitle="Write the correct form of the verb to complete each sentence.",
                        fallback=sent_fb)
 
-    if lvl_n == 3:
+    if official_sentences_done:
+        frame_copy = _official_sentence_frame_practice_items(outline, max_n=4)
+        _build_prompt_line_page(
+            new_page(), brand_rgb, frame_copy, "Sentences",
+            f"Write your own sentences. Follow the example: {_display_sentence_frame(outline)}",
+            prompt_key="prompt",
+            fallback=sent_fb,
+        )
+    elif lvl_n == 3:
         frame_copy = _sentence_frame_copy_items(outline, max_n=4)
         _build_prompt_line_page(
             new_page(), brand_rgb, frame_copy, "Sentences",
