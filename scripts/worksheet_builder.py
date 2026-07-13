@@ -1538,14 +1538,21 @@ def _has_false_tf_statement(questions: list[dict]) -> bool:
 
 
 def _false_tf_variant(sentence: str) -> str:
+    if re.search(r"\bsaid,\s*[\"“]", sentence, flags=re.I):
+        out = re.sub(r"\bsaid,\s*", "did not say, ", sentence, count=1, flags=re.I).strip()
+        if re.search(r"[.!?][\"”]$", out):
+            return out
+        return out.rstrip(".!?") + "."
     replacements = [
+        (r"\bdid not know many\b", "knew many"),
+        (r"\bdoes not know many\b", "knows many"),
         (r"\bmessy\b", "clean"),
         (r"\bclean\b", "messy"),
         (r"\bSunday\b", "Monday"),
         (r"\bseven-day\b", "one-day"),
         (r"\bhappy\b", "sad"),
         (r"\bproud\b", "worried"),
-        (r"\bmany\b", "no"),
+        (r"\bmany\b", "a few"),
         (r"\bwill\b", "will not"),
     ]
     for pat, repl in replacements:
@@ -1555,6 +1562,11 @@ def _false_tf_variant(sentence: str) -> str:
     if core:
         return "It is not true that " + core[0].lower() + core[1:] + "."
     return ""
+
+
+def _split_story_sentences(text: str) -> list[str]:
+    marked = re.sub(r"([.!?][\"”]?)\s+", r"\1|||", text or "")
+    return [s.strip() for s in marked.split("|||") if s.strip()]
 
 
 def _mixed_tf_items(reading_text: str, *, max_n: int = 4) -> list[dict]:
@@ -1569,7 +1581,7 @@ def _mixed_tf_items(reading_text: str, *, max_n: int = 4) -> list[dict]:
         ][:max_n]
     sents = [
         capitalize_names(s.strip().rstrip(".!?"))
-        for s in re.split(r"(?<=[.!?])\s+", story)
+        for s in _split_story_sentences(story)
         if 18 <= len(s.strip()) <= 100
     ]
     out: list[dict] = []
@@ -1587,6 +1599,49 @@ def _mixed_tf_items(reading_text: str, *, max_n: int = 4) -> list[dict]:
         if q and key not in seen:
             seen.add(key)
             out.append({"kind": "tf", "q": q, "answer": ans})
+    return out[:max_n]
+
+
+def _reading_cloze_items(reading_text: str, exclude: set[str] | None = None,
+                         *, max_n: int = 5) -> list[dict]:
+    """Create a second L3/L4 Reading page that differs from T/F.
+
+    The item is a short written cloze based on actual story sentences, so the
+    page stays text-evidence based without becoming another true/false page.
+    """
+    story = _to_us_spelling(reading_text or "")
+    exclude_keys = {_reading_question_key(x) for x in (exclude or set()) if x}
+    sents = [
+        capitalize_names(s.strip().rstrip(".!?"))
+        for s in _split_story_sentences(story)
+        if 18 <= len(s.strip()) <= 100
+    ]
+    out: list[dict] = []
+    seen: set[str] = set()
+    for sent in sents:
+        if len(out) >= max_n:
+            break
+        words = re.findall(r"[A-Za-z][A-Za-z'-]*", sent)
+        if len(words) < 4:
+            continue
+        # Blank a short final chunk, but keep the sentence readable for A1/A1+.
+        chunk_n = 2 if len(words[-1]) <= 4 and len(words) >= 5 else 1
+        answer_words = words[-chunk_n:]
+        answer = " ".join(answer_words)
+        if len(answer) < 3:
+            continue
+        pattern = r"\b" + r"\s+".join(re.escape(w) for w in answer_words) + r"\b"
+        prompt = re.sub(pattern, ANSWER_BLANK, sent, count=1)
+        if prompt == sent:
+            continue
+        q = f"Complete the sentence: {prompt}"
+        if not q.rstrip().endswith((".", "!", "?", "\"", "”")):
+            q += "."
+        key = _reading_question_key(q)
+        if key in seen or key in exclude_keys:
+            continue
+        seen.add(key)
+        out.append({"kind": "short", "q": q, "answer": answer})
     return out[:max_n]
 
 
@@ -1705,22 +1760,8 @@ def build_worksheet(
     band = _lvl_band(lvl_n)
 
     # ===== 2 词汇页（分级选型；学什么考什么）=====
-    # 词汇页① 匹配：词 ↔ 释义/图（乱序）—— 各级别通用
-    # L3（用户拍板 2026-06-09，对齐官方样板 L3-8/L3-23）：看图填缺失字母（配图 + 缺字母掩码）。
-    if lvl_n == 3:
-        wfp = _word_fill_pic_items(data["match_pairs"], images, max_n=4)
-        # 排版规则（用户拍板 2026-06-09）：用偶数题做整齐的左右排版——
-        #   ≥4 题 → 取 4 题（2×2）；恰好 3 题 → 只取 2 题（一行左右两格，杜绝 2+1 的歪斜）。
-        if len(wfp) >= 4:
-            wfp = wfp[:4]
-        elif len(wfp) == 3:
-            wfp = wfp[:2]
-        if len(wfp) >= 2:
-            _build_word_fill_pic_page(new_page(), brand_rgb, wfp)
-        else:
-            _build_p1_match(new_page(), brand_rgb, data["match_pairs"], images)
-    else:
-        _build_p1_match(new_page(), brand_rgb, data["match_pairs"], images)
+    # 词汇页①：L3/L4 按 SOP 固定为理解页，优先图文/词义匹配，不再与 P2 连续做拼写题。
+    _build_p1_match(new_page(), brand_rgb, data["match_pairs"], images)
     # 词汇页② 分级：L0-2 看义/首字母写词；L3 谜语四选一；L4 原文挖空；L5-6 构词补全
     if band == "l02":
         wf = _word_fill_meaning_items(data["match_pairs"], max_n=6)
@@ -1736,15 +1777,10 @@ def build_worksheet(
                                   "Complete each word using the correct ending.")
         else:
             _build_p2_fill(new_page(), brand_rgb, data["fill_blanks"], data["word_bank"], images)
-    elif lvl_n == 3:  # L3 词汇②：拼词(Unscramble，AI 指定时优先) → 否则谜语四选一（对齐官方样板）
-        # v7（用户拍板 2026-06-09）：单词级"字母拼词"任务归【词汇区】（不再误挂到句型区）。
-        #   只有本书 AI 确实给了 unscramble 题时才走拼词页，其它书维持谜语四选一，零回归。
-        unsc_words = _word_unscramble_items(data.get("word_unscramble"), data["match_pairs"], max_n=4)
+    elif lvl_n == 3:  # L3 词汇②：按 SOP 做词汇运用，避免 P1/P2 连续拼写。
         riddles = _riddle_mc_items(data["match_pairs"], max_n=4)
-        if data.get("word_unscramble") and len(unsc_words) >= 3:
-            # 标题 Vocabulary、指令"拼字母成词"、作答方式单一(填空写词)：题型↔区块↔标题↔指令一致。
-            _build_word_fill_page(new_page(), brand_rgb, unsc_words, "Vocabulary",
-                                  "Unscramble the letters to make a word.")
+        if data.get("fill_blanks"):
+            _build_p2_fill(new_page(), brand_rgb, data["fill_blanks"], data["word_bank"], images)
         elif len(riddles) >= 3:
             # 用户标杆 L3-30：圈词题 → 指令用 "circle"，题干不带 "(   )" 作答括号（直接圈选项）。
             _build_mcq_page(new_page(), brand_rgb, "Vocabulary",
@@ -1923,30 +1959,49 @@ def build_worksheet(
     mode = "reading"
 
     if mode == "reading":
-        ordered = rq_uni
-        first_kind = rq_kind if rq_kind in ("mc", "tf") else "tf"
-        page1_q = ordered[:4]
-        if len(page1_q) < 4 and first_kind in ("mc", "tf"):
-            page1_q = _fill_same_kind_reading_questions(page1_q, first_kind, reading_text, max_n=4)
-            sub_uni = _reading_subtitle(first_kind)
-        used_q = {_reading_question_key(q.get("q") or "") for q in page1_q}
-        page2_q = [
-            q for q in ordered[4:]
-            if _reading_question_key(q.get("q") or "") not in used_q
-        ][:4]
-        _build_reading_page(new_page(), brand_rgb, reading_text, page1_q,
-                            subtitle=sub_uni, start_no=1, show_passage=show_passage)
-        if len(page2_q) >= 3:
-            _build_reading_page(new_page(), brand_rgb, reading_text, page2_q,
-                                subtitle=sub_uni, start_no=len(page1_q) + 1, show_passage=show_passage)
+        if lvl_n in (3, 4):
+            page1_q = _mixed_tf_items(reading_text, max_n=5)
+            if len(page1_q) < 4:
+                page1_q = _fill_same_kind_reading_questions(rq_uni[:5], "tf", reading_text, max_n=5)
+            used_q = {_reading_question_key(q.get("q") or "") for q in page1_q}
+            page2_q = _reading_cloze_items(reading_text, used_q, max_n=5)
+            if len(page2_q) < 3:
+                page2_q = _reading_ext_items(outline, data, used_q, max_n=5)
+            _build_reading_page(
+                new_page(), brand_rgb, reading_text, page1_q,
+                subtitle="Read the passage. Write T (true) or F (false).",
+                start_no=1, show_passage=show_passage,
+            )
+            _build_reading_page(
+                new_page(), brand_rgb, reading_text, page2_q,
+                subtitle="Read the passage. Complete the sentences.",
+                start_no=len(page1_q) + 1, show_passage=show_passage,
+            )
         else:
-            ext = _reading_ext_items(outline, data, used_q, max_n=4)
-            if len(ext) < 3:
-                ext = _mixed_tf_items(reading_text, max_n=4)
-            _build_reading_fill_page(
-                new_page(), brand_rgb, "Reading",
-                "Read the story again and answer the questions.",
-                ext, start_no=len(page1_q) + 1)
+            ordered = rq_uni
+            first_kind = rq_kind if rq_kind in ("mc", "tf") else "tf"
+            page1_q = ordered[:4]
+            if len(page1_q) < 4 and first_kind in ("mc", "tf"):
+                page1_q = _fill_same_kind_reading_questions(page1_q, first_kind, reading_text, max_n=4)
+                sub_uni = _reading_subtitle(first_kind)
+            used_q = {_reading_question_key(q.get("q") or "") for q in page1_q}
+            page2_q = [
+                q for q in ordered[4:]
+                if _reading_question_key(q.get("q") or "") not in used_q
+            ][:4]
+            _build_reading_page(new_page(), brand_rgb, reading_text, page1_q,
+                                subtitle=sub_uni, start_no=1, show_passage=show_passage)
+            if len(page2_q) >= 3:
+                _build_reading_page(new_page(), brand_rgb, reading_text, page2_q,
+                                    subtitle=sub_uni, start_no=len(page1_q) + 1, show_passage=show_passage)
+            else:
+                ext = _reading_ext_items(outline, data, used_q, max_n=4)
+                if len(ext) < 3:
+                    ext = _mixed_tf_items(reading_text, max_n=4)
+                _build_reading_fill_page(
+                    new_page(), brand_rgb, "Reading",
+                    "Read the story again and answer the questions.",
+                    ext, start_no=len(page1_q) + 1)
     else:
         # 横版阅读页（用户拍板 2026-06-06）：①同页题型必须统一（全选择 or 全判断，绝不混排）；
         # ②锁定 4 题（2×2 行对齐：左右各 2，横向两题对齐、纵向两题对齐）。先用归一后的同质题；
