@@ -217,14 +217,25 @@ def _validate_forbidden_output(text: str) -> list[TGValidationIssue]:
 def _validate_page_quotes(ctx: TGContext, text: str) -> list[TGValidationIssue]:
     issues: list[TGValidationIssue] = []
     actual = {p.printed_page: normalize_text(p.text) for p in ctx.book_pages}
-    for match in re.finditer(r"Page\s+(\d+):\s*Teacher reads:\s*\"([^\"]+)\"", text):
+    labels = list(re.finditer(r"Page\s+(\d+):\s*Teacher reads:\s*", text))
+    seen_pages: set[int] = set()
+    for i, match in enumerate(labels):
         page = int(match.group(1))
-        quote = normalize_text(match.group(2))
+        seen_pages.add(page)
         expected = actual.get(page)
         if expected is None:
             issues.append(TGValidationIssue("BLOCKER", "quote_page_missing", f"TG quotes missing book page {page}."))
-        elif quote != expected:
+            continue
+        end = labels[i + 1].start() if i + 1 < len(labels) else len(text)
+        segment = text[match.end():end]
+        # Page text can itself contain dialogue quotes, so do not capture by the
+        # next quote mark. Instead, verify the full normalized book text appears
+        # inside the page's own Teacher reads segment.
+        if expected not in segment:
             issues.append(TGValidationIssue("BLOCKER", "quote_text_mismatch", f"TG quote for Page {page} does not match book text."))
+    for page in actual:
+        if page not in seen_pages:
+            issues.append(TGValidationIssue("BLOCKER", "quote_page_missing", f"TG quote for Page {page} is missing."))
     return issues
 
 

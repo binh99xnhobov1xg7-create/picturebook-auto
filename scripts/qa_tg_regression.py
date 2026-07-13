@@ -84,6 +84,33 @@ def _scotland_outline() -> BookOutline:
     return out
 
 
+def _travel_outline() -> BookOutline:
+    texts = [
+        "Mia and Tommy are looking at travel photos from last year.",
+        "There is a blue ocean with big waves and a crab. There is a tall, snowy mountain in one photo.",
+        "There is a wide, hot desert with soft sand.",
+        "There is a deep, rocky canyon with tall walls.",
+        "There is a green valley full of bright flowers.",
+        "One photo is missing. It is the one they took at the Grand Canyon. Where could it be?",
+        'They ask Mom, and she says, "It was mailed to Grandma last week." "Oh, yes!" They both laugh.',
+    ]
+    return _outline(
+        "Mia and Tommy Travel the World",
+        "4",
+        "1",
+        texts,
+        cefr="A2",
+        lexile="410L-600L",
+        vocabulary_simple=["valley", "desert", "ocean", "canyon"],
+        phonics='Long "o" sound as in photo',
+        grammar_focus="There is / There are + adjective + noun",
+        reader_type="Fiction",
+        fiction_type="fiction",
+        reading_strategy="Predicting",
+        reading_skill="Story Elements",
+    )
+
+
 def _doc_text(path: Path) -> str:
     doc = Document(str(path))
     parts = [p.text for p in doc.paragraphs]
@@ -174,6 +201,15 @@ def test_l4_scotland_smoke(tmp: Path) -> None:
     assert "Lesson Overview" in text
 
 
+def test_l4_travel_dialogue_quotes_pass(tmp: Path) -> None:
+    path = tmp / "travel_tg.docx"
+    build_teacher_guide(_travel_outline(), path)
+    text = _doc_text(path)
+    assert "Page 8:" in text
+    assert "It was mailed to Grandma last week." in text
+    assert "Oh, yes!" in text
+
+
 def main() -> None:
     with tempfile.TemporaryDirectory() as d:
         tmp = Path(d)
@@ -185,6 +221,8 @@ def main() -> None:
         print("PASS L3-1 official-story page override")
         test_l4_scotland_smoke(tmp)
         print("PASS L4B13 smoke regression")
+        test_l4_travel_dialogue_quotes_pass(tmp)
+        print("PASS L4-1 dialogue quote regression")
 
 
 if __name__ == "__main__":
