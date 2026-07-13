@@ -4635,7 +4635,7 @@ def _render_metrics_section() -> None:
         f"- **{_KIT_LABEL}**：共享同一份 AI 抽取数据  \n"
         "- **词汇**：lemma 小写、L0–2 双行词表 / L3–6 单行  \n"
         "- **绘本**：IP 年龄档、参考图、7 页分页  \n"
-        "- **练习**：6 页固定结构  \n"
+        "- **练习**：8 页固定结构（2 词汇 + 2 句型 + 2 阅读 + GO + Writing）  \n"
         "- **RR**：L0–2 共 4 题 / L3–6 共 5 题（星级分布）  \n"
         "- **TG**：8 模块 + 与 Worksheet 答案一致"
     )
@@ -5948,8 +5948,8 @@ def _render_worksheet_editor() -> None:
         list(_SECOND_READING_LABELS.keys()),
         index=0,
         key="ws_second_reading_mode",
-        help="练习册固定 6 页：2 词汇 + 2 句型 + 2 阅读。第 1 张 Reading 是阅读理解，"
-             "第 2 张自动按大纲选择 Graphic Organizer 或 Writing（标题统一 Reading）。",
+        help="练习册固定 8 页：2 词汇 + 2 句型 + 2 阅读 + 1 Graphic Organizer + 1 Writing。"
+             "Graphic Organizer 会按大纲/文本自动选择合适形式。",
     )
     # Worksheet 题目
     with st.expander("📋 Worksheet 6 道题（题型 + 题项 JSON）", expanded=True):

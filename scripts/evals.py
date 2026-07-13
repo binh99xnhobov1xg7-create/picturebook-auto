@@ -3,7 +3,7 @@
 目标：把"肉眼一份份验收"变成"自动出体检报告"，专抓反复踩的坑：
   - 词汇：必须 lemma 原型 + 小写 + 无标点 + 不含专有名词(IP名)，数量按级别
   - 绘本：固定 7 页正文、每页有文本；每页 IP 参考图能解析、年龄=级别焊死值、封面带齐主角
-  - Worksheet：标题结构(2词汇+2句型+2阅读)、每页题数下限、无 color-only 题
+  - Worksheet：标题结构(2词汇+2句型+2阅读+GO+Writing)、每页题数下限、无 color-only 题
   - Reading Report：阅读表达题星级数量(0-2=4题 / 3-6=5题)
 
 用法：
@@ -244,7 +244,7 @@ def check_worksheet(worksheet_questions: list[dict], level: str, *,
         report.warn(category, "无 Worksheet 题目数据，跳过")
         return report
 
-    # 页面结构（2 词汇 + 2 句型 + 2 阅读）由 build_worksheet 渲染时按固定 6 页强制产出，
+    # 页面结构（2 词汇 + 2 句型 + 2 阅读 + GO + Writing）由 build_worksheet 渲染时按固定 8 页强制产出，
     # 与此处传入的"题型池"(worksheet_questions) 不是同一回事——题型池是按 level 槽位抽的
     # 6 道可互换题，其 type/title 用的是另一套分类法（match_definition / true_false /
     # inference / unscramble …），且阅读页内容另取自 reading_questions/rr_questions。
@@ -255,7 +255,7 @@ def check_worksheet(worksheet_questions: list[dict], level: str, *,
     _cat = _ws_category_counts(worksheet_questions)
     report.ok(category,
               f"题型池分布：词汇{_cat['vocab']}+句型{_cat['sentence']}+阅读{_cat['reading']}"
-              f"（页面结构 2+2+2 由渲染器强制保证）")
+              f"（页面结构 2+2+2+GO+Writing 由渲染器强制保证）")
 
     for i, q in enumerate(worksheet_questions, 1):
         items = q.get("items") or q.get("questions") or []

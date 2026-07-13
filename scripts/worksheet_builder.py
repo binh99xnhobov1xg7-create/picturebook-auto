@@ -1,19 +1,21 @@
-"""Worksheet PPTX 生成器 v2.0（6 页固定模板，对齐真实 L5-1 样本）。
+"""Worksheet PPTX 生成器 v2.0（8 页固定模板，对齐真实 L5-1 样本）。
 
-页面结构（强制 6 页）：
+页面结构（强制 8 页）：
     Page 1  Vocabulary  - Match the words to their definitions   (5 对连线)
     Page 2  Vocabulary  - Use the words / phrase to fill blanks  (5 题填空 + 词库条)
     Page 3  Sentence    - Choose the correct sentence            (4 题二选一 + 绘本图)
-    Page 4  Reading     - Choose the correct answer              (全文 + 8 道 3 选)
-    Page 5  Writing     - Write about [theme]                    (5 步骨架 + 写作区)
-    Page 6  Reading     - Filling the mind map                   (3 列表 5 行)
+    Page 4  Sentence    - Sentence practice 2                    (句型巩固)
+    Page 5  Reading     - Choose the correct answer              (阅读理解)
+    Page 6  Reading     - Reading extension                      (阅读理解)
+    Page 7  Graphic Organizer - Skill-based chart                 (思维导图/图表)
+    Page 8  Writing     - Write about [theme]                    (写作区)
 
 字体/字号（v1.6 真实样本）：
     大标题 Poppins Bold 20pt #333333  / 副标题 Poppins Regular 12pt #666666
     题号  Poppins Bold 16pt 圆形粉底白字
     题干  Poppins Regular 16pt 黑色  /  Reading 长文 12pt 黑色
 
-品牌外框（统一 6 页）：
+品牌外框（统一 8 页）：
     粉色外背景 (BRAND_COLORS[level]) + 内白圆角
     左上 VIPKID Dino Reading Club logo（Dino 头像 + 白色文字）
     右上 Name 五角形角标 (粉底白字)
@@ -1408,15 +1410,15 @@ def build_worksheet(
     second_reading_mode: str = "auto",   # auto/reading/mindmap/writing/writing_official/pbl/color_say
     coloring_image: Optional[Path] = None,  # L0-2 涂色线稿图（batch 生成；缺省则用留白画框）
 ) -> Path:
-    """生成 worksheet（所有级别统一 6 页）：
+    """生成 worksheet（所有级别统一 8 页）：
 
-    2 词汇(Vocabulary) + 2 句型(Sentence) + 2 阅读(Reading)。
+    2 词汇(Vocabulary) + 2 句型(Sentence) + 2 阅读(Reading) + 1 思维导图(Graphic Organizer) + 1 写作(Writing)。
       阅读① = 原文 + 理解题（垂直列表）。
-      阅读② 内容由 second_reading_mode 决定（标题统一 Reading）：
-        auto    → L0-2 思维导图(SWBST 复述) / L3-6 写作脚手架
+      阅读② = 阅读理解延伸题。
+      Graphic Organizer 内容由 second_reading_mode 决定：
+        auto    → 按级别/文本自动选择思维导图
         reading → 阅读理解延伸（题目分两页）
         mindmap → 思维导图(SWBST)
-        writing → 写作脚手架
         pbl     → 读后 PBL 迷你项目
 
     阅读理解题优先取 outline._reading_questions（AI 专门抽的 mc/tf/short），
@@ -1637,9 +1639,9 @@ def build_worksheet(
             rq.append(item)
             _valid.append(item)
 
-    # 所有级别统一 6 页：2 词汇 + 2 句型 + 2 阅读（两页标题都叫 Reading）。
-    # 第 2 张 Reading 页内容按 second_reading_mode（auto=按级别）：
-    #   reading 阅读延伸 / mindmap 思维导图(SWBST) / writing 写作脚手架 / pbl 迷你项目
+    # 所有级别统一 8 页：2 词汇 + 2 句型 + 2 阅读 + 1 Graphic Organizer + 1 Writing。
+    # 第 7 页 Graphic Organizer 按 second_reading_mode（auto=按级别/文本）选择：
+    #   mindmap 思维导图(SWBST) / timeline 顺序图 / bubble 信息图 / pbl 迷你项目
     # 同页题型统一：整套阅读题先归一为"全选择"或"全判断"，两页同质、不混排。
     rq_uni, rq_kind = _unify_reading_questions(rq)
     sub_uni = _reading_subtitle(rq_kind)
@@ -1663,16 +1665,39 @@ def build_worksheet(
     #   l3summary 看故事补全句（fill-in 式小结）
     if (second_reading_mode or "auto").strip().lower() == "auto" and lvl_n == 4:
         mode = _auto_second_reading_mode(outline, lvl_n)
-    setattr(outline, "_worksheet_second_reading_mode", mode)
+    go_mode = mode
+    if go_mode in {"reading", "reading2", "writing", "writing_official"}:
+        go_mode = _auto_second_reading_mode(outline, lvl_n)
+    if go_mode in {"reading", "reading2", "writing", "writing_official"}:
+        go_mode = "mindmap"
+    setattr(outline, "_worksheet_second_reading_mode", go_mode)
+    mode = "reading"
 
     if mode == "reading":
         ordered = rq_uni
-        half = max(4, (len(ordered) + 1) // 2)
-        page1_q, page2_q = ordered[:half], ordered[half:]
+        first_kind = rq_kind if rq_kind in ("mc", "tf") else "tf"
+        page1_q = ordered[:4]
+        if len(page1_q) < 4 and first_kind in ("mc", "tf"):
+            page1_q = _fill_same_kind_reading_questions(page1_q, first_kind, reading_text, max_n=4)
+            sub_uni = _reading_subtitle(first_kind)
+        used_q = {(q.get("q") or "").strip().lower() for q in page1_q}
+        page2_q = [
+            q for q in ordered[4:]
+            if (q.get("q") or "").strip().lower() not in used_q
+        ][:4]
         _build_reading_page(new_page(), brand_rgb, reading_text, page1_q,
                             subtitle=sub_uni, start_no=1, show_passage=show_passage)
-        _build_reading_page(new_page(), brand_rgb, reading_text, page2_q,
-                            subtitle=sub_uni, start_no=len(page1_q) + 1, show_passage=show_passage)
+        if len(page2_q) >= 3:
+            _build_reading_page(new_page(), brand_rgb, reading_text, page2_q,
+                                subtitle=sub_uni, start_no=len(page1_q) + 1, show_passage=show_passage)
+        else:
+            ext = _reading_ext_items(outline, data, used_q, max_n=4)
+            if len(ext) < 3:
+                ext = _mixed_tf_items(reading_text, max_n=4)
+            _build_reading_fill_page(
+                new_page(), brand_rgb, "Reading",
+                "Read the story again and answer the questions.",
+                ext, start_no=len(page1_q) + 1)
     else:
         # 横版阅读页（用户拍板 2026-06-06）：①同页题型必须统一（全选择 or 全判断，绝不混排）；
         # ②锁定 4 题（2×2 行对齐：左右各 2，横向两题对齐、纵向两题对齐）。先用归一后的同质题；
@@ -1729,6 +1754,24 @@ def build_worksheet(
                 _build_p6_mindmap(new_page(), data["mind_map"])
         else:  # mindmap
             _build_p6_mindmap(new_page(), data["mind_map"])
+
+    # Page 7: Graphic Organizer. Page 8: Writing.
+    if go_mode == "pbl":
+        _build_pbl_page(new_page(), brand_rgb, data, outline, title="Graphic Organizer")
+    elif go_mode == "color_say":
+        _build_color_say_page(new_page(), brand_rgb, data, outline,
+                              coloring_image=coloring_image, title="Graphic Organizer")
+    elif go_mode == "l3summary":
+        _build_l3_summary_page(new_page(), brand_rgb, data, outline, title="Graphic Organizer")
+    elif go_mode == "l3bubble":
+        _build_l3_bubble_map(new_page(), brand_rgb, data, outline, title="Graphic Organizer")
+    elif go_mode == "timeline":
+        _build_timeline_page(new_page(), brand_rgb, data, outline, title="Graphic Organizer")
+    elif go_mode == "planchart":
+        _build_plan_chart_page(new_page(), brand_rgb, data, outline, title="Graphic Organizer")
+    else:
+        _build_p6_mindmap(new_page(), data["mind_map"], title="Graphic Organizer")
+    _build_p5_writing(new_page(), brand_rgb, data["writing"], title="Writing")
 
     # 删除模板自带的 7 个级别原始 slide，只留我们克隆出来的内容页
     if use_template and n_template:
@@ -1809,15 +1852,17 @@ def _verbatim_vocab(outline: BookOutline, n: int = 5) -> list[str]:
 
 
 def _questions_list_to_template_data(qlist: list[dict], outline: BookOutline) -> dict:
-    """把 AI 抽取的"按 level 池子的 6 道题"映射到 worksheet PPTX 模板的 7 个固定字段。
+    """把 AI 抽取的"按 level 池子的题目"映射到 worksheet PPTX 模板的固定字段。
 
-    Worksheet 模板有 6 页固定结构：
+    Worksheet 模板有 8 页固定结构：
       P1 Match (word ↔ definition)
       P2 Fill blanks (word_bank + 5 句 fill_blanks)
       P3 Sentence MC (4 题 2 选 1，可配图)
-      P4 Reading MC (4 题，每题 3 options)
-      P5 Writing (scaffold + 写作区)
-      P6 Mind Map (character / problem / solution)
+      P4 Sentence practice 2
+      P5 Reading
+      P6 Reading
+      P7 Graphic Organizer
+      P8 Writing
 
     AI 抽取的题型五花八门（match_definition / fill_blank / true_false / inference / unscramble / …）
     本函数把它们分发到对应模板字段，并用 outline 数据兜底空字段。
@@ -4536,14 +4581,14 @@ def _build_color_say_page(slide, brand_rgb: tuple, data: dict, outline: BookOutl
 #  Page 6 — Mind Map
 # ============================================================
 
-def _build_p6_mindmap(slide, rows: list[dict]) -> None:
+def _build_p6_mindmap(slide, rows: list[dict], title: str = "Reading") -> None:
     """故事复述思维导图 —— SWBST 框架（Somebody/Wanted/But/So/Then）。
 
     教学目的：用国际通行的『五步复述法』训练学生抓人物、目标、冲突、行动、结局，
     把读到的故事用自己的话有逻辑地概括出来（读后输出 / 写作前的结构脚手架）。
     rows 若带有 AI 提示，会作为浅灰提示词写入右侧引导问题后。
     """
-    _add_title(slide, "Reading",
+    _add_title(slide, title,
                "Retell the story in five steps: Somebody \u2013 Wanted \u2013 But \u2013 So \u2013 Then.")
 
     # 五步：关键词 + 引导问题 + 颜色
