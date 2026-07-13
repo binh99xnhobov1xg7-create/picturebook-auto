@@ -1369,12 +1369,26 @@ def _unify_reading_questions(rq: list[dict]) -> tuple[list[dict], str]:
             page = 99
         return (kind_rank, page, len((q.get("q") or "")))
 
-    mc = [q for q in rq if q.get("kind") == "mc" and q.get("q")]
-    tf = [q for q in rq if q.get("kind") == "tf" and q.get("q")]
+    def _dedupe(items: list[dict]) -> list[dict]:
+        out: list[dict] = []
+        seen: set[str] = set()
+        for q in items:
+            text = q.get("q") or ""
+            if _is_generic_reading_prompt(text):
+                continue
+            key = _reading_question_key(text)
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            out.append(q)
+        return out
+
+    mc = _dedupe([q for q in rq if q.get("kind") == "mc" and q.get("q")])
+    tf = _dedupe([q for q in rq if q.get("kind") == "tf" and q.get("q")])
     chosen, kind = (mc, "mc") if len(mc) >= len(tf) else (tf, "tf")
     if len(chosen) < 3:
         # 混排兜底：按易→难稳定排序
-        return sorted([q for q in rq if q.get("q")], key=_difficulty_key), "mixed"
+        return sorted(_dedupe([q for q in rq if q.get("q")]), key=_difficulty_key), "mixed"
     # 同质题内部也按易→难（靠前页事实题先、短题先）稳定排序
     return sorted(chosen, key=_difficulty_key), kind
 
@@ -1397,10 +1411,13 @@ def _reading_ext_items(outline: BookOutline, data: dict, exclude: set[str],
     重复，最多 max_n 条；不足 3 条时调用方回退 SWBST 复述。"""
     import re as _re
     items: list[dict] = []
-    seen: set[str] = set(exclude or set())
+    seen: set[str] = {_reading_question_key(x) for x in (exclude or set()) if x}
 
     def _add(it: dict) -> None:
-        key = (it.get("q") or "").strip().lower()
+        text = (it.get("q") or "").strip()
+        if _is_generic_reading_prompt(text):
+            return
+        key = _reading_question_key(text)
         if key and key not in seen and len(items) < max_n:
             seen.add(key)
             items.append(it)
@@ -1439,6 +1456,22 @@ def _reading_ext_items(outline: BookOutline, data: dict, exclude: set[str],
     return items[:max_n]
 
 
+def _reading_question_key(text: str) -> str:
+    text = _clean_text(text or "").lower()
+    text = re.sub(r"\s+", " ", text)
+    text = re.sub(r"[\"'“”‘’.,!?;:()]+", "", text)
+    return text.strip()
+
+
+def _is_generic_reading_prompt(text: str) -> bool:
+    low = (text or "").strip().lower()
+    return (
+        low.startswith("what happens here:")
+        or low.startswith("what does the passage say in sentence")
+        or low in {"question 1?", "question 2?", "question 3?", "question 4?"}
+    )
+
+
 def _fill_same_kind_reading_questions(
     questions: list[dict], kind: str, reading_text: str, *, max_n: int = 4
 ) -> list[dict]:
@@ -1452,7 +1485,10 @@ def _fill_same_kind_reading_questions(
     out: list[dict] = []
     seen: set[str] = set()
     for q in (questions or []):
-        key = (q.get("q") or "").strip().lower()
+        text = q.get("q") or ""
+        if _is_generic_reading_prompt(text):
+            continue
+        key = _reading_question_key(text)
         if not key or key in seen:
             continue
         seen.add(key)
@@ -1893,10 +1929,10 @@ def build_worksheet(
         if len(page1_q) < 4 and first_kind in ("mc", "tf"):
             page1_q = _fill_same_kind_reading_questions(page1_q, first_kind, reading_text, max_n=4)
             sub_uni = _reading_subtitle(first_kind)
-        used_q = {(q.get("q") or "").strip().lower() for q in page1_q}
+        used_q = {_reading_question_key(q.get("q") or "") for q in page1_q}
         page2_q = [
             q for q in ordered[4:]
-            if (q.get("q") or "").strip().lower() not in used_q
+            if _reading_question_key(q.get("q") or "") not in used_q
         ][:4]
         _build_reading_page(new_page(), brand_rgb, reading_text, page1_q,
                             subtitle=sub_uni, start_no=1, show_passage=show_passage)

@@ -3290,14 +3290,6 @@ def _render_upload_ws_only_mode() -> None:
         height=160,
         key="ws_only_raw_text",
     )
-    rqc = st.select_slider(
-        "Reading 页题量",
-        options=[4, 6, 8],
-        value=4,
-        key="ws_only_reading_q_count",
-        help="通常 L3-L4 用 4 或 6；高年级可用 8。",
-    )
-
     if not st.button("📋 只生成 Worksheet", type="primary", key="ws_only_run"):
         return
     if not (ws_title or "").strip():
@@ -3335,7 +3327,7 @@ def _render_upload_ws_only_mode() -> None:
             raw_story=story_for_generation,
             image_paths=image_paths,
             run_dir=run_dir,
-            ws_reading_q_count=int(rqc),
+            ws_reading_q_count=4,
             done_note="Worksheet 已生成",
         )
     except Exception as e:
