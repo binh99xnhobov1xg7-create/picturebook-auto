@@ -2418,6 +2418,54 @@ def _build_and_assemble_teaching_kit(
     }
 
 
+def _build_teacher_guide_only(
+    *,
+    title: str,
+    level: str,
+    book_number: str,
+    raw_story: str,
+    run_dir: Path,
+) -> dict[str, Path]:
+    """Standalone TG flow: outline -> AI extract/syllabus sync -> TG DOCX only."""
+    ip_age = resolve_ip_age(level)
+    raw = (raw_story or "").strip()
+    outline = _build_outline(
+        title=title, level=level, book_number=book_number, cefr="", theme="",
+        ip_age=int(ip_age), raw_story=raw, custom_chars_text="",
+    )
+    enrich_from_syllabus(outline)
+    official_story = ""
+    if getattr(outline, "syllabus", None) is not None:
+        try:
+            official_story = _format_syllabus_story(outline.syllabus).strip()
+        except Exception:
+            official_story = ""
+    if official_story:
+        raw = official_story
+
+    ec = None
+    if raw:
+        ec = extract_all(raw_story=raw, title=title, level=level, cefr="", theme="")
+        apply_extracted_to_outline(outline, ec)
+    enrich_from_syllabus(outline)
+    if ec is not None:
+        _sync_ec_from_syllabus(ec, outline)
+        attach_rr_questions(outline, ec.rr_questions)
+        attach_worksheet_questions(outline, ec.worksheet_questions, reading_q_count=4)
+    official_rr = _official_rr_questions_from_syllabus(outline)
+    if official_rr:
+        attach_rr_questions(outline, official_rr)
+    if official_story:
+        _apply_official_story_pages(outline, official_story)
+
+    name_prefix = _name_prefix(outline)
+    tg_path = run_dir / f"{name_prefix}_Teachers_Guide.docx"
+    extract_path = run_dir / f"{name_prefix}_Teaching_Extract.txt"
+    build_teacher_guide(outline, tg_path)
+    _write_teaching_extract_txt(outline, ec, extract_path)
+    return {"tg": tg_path, "extract": extract_path, "name_prefix": name_prefix}  # type: ignore[dict-item]
+
+
 def _run_rr_ws_final_check(book_dir: Path, *, outline: BookOutline | None, do_convert: bool = True):
     from rr_ws_checker import check_and_pack
     return check_and_pack(Path(book_dir), outline=outline, do_convert=do_convert)
@@ -3021,6 +3069,99 @@ def _render_upload_batch_mode() -> None:
                     )
 
 
+def _render_upload_tg_only_mode() -> None:
+    """Standalone TG entry for courses whose Reader / WS / RR are handled first."""
+    st.info(
+        "用于先完成 Reader、Worksheet 和 Reading Report，再单独补生成 Teacher's Guide。"
+        "当前版本会读取大纲/正文生成 TG；后续可继续升级为读取 Final Worksheet 后再生成。"
+    )
+    c1, c2, c3 = st.columns([1, 1, 3])
+    with c1:
+        tg_level = st.selectbox("Level", LEVEL_OPTIONS, index=4, key="tg_only_level")
+    with c2:
+        tg_book_number = st.text_input("Book#", key="tg_only_book_number")
+    with c3:
+        tg_title = st.text_input("Book Title", key="tg_only_title")
+
+    entry = _lookup_syllabus_entry(tg_level, tg_title, tg_book_number)
+    if st.button("📚 匹配大纲", key="tg_only_pull_syllabus", use_container_width=True):
+        if entry is None:
+            st.warning("未命中大纲，请核对 Level / Book# / Book Title。")
+        else:
+            st.session_state["tg_only_title"] = entry.title
+            st.session_state["tg_only_book_number"] = entry.book_number
+            st.session_state["tg_only_raw_text"] = _format_syllabus_story(entry)
+            st.session_state["_tg_only_meta"] = _syllabus_meta_markdown(entry)
+            st.rerun()
+    if st.session_state.get("_tg_only_meta"):
+        st.info(st.session_state["_tg_only_meta"])
+
+    files = st.file_uploader(
+        "可选：上传 Reader PDF / PPTX / 页面图，用于留档和确认页图可解析",
+        type=["pdf", "pptx", "png", "jpg", "jpeg", "webp"],
+        accept_multiple_files=True,
+        key="tg_only_files",
+    )
+    raw_text = st.text_area(
+        "故事英文正文（大纲自动填入，可微调；未命中大纲时必填）",
+        height=160,
+        key="tg_only_raw_text",
+    )
+
+    if not st.button("👩‍🏫 只生成 Teacher's Guide", type="primary", key="tg_only_run"):
+        return
+    if not (tg_title or "").strip():
+        st.error("请先填写 Book Title，或点击“匹配大纲”。")
+        return
+    official_story = _format_syllabus_story(entry) if entry is not None else ""
+    story_for_generation = official_story or (raw_text or "").strip()
+    if not story_for_generation:
+        st.error("没有可用正文。请先匹配大纲，或手动粘贴故事英文正文。")
+        return
+
+    outline = _build_outline(
+        title=tg_title, level=tg_level, book_number=tg_book_number,
+        cefr="", theme="", ip_age=int(resolve_ip_age(tg_level)),
+        raw_story=story_for_generation, custom_chars_text="",
+    )
+    run_dir, img_dir, _ = _upload_run_paths(outline)
+    if files:
+        with st.spinner("解析上传 Reader，用于留档..."):
+            image_paths = _extract_uploaded_page_images(files, img_dir)
+        if image_paths:
+            st.success(f"已解析出 {len(image_paths)} 张页面图。")
+        else:
+            st.warning("上传文件未解析出页面图；TG 会继续按大纲/正文生成。")
+
+    try:
+        paths = run_with_live_timer(
+            "生成 Teacher's Guide",
+            _build_teacher_guide_only,
+            title=tg_title,
+            level=tg_level,
+            book_number=tg_book_number,
+            raw_story=story_for_generation,
+            run_dir=run_dir,
+            done_note="TG 已生成",
+        )
+    except Exception as e:
+        st.error(f"TG 生成失败：{e}")
+        with st.expander("错误详情（请截图给研发）", expanded=True):
+            st.code(traceback.format_exc(), language="python")
+        return
+
+    st.success("Teacher's Guide 已单独生成。")
+    tg_path = Path(paths.get("tg", ""))
+    extract_path = Path(paths.get("extract", ""))
+    cols = st.columns(2)
+    with cols[0]:
+        if tg_path.is_file():
+            _download_button(tg_path, "⬇️ 下载 Teacher's Guide DOCX", primary=True)
+    with cols[1]:
+        if extract_path.is_file():
+            _download_button(extract_path, "⬇️ 下载抽取摘要")
+
+
 def _render_upload_mode() -> None:
     """上传已有绘本(PDF/PPT/散图) → 生成 Worksheet + RR + TG。"""
     st.subheader("📤 已有绘本 · 生成教辅（WS / RR / TG）")
@@ -3028,11 +3169,13 @@ def _render_upload_mode() -> None:
         "上传现有 Reader PDF/PPTX/散图后，系统自动匹配大纲并生成 Worksheet、Reading Report 和 TG。"
         "如果需要先精修图片或重出 Reader PPT，请走「绘本图片精修 / 终稿编辑」。"
     )
-    tab_single, tab_batch = st.tabs(["📕 单本", "📚 批量"])
+    tab_single, tab_batch, tab_tg_only = st.tabs(["📕 单本", "📚 批量", "👩‍🏫 只生成 TG"])
     with tab_single:
         _render_upload_single_mode()
     with tab_batch:
         _render_upload_batch_mode()
+    with tab_tg_only:
+        _render_upload_tg_only_mode()
 
 
 def _render_refine_mode() -> None:
@@ -3980,14 +4123,14 @@ def _prefill_book_session(
     st.session_state["_work_prefill_pending"] = True
 
 
-def _prefill_and_go_workbench(*, level: str, book_number: str, title: str) -> None:
+def _prefill_and_go_workbench(level: str, book_number: str, title: str) -> None:
     """进度看板 / 工作台树选中 → 预填并留在工作台。"""
     _prefill_book_session(level=level, book_number=book_number, title=title)
     _set_main_nav("workbench")
     st.rerun()
 
 
-def _prefill_and_go_work(*, level: str, book_number: str, title: str) -> None:
+def _prefill_and_go_work(level: str, book_number: str, title: str) -> None:
     """进入经典制作页（完整 AI 抽取 + 出图向导）。"""
     _prefill_book_session(level=level, book_number=book_number, title=title)
     _set_main_nav("work")
