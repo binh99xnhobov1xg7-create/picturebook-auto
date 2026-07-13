@@ -1242,10 +1242,17 @@ def _detect_go(outline: BookOutline, is_nf: bool) -> dict | None:
 
 # ---------- Worksheet / vocab / objectives 复用 ----------
 def _worksheet_activities(outline: BookOutline) -> list[dict]:
+    qs = getattr(outline, "_worksheet_questions", None) or []
+    use_uploaded = bool(getattr(outline, "_tg_use_uploaded_worksheet", False))
+    if use_uploaded and qs:
+        return _worksheet_question_activities(qs)
     lvl = _level_label(outline.level)
     if lvl == "3":
         return _l3_standard_worksheet_activities(outline)
-    qs = getattr(outline, "_worksheet_questions", None) or []
+    return _worksheet_question_activities(qs)
+
+
+def _worksheet_question_activities(qs: list[dict]) -> list[dict]:
     out: list[dict] = []
     for ws in qs[:6]:
         if not isinstance(ws, dict):

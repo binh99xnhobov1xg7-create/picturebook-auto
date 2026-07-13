@@ -210,6 +210,24 @@ def test_l4_travel_dialogue_quotes_pass(tmp: Path) -> None:
     assert "Oh, yes!" in text
 
 
+def test_l3_uploaded_worksheet_sections_override_default(tmp: Path) -> None:
+    path = tmp / "mia_uploaded_ws_tg.docx"
+    outline = _mia_outline()
+    outline._tg_use_uploaded_worksheet = True
+    outline._worksheet_questions = [
+        {
+            "title": "Reading - Uploaded Final Worksheet Chart",
+            "instruction": "Complete the uploaded chart from the final worksheet.",
+            "items": [],
+            "answer_key": ["uploaded answer"],
+        }
+    ]
+    build_teacher_guide(outline, path)
+    text = _doc_text(path)
+    assert "Uploaded Final Worksheet Chart" in text
+    assert "uploaded answer" in text
+
+
 def main() -> None:
     with tempfile.TemporaryDirectory() as d:
         tmp = Path(d)
@@ -223,6 +241,8 @@ def main() -> None:
         print("PASS L4B13 smoke regression")
         test_l4_travel_dialogue_quotes_pass(tmp)
         print("PASS L4-1 dialogue quote regression")
+        test_l3_uploaded_worksheet_sections_override_default(tmp)
+        print("PASS L3 uploaded worksheet TG override")
 
 
 if __name__ == "__main__":

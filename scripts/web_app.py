@@ -2425,6 +2425,7 @@ def _build_teacher_guide_only(
     book_number: str,
     raw_story: str,
     run_dir: Path,
+    worksheet_sections: list[dict] | None = None,
 ) -> dict[str, Path]:
     """Standalone TG flow: outline -> AI extract/syllabus sync -> TG DOCX only."""
     ip_age = resolve_ip_age(level)
@@ -2452,6 +2453,10 @@ def _build_teacher_guide_only(
         _sync_ec_from_syllabus(ec, outline)
         attach_rr_questions(outline, ec.rr_questions)
         attach_worksheet_questions(outline, ec.worksheet_questions, reading_q_count=4)
+    if worksheet_sections:
+        fallback_ws = getattr(outline, "_worksheet_questions", None) or []
+        setattr(outline, "_worksheet_questions", _merge_tg_worksheet_sections(worksheet_sections, fallback_ws))
+        setattr(outline, "_tg_use_uploaded_worksheet", True)
     official_rr = _official_rr_questions_from_syllabus(outline)
     if official_rr:
         attach_rr_questions(outline, official_rr)
@@ -2461,9 +2466,135 @@ def _build_teacher_guide_only(
     name_prefix = _name_prefix(outline)
     tg_path = run_dir / f"{name_prefix}_Teachers_Guide.docx"
     extract_path = run_dir / f"{name_prefix}_Teaching_Extract.txt"
+    source_path = run_dir / f"{name_prefix}_TG_Source_Snapshot.txt"
     build_teacher_guide(outline, tg_path)
     _write_teaching_extract_txt(outline, ec, extract_path)
-    return {"tg": tg_path, "extract": extract_path, "name_prefix": name_prefix}  # type: ignore[dict-item]
+    _write_tg_source_snapshot(outline, source_path, worksheet_sections or [])
+    return {"tg": tg_path, "extract": extract_path, "source": source_path, "name_prefix": name_prefix}  # type: ignore[dict-item]
+
+
+def _merge_tg_worksheet_sections(uploaded: list[dict], fallback: list[dict]) -> list[dict]:
+    merged: list[dict] = []
+    for i, row in enumerate(uploaded[:6]):
+        base = fallback[i] if i < len(fallback) and isinstance(fallback[i], dict) else {}
+        out = dict(base)
+        for key in ("title", "instruction", "extra", "items", "word_bank"):
+            if row.get(key):
+                out[key] = row[key]
+        if row.get("answer_key"):
+            out["answer_key"] = row["answer_key"]
+        elif base.get("answer_key"):
+            out["answer_key"] = base["answer_key"]
+        merged.append(out)
+    if not merged:
+        return fallback
+    if len(merged) < len(fallback):
+        merged.extend(fallback[len(merged):6])
+    return merged[:6]
+
+
+def _worksheet_sections_from_pptx_upload(uploaded_file) -> list[dict]:
+    if uploaded_file is None:
+        return []
+    from pptx import Presentation
+
+    prs = Presentation(io.BytesIO(uploaded_file.getvalue()))
+    sections: list[dict] = []
+    for idx, slide in enumerate(prs.slides, 1):
+        lines: list[str] = []
+        for shape in slide.shapes:
+            if getattr(shape, "has_text_frame", False):
+                raw = shape.text_frame.text or ""
+                for part in raw.splitlines():
+                    text = re.sub(r"\s+", " ", part).strip()
+                    if text:
+                        lines.append(text)
+        clean = [x for x in lines if not _is_worksheet_chrome_text(x)]
+        title = _pick_worksheet_title(clean, idx)
+        instruction = _pick_worksheet_instruction(clean, title)
+        word_bank = _pick_worksheet_word_bank(clean)
+        item_lines = [x for x in clean if x not in {title, instruction} and not x.lower().startswith("word bank")]
+        sections.append({
+            "type": "uploaded_worksheet",
+            "title": title,
+            "instruction": instruction,
+            "extra": f"Word Bank: {', '.join(word_bank)}" if word_bank else "",
+            "word_bank": word_bank,
+            "items": [{"text": x} for x in item_lines[:12]],
+            "answer_key": None,
+        })
+    return sections[:6]
+
+
+def _is_worksheet_chrome_text(text: str) -> bool:
+    low = (text or "").strip().lower()
+    if not low:
+        return True
+    if low in {"name", "date", "level", "book", "score"}:
+        return True
+    if re.fullmatch(r"name\s*:?\s*_*", low):
+        return True
+    if re.fullmatch(r"page\s*\d+", low):
+        return True
+    return False
+
+
+def _pick_worksheet_title(lines: list[str], idx: int) -> str:
+    for line in lines:
+        if len(line) <= 80 and any(k in line.lower() for k in (
+            "vocabulary", "sentence", "grammar", "reading", "chart", "organizer", "word", "complete", "match"
+        )):
+            return line
+    return lines[0] if lines else f"Worksheet Section {idx}"
+
+
+def _pick_worksheet_instruction(lines: list[str], title: str) -> str:
+    for line in lines:
+        if line == title:
+            continue
+        low = line.lower()
+        if any(k in low for k in ("look", "read", "write", "complete", "match", "fill", "circle", "choose", "number")):
+            return line
+    return ""
+
+
+def _pick_worksheet_word_bank(lines: list[str]) -> list[str]:
+    for line in lines:
+        low = line.lower()
+        if "word bank" not in low:
+            continue
+        tail = re.split(r"word bank\s*:?", line, flags=re.IGNORECASE, maxsplit=1)[-1]
+        return [x.strip(" .;") for x in re.split(r"[,;/|]", tail) if x.strip(" .;")]
+    return []
+
+
+def _write_tg_source_snapshot(outline: BookOutline, dest: Path, worksheet_sections: list[dict]) -> None:
+    syl = getattr(outline, "syllabus", None)
+    rows = [
+        "# TG Source Snapshot",
+        f"Title: {outline.title}",
+        f"Level: {outline.level}",
+        f"Book: {outline.book_number}",
+        "",
+        "## Story Pages",
+    ]
+    for page in outline.pages:
+        if page.page_type == "story" and (page.text or "").strip():
+            rows.append(f"P{page.index + 1}: {page.text.strip()}")
+    if syl is not None:
+        rows += ["", "## Syllabus Fields"]
+        for key, value in vars(syl).items():
+            if key == "sor_strategies":
+                continue
+            if value not in ("", [], {}, None):
+                rows.append(f"{key}: {value}")
+    if worksheet_sections:
+        rows += ["", "## Uploaded Worksheet Sections"]
+        for i, ws in enumerate(worksheet_sections, 1):
+            rows.append(f"{i}. {ws.get('title', '')} | {ws.get('instruction', '')}")
+            if ws.get("word_bank"):
+                rows.append(f"   Word Bank: {', '.join(ws.get('word_bank') or [])}")
+    dest.write_text("\n".join(rows), encoding="utf-8")
 
 
 def _run_rr_ws_final_check(book_dir: Path, *, outline: BookOutline | None, do_convert: bool = True):
@@ -3097,10 +3228,15 @@ def _render_upload_tg_only_mode() -> None:
         st.info(st.session_state["_tg_only_meta"])
 
     files = st.file_uploader(
-        "可选：上传 Reader PDF / PPTX / 页面图，用于留档和确认页图可解析",
+        "Reader PDF / PPTX / 页面图（推荐上传，用于留档和确认页图可解析）",
         type=["pdf", "pptx", "png", "jpg", "jpeg", "webp"],
         accept_multiple_files=True,
         key="tg_only_files",
+    )
+    worksheet_file = st.file_uploader(
+        "Final Worksheet PPTX（推荐上传，TG 会优先按这份 Worksheet 的页面顺序写 Worksheet Practice）",
+        type=["pptx"],
+        key="tg_only_worksheet_file",
     )
     raw_text = st.text_area(
         "故事英文正文（大纲自动填入，可微调；未命中大纲时必填）",
@@ -3132,6 +3268,14 @@ def _render_upload_tg_only_mode() -> None:
             st.success(f"已解析出 {len(image_paths)} 张页面图。")
         else:
             st.warning("上传文件未解析出页面图；TG 会继续按大纲/正文生成。")
+    worksheet_sections = []
+    if worksheet_file is not None:
+        try:
+            worksheet_sections = _worksheet_sections_from_pptx_upload(worksheet_file)
+            if worksheet_sections:
+                st.success(f"已读取 Worksheet {len(worksheet_sections)} 个页面/活动。")
+        except Exception as e:
+            st.warning(f"Worksheet 读取失败，TG 会继续按大纲/AI 题目生成：{e}")
 
     try:
         paths = run_with_live_timer(
@@ -3142,6 +3286,7 @@ def _render_upload_tg_only_mode() -> None:
             book_number=tg_book_number,
             raw_story=story_for_generation,
             run_dir=run_dir,
+            worksheet_sections=worksheet_sections,
             done_note="TG 已生成",
         )
     except Exception as e:
@@ -3153,13 +3298,17 @@ def _render_upload_tg_only_mode() -> None:
     st.success("Teacher's Guide 已单独生成。")
     tg_path = Path(paths.get("tg", ""))
     extract_path = Path(paths.get("extract", ""))
-    cols = st.columns(2)
+    source_path = Path(paths.get("source", ""))
+    cols = st.columns(3)
     with cols[0]:
         if tg_path.is_file():
             _download_button(tg_path, "⬇️ 下载 Teacher's Guide DOCX", primary=True)
     with cols[1]:
         if extract_path.is_file():
             _download_button(extract_path, "⬇️ 下载抽取摘要")
+    with cols[2]:
+        if source_path.is_file():
+            _download_button(source_path, "⬇️ 下载 TG 来源快照")
 
 
 def _render_upload_mode() -> None:
