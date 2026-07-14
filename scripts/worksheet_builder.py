@@ -420,7 +420,7 @@ def _official_sentence_frame_fill_items(outline: BookOutline, max_n: int = 4) ->
         low = f" {sent.lower()} "
         if signature == "will" and " will " not in low:
             continue
-        if signature == "there" and not re.search(r"\bthere\s+(is|are|was|were)\b", low):
+        if signature == "there" and not re.search(r"\bthere\s+(is|are)\b", low):
             continue
         if signature == "modal" and not re.search(r"\b(can|could|cannot|can't)\b", low):
             continue
@@ -474,8 +474,8 @@ def _official_sentence_frame_practice_items(outline: BookOutline, max_n: int = 4
         prompts.extend([
             {"prompt": f"There is {ANSWER_BLANK}."},
             {"prompt": f"There are {ANSWER_BLANK}."},
-            {"prompt": f"There was {ANSWER_BLANK}."},
-            {"prompt": f"There were {ANSWER_BLANK}."},
+            {"prompt": f"In the story, there are {ANSWER_BLANK}."},
+            {"prompt": f"I can see {ANSWER_BLANK}."},
         ])
     elif sig == "modal":
         prompts.extend([
@@ -1546,6 +1546,19 @@ def _false_tf_variant(sentence: str) -> str:
     replacements = [
         (r"\bdid not know many\b", "knew many"),
         (r"\bdoes not know many\b", "knows many"),
+        (r"\bfour seasons\b", "two seasons"),
+        (r"\bflowers and new leaves\b", "snow and ice"),
+        (r"\bcome out and play\b", "hide and sleep"),
+        (r"\bhot days\b", "cold days"),
+        (r"\bcold days\b", "hot days"),
+        (r"\byellow leaves and fruits\b", "green leaves and flowers"),
+        (r"\bwhite snow\b", "hot sun"),
+        (r"\bhide and sleep\b", "come out and play"),
+        (r"\bswim and have fun\b", "hide and sleep"),
+        (r"\bspring\b", "winter"),
+        (r"\bsummer\b", "winter"),
+        (r"\bautumn\b", "spring"),
+        (r"\bwinter\b", "summer"),
         (r"\bmessy\b", "clean"),
         (r"\bclean\b", "messy"),
         (r"\bSunday\b", "Monday"),
@@ -1976,6 +1989,7 @@ def build_worksheet(
                 new_page(), brand_rgb, reading_text, page2_q,
                 subtitle="Read the passage. Complete the sentences.",
                 start_no=len(page1_q) + 1, show_passage=show_passage,
+                force_single_col=True,
             )
         else:
             ordered = rq_uni
@@ -3764,6 +3778,7 @@ def _build_reading_page(
     slide, brand_rgb: tuple, text: str, questions: list[dict],
     *, subtitle: str = "Choose the correct answer for each question.",
     start_no: int = 1, show_passage: bool = True, title: str = "Reading",
+    force_single_col: bool = False,
 ) -> None:
     """阅读页 v2.2：大标题（默认 Reading，可定制）+ 灰副标题 +（可选）完整原文框 + 题目（左右两列对称）。
 
@@ -3884,7 +3899,7 @@ def _build_reading_page(
     n = len(qs)
     # 排版规则（用户拍板 2026-06-09）：≤3 题单栏横排、竖向左对齐（不左右分块）；
     # 仅 4 题及以上才分左右两块（2×2 对称）。杜绝 3 题时"左 2 右 1"的不平衡空隙。
-    two_col = n >= 4
+    two_col = n >= 4 and not force_single_col
     gutter = 0.45
     if two_col:
         mid = (n + 1) // 2                 # 左列取上整：偶数→等分；奇数→左多一题
@@ -5414,6 +5429,13 @@ _KID_DICT: dict[str, str] = {
     "deliver":   "to take something to where it needs to go",
     "ripe":      "ready to be picked and eaten",
     "fork":      "a tool with points used to eat food",
+    # L3 seasons / weather
+    "autumn":    "the season after summer, when leaves may turn yellow or red",
+    "hot days":  "days when the weather is very warm",
+    "cold days": "days when the weather is chilly or freezing",
+    "parts of the world": "different places on Earth",
+    "season":    "one part of the year, like spring or summer",
+    "seasons":   "the four parts of the year: spring, summer, autumn, and winter",
 }
 
 
@@ -5423,6 +5445,7 @@ def _is_placeholder_def(def_text: str, word: str = "") -> bool:
         not s
         or s.startswith("meaning of ")
         or s.startswith("definition of ")
+        or s.startswith("word from the story")
         or s.startswith("see story")
         or (bool(word) and s == word.strip().lower())
     )
@@ -5494,7 +5517,7 @@ def _clean_word_bank(words: list) -> list[str]:
             continue
         toks = s.split()
         low = s.lower()
-        if len(toks) > 2 or len(s) > 22:
+        if len(toks) > 4 or len(s) > 32:
             continue
         if any(t.strip(",.").lower() in _BANK_STOPWORDS for t in toks):
             continue
@@ -5518,9 +5541,12 @@ def _story_cloze_fills(reading_text: str, words: list, max_n: int = 4) -> list[d
     used: set[str] = set()
     for w in words:
         wl = str(w or "").strip().lower()
-        if not wl or " " in wl or wl in used:
+        if not wl or wl in used:
             continue
-        pat = _re.compile(r"\b(" + _re.escape(wl) + r"(?:s|es|ed|ing|d)?)\b", _re.I)
+        if " " in wl:
+            pat = _re.compile(r"\b(" + _re.escape(wl).replace(r"\ ", r"\s+") + r")\b", _re.I)
+        else:
+            pat = _re.compile(r"\b(" + _re.escape(wl) + r"(?:s|es|ed|ing|d)?)\b", _re.I)
         for s in sents:
             if len(s) > 115:   # 太长的句子不适合做填空
                 continue
@@ -5533,6 +5559,22 @@ def _story_cloze_fills(reading_text: str, words: list, max_n: int = 4) -> list[d
         if len(out) >= max_n:
             break
     return out
+
+
+def _fill_answer_allowed(answer: str, allowed_words: list[str]) -> bool:
+    ans = format_word_answer(answer).lower()
+    if not ans:
+        return False
+    allowed = {format_word_answer(w).lower() for w in (allowed_words or []) if str(w or "").strip()}
+    if ans in allowed:
+        return True
+    # Allow simple story inflections when the bank word is singular/base.
+    for word in allowed:
+        if not word:
+            continue
+        if ans in {word + "s", word + "es", word + "ed", word + "ing", word + "d"}:
+            return True
+    return False
 
 
 def _is_generic_fill(f: dict) -> bool:
@@ -5637,8 +5679,15 @@ def _normalize_worksheet_data(data: dict) -> dict:
     # 5b) v2.3：词库清洗 + 填空题改为本文完形（修复"词库混入指令串/只有1题/中间大片留白"）
     out["word_bank"] = _clean_word_bank(out.get("word_bank") or [])
     fill_words = out["word_bank"] or [p.get("word", "") for p in out.get("match_pairs") or []]
+    allowed_fill_words = fill_words or [p.get("word", "") for p in out.get("match_pairs") or []]
+    invalid_fills = [
+        f for f in (out.get("fill_blanks") or [])
+        if "____" not in (f.get("sentence") or "")
+        or not _fill_answer_allowed(f.get("answer", ""), allowed_fill_words)
+    ]
     need_rebuild = (len(out.get("fill_blanks") or []) < 3
-                    or any(_is_generic_fill(f) for f in (out.get("fill_blanks") or [])))
+                    or any(_is_generic_fill(f) for f in (out.get("fill_blanks") or []))
+                    or bool(invalid_fills))
     if need_rebuild:
         cloze = _story_cloze_fills(out["reading_text"], fill_words, 4)
         if len(cloze) >= 2:
