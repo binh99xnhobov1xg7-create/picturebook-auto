@@ -2060,22 +2060,26 @@ def build_worksheet(
             _build_p6_mindmap(new_page(), data["mind_map"])
 
     # Page 7: Graphic Organizer. Page 8: Writing.
-    if go_mode == "pbl":
-        _build_pbl_page(new_page(), brand_rgb, data, outline, title="Graphic Organizer")
-    elif go_mode == "color_say":
-        _build_color_say_page(new_page(), brand_rgb, data, outline,
-                              coloring_image=coloring_image, title="Graphic Organizer")
-    elif go_mode == "l3summary":
-        _build_l3_summary_page(new_page(), brand_rgb, data, outline, title="Graphic Organizer")
-    elif go_mode == "l3bubble":
-        _build_l3_bubble_map(new_page(), brand_rgb, data, outline, title="Graphic Organizer")
-    elif go_mode == "timeline":
-        _build_timeline_page(new_page(), brand_rgb, data, outline, title="Graphic Organizer")
-    elif go_mode == "planchart":
-        _build_plan_chart_page(new_page(), brand_rgb, data, outline, title="Graphic Organizer")
+    if lvl_n in (3, 4):
+        _build_l34_graphic_organizer_page(new_page(), brand_rgb, data, outline, go_mode)
+        _build_l34_writing_page(new_page(), brand_rgb, outline)
     else:
-        _build_p6_mindmap(new_page(), data["mind_map"], title="Graphic Organizer")
-    _build_p5_writing(new_page(), brand_rgb, data["writing"], title="Writing")
+        if go_mode == "pbl":
+            _build_pbl_page(new_page(), brand_rgb, data, outline, title="Graphic Organizer")
+        elif go_mode == "color_say":
+            _build_color_say_page(new_page(), brand_rgb, data, outline,
+                                  coloring_image=coloring_image, title="Graphic Organizer")
+        elif go_mode == "l3summary":
+            _build_l3_summary_page(new_page(), brand_rgb, data, outline, title="Graphic Organizer")
+        elif go_mode == "l3bubble":
+            _build_l3_bubble_map(new_page(), brand_rgb, data, outline, title="Graphic Organizer")
+        elif go_mode == "timeline":
+            _build_timeline_page(new_page(), brand_rgb, data, outline, title="Graphic Organizer")
+        elif go_mode == "planchart":
+            _build_plan_chart_page(new_page(), brand_rgb, data, outline, title="Graphic Organizer")
+        else:
+            _build_p6_mindmap(new_page(), data["mind_map"], title="Graphic Organizer")
+        _build_p5_writing(new_page(), brand_rgb, data["writing"], title="Writing")
 
     # 删除模板自带的 7 个级别原始 slide，只留我们克隆出来的内容页
     if use_template and n_template:
@@ -4751,6 +4755,295 @@ def _build_l3_bubble_map(slide, brand_rgb: tuple, data: dict, outline: BookOutli
     cr.font.bold = True
     cr.font.size = Pt(17)
     cr.font.color.rgb = _readable_text_rgb(bc)
+
+
+def _l34_clean_story_bits(outline: BookOutline, max_n: int = 4) -> list[str]:
+    bits: list[str] = []
+    seen: set[str] = set()
+    for sent in _story_sentences_for_grammar(outline):
+        text = capitalize_names(_clean_text(sent)).strip()
+        if not text:
+            continue
+        if len(text) > 76:
+            words = text.split()
+            text = " ".join(words[:11]).rstrip(",.;:") + "."
+        key = text.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        bits.append(text)
+    return bits[:max_n]
+
+
+def _l34_short_topic(outline: BookOutline) -> str:
+    for value in (getattr(outline, "theme", ""), getattr(outline, "title", "")):
+        text = _clean_text(str(value or "")).strip()
+        if text and text.isascii():
+            return text[:34]
+    return "the story"
+
+
+def _build_l34_graphic_organizer_page(slide, brand_rgb: tuple, data: dict,
+                                      outline: BookOutline, go_mode: str) -> None:
+    """L3/L4 SOP GO page: clear chart, strong support, only 3-6 blanks."""
+    _add_title(slide, "Graphic Organizer", "Fill in the graphic organizer.")
+    bc = RGBColor(*brand_rgb)
+    soft = RGBColor(0xFF, 0xF7, 0xE8)
+    pale = RGBColor(0xF7, 0xFB, 0xFF)
+    muted = RGBColor(0x6B, 0x72, 0x80)
+    is_nonfic = "non" in (getattr(outline, "fiction_type", "") or "").lower()
+    mode = (go_mode or "").lower()
+    words = [str(w).strip() for w in (outline.vocabulary_for_display or data.get("word_bank") or []) if str(w).strip()]
+    story_bits = _l34_clean_story_bits(outline, 4)
+
+    if is_nonfic or mode == "l3bubble":
+        center = "Topic"
+        labels = ["Fact 1", "Fact 2", "New Word", "I learned"]
+        prompts = [
+            _l34_short_topic(outline),
+            "",
+            words[0] if words else "",
+            "",
+        ]
+        blank_slots = {1, 2, 3}
+    elif mode == "planchart":
+        center = "Plan"
+        labels = ["First", "Next", "Time", "Result"]
+        rows = _plan_chart_rows(outline)
+        prompts = [
+            rows[0].get("action", "") or (story_bits[0] if story_bits else ""),
+            "",
+            "",
+            "",
+        ]
+        blank_slots = {1, 2, 3}
+        bank = ["first", "clean her room", "every day", "play for one hour"]
+        if any(k in " ".join((r.get("clue", "") for r in rows)).lower() for k in ("homework", "piano")):
+            words = bank
+    elif mode == "timeline":
+        center = "Sequence"
+        labels = ["First", "Next", "Then", "Finally"]
+        prompts = [
+            story_bits[0] if story_bits else "",
+            "",
+            "",
+            "",
+        ]
+        blank_slots = {1, 2, 3}
+    else:
+        center = "Story"
+        labels = ["Problem", "Action", "Important Word", "Result"]
+        prompts = [
+            story_bits[0] if story_bits else "",
+            "",
+            words[0] if words else "",
+            "",
+        ]
+        blank_slots = {1, 2, 3}
+
+    x0 = CONTENT_X + 0.62
+    y0 = CONTENT_Y + 1.42
+    card_w = 2.05
+    card_h = 2.28
+    gap = (CONTENT_W - 1.24 - card_w * 4) / 3
+    for i, label in enumerate(labels):
+        x = x0 + i * (card_w + gap)
+        if i:
+            ln = slide.shapes.add_connector(
+                MSO_CONNECTOR.STRAIGHT,
+                Inches(x - gap + 0.15), Inches(y0 + 1.10),
+                Inches(x - 0.15), Inches(y0 + 1.10),
+            )
+            ln.line.color.rgb = bc
+            ln.line.width = Pt(1.6)
+            ln.shadow.inherit = False
+        card = slide.shapes.add_shape(
+            MSO_SHAPE.ROUNDED_RECTANGLE, Inches(x), Inches(y0), Inches(card_w), Inches(card_h)
+        )
+        card.adjustments[0] = 0.12
+        card.fill.solid()
+        card.fill.fore_color.rgb = soft if i % 2 == 0 else pale
+        card.line.color.rgb = bc
+        card.line.width = Pt(1.2)
+        card.shadow.inherit = False
+        tf = card.text_frame
+        tf.margin_left = tf.margin_right = Inches(0.13)
+        tf.margin_top = Inches(0.10)
+        tf.word_wrap = True
+        p = tf.paragraphs[0]
+        p.alignment = PP_ALIGN.CENTER
+        r = p.add_run()
+        r.text = label
+        r.font.name = FONT
+        r.font.bold = True
+        r.font.size = Pt(15)
+        r.font.color.rgb = bc
+        p2 = tf.add_paragraph()
+        p2.alignment = PP_ALIGN.LEFT
+        p2.space_before = Pt(8)
+        p2.text = prompts[i] if i < len(prompts) and prompts[i] else "Look back at the book."
+        for rr in p2.runs:
+            rr.font.name = FONT
+            rr.font.size = Pt(12.5)
+            rr.font.color.rgb = muted if i in blank_slots else BLACK
+        if i in blank_slots:
+            _draw_writing_line(slide, x + 0.22, y0 + card_h - 0.64, card_w - 0.44, LIGHT_GRAY, 1.2)
+            _draw_writing_line(slide, x + 0.22, y0 + card_h - 0.36, card_w - 0.44, LIGHT_GRAY, 1.2)
+
+    center_box = slide.shapes.add_shape(
+        MSO_SHAPE.ROUNDED_RECTANGLE,
+        Inches(CONTENT_X + 3.80), Inches(CONTENT_Y + 4.08),
+        Inches(2.74), Inches(0.58),
+    )
+    center_box.adjustments[0] = 0.30
+    center_box.fill.solid()
+    center_box.fill.fore_color.rgb = bc
+    center_box.line.fill.background()
+    center_box.shadow.inherit = False
+    ctf = center_box.text_frame
+    ctf.vertical_anchor = MSO_ANCHOR.MIDDLE
+    cp = ctf.paragraphs[0]
+    cp.alignment = PP_ALIGN.CENTER
+    cr = cp.add_run()
+    cr.text = center
+    cr.font.name = FONT
+    cr.font.bold = True
+    cr.font.size = Pt(17)
+    cr.font.color.rgb = _readable_text_rgb(bc)
+
+    if words:
+        wb = slide.shapes.add_shape(
+            MSO_SHAPE.ROUNDED_RECTANGLE,
+            Inches(CONTENT_X + 0.80), Inches(CONTENT_Y + CONTENT_H - 0.96),
+            Inches(CONTENT_W - 1.60), Inches(0.58),
+        )
+        wb.adjustments[0] = 0.26
+        wb.fill.solid()
+        wb.fill.fore_color.rgb = WHITE
+        wb.line.color.rgb = bc
+        wb.line.width = Pt(1.0)
+        wb.shadow.inherit = False
+        tf = wb.text_frame
+        tf.margin_left = tf.margin_right = Inches(0.16)
+        tf.vertical_anchor = MSO_ANCHOR.MIDDLE
+        tf.word_wrap = True
+        p = tf.paragraphs[0]
+        p.alignment = PP_ALIGN.CENTER
+        r = p.add_run()
+        r.text = "Word bank: " + "   ".join(words[:6])
+        r.font.name = FONT
+        r.font.size = Pt(14)
+        r.font.color.rgb = BLACK
+
+
+def _build_l34_writing_page(slide, brand_rgb: tuple, outline: BookOutline) -> None:
+    """L3/L4 SOP writing page: starters on top, independent writing lines below."""
+    topic = _l34_short_topic(outline)
+    _add_title(slide, "Writing", f"Write about {topic}.")
+    bc = RGBColor(*brand_rgb)
+    lvl = _level_num(getattr(outline, "level", "") or "")
+    example = _display_sentence_frame(outline)
+    sig = _frame_signature(example)
+    if sig == "will":
+        starters = [
+            f"I will {ANSWER_BLANK}.",
+            f"I will {ANSWER_BLANK} first.",
+            f"I will {ANSWER_BLANK} every day.",
+        ]
+    elif sig == "because":
+        starters = [
+            f"I think {ANSWER_BLANK}.",
+            f"It is {ANSWER_BLANK} because {ANSWER_BLANK}.",
+            f"I feel {ANSWER_BLANK} because {ANSWER_BLANK}.",
+        ]
+    elif sig == "there":
+        starters = [
+            f"There is {ANSWER_BLANK}.",
+            f"There are {ANSWER_BLANK}.",
+            f"I can see {ANSWER_BLANK}.",
+        ]
+    else:
+        starters = [
+            f"This story is about {ANSWER_BLANK}.",
+            f"First, {ANSWER_BLANK}.",
+            f"I think {ANSWER_BLANK}.",
+        ]
+    if lvl >= 4:
+        starters = starters[:2] + [f"My favorite part is {ANSWER_BLANK}."]
+
+    top = CONTENT_Y + 1.36
+    box = slide.shapes.add_shape(
+        MSO_SHAPE.ROUNDED_RECTANGLE,
+        Inches(CONTENT_X + 0.70), Inches(top),
+        Inches(CONTENT_W - 1.40), Inches(2.18),
+    )
+    box.adjustments[0] = 0.05
+    box.fill.solid()
+    box.fill.fore_color.rgb = RGBColor(0xFF, 0xF7, 0xE8)
+    box.line.color.rgb = bc
+    box.line.width = Pt(1.2)
+    box.shadow.inherit = False
+    tf = box.text_frame
+    tf.margin_left = tf.margin_right = Inches(0.28)
+    tf.margin_top = Inches(0.14)
+    tf.word_wrap = True
+    p = tf.paragraphs[0]
+    p.alignment = PP_ALIGN.LEFT
+    r = p.add_run()
+    r.text = "Use these sentence starters."
+    r.font.name = FONT
+    r.font.bold = True
+    r.font.size = Pt(15)
+    r.font.color.rgb = bc
+    if example:
+        p_ex = tf.add_paragraph()
+        p_ex.space_before = Pt(2)
+        p_ex.alignment = PP_ALIGN.LEFT
+        rr = p_ex.add_run()
+        rr.text = f"Example: {example}"
+        rr.font.name = FONT
+        rr.font.size = Pt(12.5)
+        rr.font.color.rgb = RGBColor(0x55, 0x55, 0x55)
+    for i, starter in enumerate(starters[:3]):
+        pi = tf.add_paragraph()
+        pi.space_before = Pt(5)
+        pi.alignment = PP_ALIGN.LEFT
+        _emit_with_underscore_lock(pi, f"{i + 1}. {starter}", 15, BLACK, bold=False)
+
+    hint = slide.shapes.add_textbox(
+        Inches(CONTENT_X + 0.78), Inches(top + 2.46),
+        Inches(CONTENT_W - 1.56), Inches(0.34),
+    )
+    hp = hint.text_frame.paragraphs[0]
+    hp.alignment = PP_ALIGN.LEFT
+    hr = hp.add_run()
+    hr.text = "Write 2-3 sentences."
+    hr.font.name = FONT
+    hr.font.size = Pt(14)
+    hr.font.bold = True
+    hr.font.color.rgb = bc
+
+    write_top = top + 2.92
+    write_bottom = CONTENT_Y + CONTENT_H - 0.44
+    write_box = slide.shapes.add_shape(
+        MSO_SHAPE.ROUNDED_RECTANGLE,
+        Inches(CONTENT_X + 0.70), Inches(write_top),
+        Inches(CONTENT_W - 1.40), Inches(write_bottom - write_top),
+    )
+    write_box.adjustments[0] = 0.04
+    write_box.fill.solid()
+    write_box.fill.fore_color.rgb = WHITE
+    write_box.line.color.rgb = RGBColor(0xD1, 0xD5, 0xDB)
+    write_box.line.width = Pt(1.0)
+    write_box.shadow.inherit = False
+    n_lines = 4 if lvl <= 3 else 5
+    line_left = CONTENT_X + 1.02
+    line_w = CONTENT_W - 2.04
+    usable_h = write_bottom - write_top - 0.40
+    step = usable_h / max(n_lines, 1)
+    for i in range(n_lines):
+        y = write_top + 0.34 + (i + 1) * step
+        _draw_writing_line(slide, line_left, y, line_w, RGBColor(0xAE, 0xBD, 0xD0), 1.1)
 
 
 def _build_color_say_page(slide, brand_rgb: tuple, data: dict, outline: BookOutline,
