@@ -11,6 +11,7 @@ from typing import Literal
 
 
 TextType = Literal["any", "fiction", "non-fiction"]
+AnswerType = Literal["closed", "open"]
 
 
 @dataclass(frozen=True)
@@ -28,6 +29,12 @@ class WorksheetActivity:
     max_level: int = 4
     text_type: TextType = "any"
     priority: int = 50
+    answer_type: AnswerType = "closed"
+    input_source: tuple[str, ...] = ()
+    required_assets: tuple[str, ...] = ()
+    validation_rules: tuple[str, ...] = ()
+    answer_key_format: str = ""
+    release_blockers: tuple[str, ...] = ()
     requires_unique_answer: bool = True
     optional: bool = False
 

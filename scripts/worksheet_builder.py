@@ -1053,6 +1053,9 @@ def _sanitize_reading_items(items: list[dict], *, preferred_kind: str | None = N
         if not ok:
             continue
         key = _reading_question_key(item.get("q", ""))
+        if kind == "mc":
+            opt_key = "|".join(_clean_text(o).lower() for o in (item.get("options") or []))
+            key = f"{key}|{opt_key}"
         if not key or key in seen:
             continue
         seen.add(key)
@@ -1313,6 +1316,17 @@ def _build_l34_vocab2(new_page, brand_rgb: tuple, data: dict,
     fills = data.get("fill_blanks") or []
     bank = data.get("word_bank") or []
     activity_codes = _l34_activity_order(outline, 2, seed=seed, include_optional=False)
+    core_words_for_type = [
+        str(p.get("word", "")).strip()
+        for p in (pairs or [])
+        if str(p.get("word", "")).strip()
+    ] or [str(w).strip() for w in (bank or []) if str(w).strip()]
+    has_phrase_vocab = any(" " in w for w in core_words_for_type)
+    if has_phrase_vocab:
+        phrase_first = ["vocab_multi_word_cloze", "vocab_contextual_word_bank_cloze"]
+        activity_codes = phrase_first + [c for c in activity_codes if c not in phrase_first]
+    else:
+        activity_codes = [c for c in activity_codes if c != "vocab_multi_word_cloze"]
 
     def _do_context_fill() -> bool:
         code = "vocab_multi_word_cloze" if any(" " in str(w).strip() for w in bank) else "vocab_contextual_word_bank_cloze"
@@ -2039,19 +2053,34 @@ def _reading_short_answer_items(reading_text: str, *, max_n: int = 5) -> list[di
         text = _clean_text(sent).rstrip(".!?")
         if not text or text.endswith("?"):
             return None
-        subj_re = r"(i|we|they|he|she|it|[A-Z][a-z]+|(?:A|An|The) [a-z]+)"
+        subj_re = r"(i|we|they|he|she|it|[A-Z][a-z]+|(?:A|An|The|Some|Many|Different) [a-z]+)"
+        plural_subjects = {"we", "they", "people", "children", "kids", "students", "families", "animals", "jobs", "some jobs"}
+
+        def _is_plural_subject(subj: str) -> bool:
+            low = (subj or "").strip().lower()
+            if low in plural_subjects:
+                return True
+            m = re.match(r"^(some|many|different)\s+([a-z]+)$", low)
+            return bool(m and (m.group(2).endswith("s") or m.group(2) in plural_subjects))
+
+        def _student_subject(subj: str) -> str:
+            low = (subj or "").strip().lower()
+            if low in plural_subjects or re.match(r"^(a|an|the|some|many|different)\s+", subj or "", flags=re.I):
+                return low
+            return subj
+
         wear_match = re.match(rf"^{subj_re}\s+(wear|wears)\s+(.+?)\s+for\s+(.+?)$", text, flags=re.I)
         if wear_match:
             subj, verb, obj, context = wear_match.groups()
             cue = obj.split(" and ")[0].split(",")[0].strip()
-            plural_subjects = {"we", "they", "people", "children", "kids", "students", "families", "animals", "jobs", "some jobs"}
-            aux = "do" if subj.lower() in {"i"} | plural_subjects else "does"
-            subj_text = subj.lower() if subj.lower() in plural_subjects or re.match(r"^(a|an|the)\s+", subj, flags=re.I) else subj
+            aux = "do" if subj.lower() == "i" or _is_plural_subject(subj) else "does"
+            subj_text = _student_subject(subj)
             return f"What {aux} {subj_text} wear for {context}? Clue: {cue}.", obj
         patterns = [
-            (r"^(people|children|kids|students|families|animals|jobs|some jobs)\s+(.+?)$", "What do {subj} do?", "{rest}"),
-            (rf"^{subj_re}\s+(wear|wears|use|uses|need|needs|have|has|make|makes|choose|chooses|keep|keeps|help|helps|bring|brings|live|lives|go|goes|see|sees|like|likes)\s+(.+?)$", "What does {subj} {verb_base}?", "{obj}"),
             (r"^(.+?)\s+(is|are|was|were)\s+(.+?)$", "What {be} {subj}?", "{obj}"),
+            (rf"^{subj_re}\s+(wear|wears|use|uses|need|needs|have|has|make|makes|choose|chooses|keep|keeps|help|helps|bring|brings|live|lives|go|goes|see|sees|like|likes)\s+(.+?)$", "What does {subj} {verb_base}?", "{obj}"),
+            (r"^((?:some|many|different)\s+[a-z]+|families|people|children|kids|students)\s+(.+?)$", "What do {subj} do?", "{rest}"),
+            (r"^(people|children|kids|students|families|animals|jobs|some jobs)\s+(.+?)$", "What do {subj} do?", "{rest}"),
             (r"^(.+?)\s+can\s+(.+?)$", "What can {subj} do?", "{obj}"),
             (r"^(.+?)\s+will\s+(.+?)$", "What will {subj} do?", "{obj}"),
         ]
@@ -2062,23 +2091,28 @@ def _reading_short_answer_items(reading_text: str, *, max_n: int = 5) -> list[di
             groups = m.groups()
             if len(groups) == 2:
                 subj, obj = groups
+                subj = _student_subject(subj)
                 data = {"subj": subj, "obj": obj, "rest": obj, "be": ""}
             elif len(groups) == 3:
                 subj, verb, obj = groups
-                if re.match(r"^(a|an|the)\s+", subj, flags=re.I):
-                    subj = subj.lower()
+                qtpl_use = qtpl
+                atpl_use = atpl
+                subj = _student_subject(subj)
                 verb_base = {
                     "wears": "wear", "uses": "use", "needs": "need", "has": "have",
                     "makes": "make", "chooses": "choose", "keeps": "keep", "helps": "help",
                     "brings": "bring", "lives": "live", "goes": "go", "sees": "see",
                     "likes": "like",
                 }.get(verb.lower(), verb.lower())
+                if verb.lower() not in {"is", "are", "was", "were"} and _is_plural_subject(subj):
+                    qtpl_use = "What do {subj} do?"
+                    atpl_use = "{rest}"
                 data = {"subj": subj, "verb": verb, "verb_base": verb_base, "obj": obj,
                         "rest": f"{verb} {obj}", "be": verb}
             else:
                 continue
-            q = qtpl.format(**data)
-            a = atpl.format(**data)
+            q = (qtpl_use if len(groups) == 3 else qtpl).format(**data)
+            a = (atpl_use if len(groups) == 3 else atpl).format(**data)
             if len(a.split()) <= 12:
                 return q, _article_phrase(a)
         return None
@@ -2533,7 +2567,11 @@ def build_worksheet(
         if lvl_n in (3, 4):
             page1_q = []
             page1_code = ""
-            for code in _l34_activity_order(outline, 5, seed=_ws_seed(outline) // 11):
+            try:
+                book_no_seed = int("".join(ch for ch in str(getattr(outline, "book_number", "") or "") if ch.isdigit()) or "0")
+            except Exception:
+                book_no_seed = 0
+            for code in _l34_activity_order(outline, 5, seed=(_ws_seed(outline) // 11) + book_no_seed):
                 if code == "reading_supported_sentence_choice":
                     candidate = _reading_mc_sentence_items(reading_text, max_n=5)
                     candidate = _sanitize_reading_items(candidate, preferred_kind="mc", max_n=5)
@@ -6093,10 +6131,16 @@ _KID_DICT: dict[str, str] = {
     "chef":      "a person whose job is to cook food",
     "firefighter": "a person who helps stop fires",
     "builder":   "a person who builds or fixes buildings",
+    "uniform":   "special clothes worn by people in the same group or job",
+    "suit":      "a jacket and pants or skirt worn for smart clothes",
     "helmet":    "a hard hat that protects your head",
     "apron":     "clothing worn over the front of the body to keep clean",
     "boots":     "strong shoes that cover the feet and ankles",
     "hard hat":  "a strong hat that protects a worker's head",
+    "look different": "to not look the same",
+    "go on walks": "to walk outside for fun or exercise",
+    "far apart": "with a long distance between people or places",
+    "video call": "a call where people can see and hear each other",
 }
 
 
