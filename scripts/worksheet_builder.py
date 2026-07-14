@@ -46,6 +46,7 @@ from text_format import (
     smart_format_answer,
     is_sentence_like,
 )
+from worksheet_activity_policy import instruction as _ws_activity_instruction
 
 
 # ---------- 几何尺寸 ----------
@@ -154,6 +155,20 @@ def _level_num(level: str) -> int:
         return int(digits) if digits else 5
     except ValueError:
         return 5
+
+
+def _record_l34_activity(outline: Optional[BookOutline], page: int, code: str) -> None:
+    """Record the selected L3/L4 worksheet activity for QA/TG-only workflows."""
+    if outline is None:
+        return
+    try:
+        activity_map = getattr(outline, "_worksheet_activity_types", None)
+        if not isinstance(activity_map, dict):
+            activity_map = {}
+            setattr(outline, "_worksheet_activity_types", activity_map)
+        activity_map[page] = code
+    except Exception:
+        return
 
 
 # ============================================================
@@ -1183,7 +1198,8 @@ def _cloze_mc_items(fills: list[dict], word_bank: list[str], max_n: int = 4) -> 
 
 def _build_l34_vocab2(new_page, brand_rgb: tuple, data: dict,
                       images: Optional[list[Path]], seed: int,
-                      lvl_n: int = 3) -> None:
+                      lvl_n: int = 3,
+                      outline: Optional[BookOutline] = None) -> None:
     """L3/L4 vocabulary application page with deterministic activity rotation."""
     pairs = data.get("match_pairs") or []
     fills = data.get("fill_blanks") or []
@@ -1192,6 +1208,8 @@ def _build_l34_vocab2(new_page, brand_rgb: tuple, data: dict,
 
     def _do_context_fill() -> bool:
         if fills:
+            code = "vocab_multi_word_cloze" if any(" " in str(w).strip() for w in bank) else "vocab_contextual_word_bank_cloze"
+            _record_l34_activity(outline, 2, code)
             _build_p2_fill(new_page(), brand_rgb, fills, bank, images)
             return True
         return False
@@ -1199,8 +1217,9 @@ def _build_l34_vocab2(new_page, brand_rgb: tuple, data: dict,
     def _do_clue_choice() -> bool:
         riddles = _riddle_mc_items(pairs, max_n=4)
         if len(riddles) >= 3:
+            _record_l34_activity(outline, 2, "vocab_contextual_choice")
             _build_mcq_page(new_page(), brand_rgb, "Vocabulary",
-                            "Read each clue and circle the correct word.",
+                            _ws_activity_instruction("vocab_contextual_choice"),
                             riddles, answer_paren=False)
             return True
         return False
@@ -1208,13 +1227,15 @@ def _build_l34_vocab2(new_page, brand_rgb: tuple, data: dict,
     def _do_write_word() -> bool:
         items = _word_fill_meaning_items(pairs, max_n=4)
         if len(items) >= 3:
+            _record_l34_activity(outline, 2, "vocab_contextual_clue_write")
             _build_word_fill_page(new_page(), brand_rgb, items, "Vocabulary",
-                                  "Read the meaning and write the word.")
+                                  _ws_activity_instruction("vocab_contextual_clue_write"))
             return True
         return False
 
     def _do_definition_match() -> bool:
         if len(pairs) >= 4:
+            _record_l34_activity(outline, 2, "vocab_word_definition_matching")
             _build_p1_match(new_page(), brand_rgb, pairs, images or [])
             return True
         return False
@@ -1225,6 +1246,7 @@ def _build_l34_vocab2(new_page, brand_rgb: tuple, data: dict,
     for offset in range(len(choices)):
         if choices[(activity + offset) % len(choices)]():
             return
+    _record_l34_activity(outline, 2, "vocab_contextual_word_bank_cloze")
     _build_p2_fill(new_page(), brand_rgb, fills, bank, images)
 
 
@@ -1239,9 +1261,10 @@ def _build_l34_sentence2(new_page, brand_rgb: tuple, outline: BookOutline,
 
     def _do_guided_write() -> bool:
         if frame_copy:
+            _record_l34_activity(outline, 4, "sentence_guided_writing")
             _build_prompt_line_page(
                 new_page(), brand_rgb, frame_copy, "Sentences",
-                f"Write your own sentences. Follow the example: {_display_sentence_frame(outline)}",
+                f"{_ws_activity_instruction('sentence_guided_writing')} Follow the example: {_display_sentence_frame(outline)}",
                 prompt_key="prompt",
                 fallback=fallback,
             )
@@ -1250,8 +1273,9 @@ def _build_l34_sentence2(new_page, brand_rgb: tuple, outline: BookOutline,
 
     def _do_choose_word() -> bool:
         if len(cloze_mc) >= 3:
+            _record_l34_activity(outline, 4, "sentence_grammar_word_cloze")
             _build_mcq_page(new_page(), brand_rgb, "Sentences",
-                            "Choose the correct words to complete each sentence.",
+                            _ws_activity_instruction("sentence_grammar_word_cloze"),
                             cloze_mc)
             return True
         return False
@@ -1269,9 +1293,10 @@ def _build_l34_sentence2(new_page, brand_rgb: tuple, outline: BookOutline,
                 if wrong and wrong.lower() != correct.lower():
                     items.append({"prompt": f"Correct the sentence: {wrong}"})
             if len(items) >= 3:
+                _record_l34_activity(outline, 4, "sentence_grammar_correction")
                 _build_prompt_line_page(
                     new_page(), brand_rgb, items, "Sentences",
-                    "Correct each sentence.",
+                    _ws_activity_instruction("sentence_grammar_correction"),
                     prompt_key="prompt",
                     fallback=fallback,
                 )
@@ -1790,7 +1815,7 @@ def _reading_cloze_items(reading_text: str, exclude: set[str] | None = None,
         prompt = re.sub(pattern, ANSWER_BLANK, sent, count=1)
         if prompt == sent:
             continue
-        q = f"Complete the sentence: {prompt}"
+        q = f"Complete the text summary: {prompt}"
         if not q.rstrip().endswith((".", "!", "?", "\"", "”")):
             q += "."
         key = _reading_question_key(q)
@@ -2090,6 +2115,8 @@ def build_worksheet(
     # ===== 2 词汇页（分级选型；学什么考什么）=====
     # 词汇页①：L3/L4 按 SOP 固定为理解页，优先图文/词义匹配，不再与 P2 连续做拼写题。
     _build_p1_match(new_page(), brand_rgb, data["match_pairs"], images)
+    if lvl_n in (3, 4):
+        _record_l34_activity(outline, 1, "vocab_word_definition_matching")
     # 词汇页② 分级：L0-2 看义/首字母写词；L3 谜语四选一；L4 原文挖空；L5-6 构词补全
     if band == "l02":
         wf = _word_fill_meaning_items(data["match_pairs"], max_n=6)
@@ -2106,7 +2133,8 @@ def build_worksheet(
         else:
             _build_p2_fill(new_page(), brand_rgb, data["fill_blanks"], data["word_bank"], images)
     else:  # L3/L4 词汇②：跨书轮换题型，避免每本都只做语境填空。
-        _build_l34_vocab2(new_page, brand_rgb, data, images, _ws_seed(outline), lvl_n)
+        _build_l34_vocab2(new_page, brand_rgb, data, images, _ws_seed(outline), lvl_n,
+                          outline=outline)
 
     # ===== 2 句型页（考点 = 本课语法焦点；学什么考什么）=====
     # 时态自适应（用户拍板 2026-06-06）：现在时为主的文本（如非虚构科普）→ 现在时考点
@@ -2125,13 +2153,15 @@ def build_worksheet(
         if frame_fills:
             frame_mcs = _official_sentence_frame_mc_items(outline, frame_fills, frame_bank, max_n=4)
             if frame_mcs:
+                _record_l34_activity(outline, 3, "sentence_target_pattern_choice")
                 _build_p3_sentence(
                     new_page(), brand_rgb, frame_mcs, images,
                     show_images=(sentence_image_mode != "none"),
-                    subtitle=f"Tick (\u2713) the sentence that matches the example: {_display_sentence_frame(outline)}",
+                    subtitle=f"{_ws_activity_instruction('sentence_target_pattern_choice')} Example: {_display_sentence_frame(outline)}",
                     fallback=sent_fb,
                 )
             else:
+                _record_l34_activity(outline, 3, "sentence_complete_frame")
                 _build_p2_fill(
                     new_page(), brand_rgb, frame_fills, frame_bank, images,
                     title="Sentences",
@@ -2286,12 +2316,14 @@ def build_worksheet(
                 page1_q = _reading_mc_sentence_items(reading_text, max_n=5)
                 if len(page1_q) < 4:
                     page1_q = _mixed_tf_items(reading_text, max_n=5)
-                page1_subtitle = "Read the passage. Circle the correct sentence."
+                _record_l34_activity(outline, 5, "reading_supported_sentence_choice")
+                page1_subtitle = _ws_activity_instruction("reading_supported_sentence_choice")
             else:
                 page1_q = _mixed_tf_items(reading_text, max_n=5)
                 if len(page1_q) < 4:
                     page1_q = _fill_same_kind_reading_questions(rq_uni[:5], "tf", reading_text, max_n=5)
-                page1_subtitle = "Read the passage. Write T (true) or F (false)."
+                _record_l34_activity(outline, 5, "reading_true_false_literal")
+                page1_subtitle = _ws_activity_instruction("reading_true_false_literal")
             used_q = {_reading_question_key(q.get("q") or "") for q in page1_q}
             is_nonfic_reading = "non" in (getattr(outline, "fiction_type", "") or "").lower()
             sequence_events = _reading_sequence_events(reading_text, max_n=5)
@@ -2299,22 +2331,28 @@ def build_worksheet(
                                  and reading_variant == 2)
             if use_sequence_page:
                 page2_q = []
+                _record_l34_activity(outline, 6, "reading_sequence_ordering")
                 page2_subtitle = ""
             elif lvl_n >= 4 and reading_variant == 0:
                 page2_q = _reading_text_correction_items(reading_text, max_n=4)
-                page2_subtitle = "Correct the wrong sentences."
+                _record_l34_activity(outline, 6, "reading_text_based_correction")
+                page2_subtitle = _ws_activity_instruction("reading_text_based_correction")
             elif lvl_n >= 4 and reading_variant == 1:
                 page2_q = _reading_cause_effect_items(reading_text, max_n=4)
-                page2_subtitle = "Write what happens next."
+                _record_l34_activity(outline, 6, "reading_cause_effect")
+                page2_subtitle = _ws_activity_instruction("reading_cause_effect")
             elif reading_variant == 2:
                 page2_q = _reading_short_answer_items(reading_text, max_n=5)
-                page2_subtitle = "Read the passage. Write short answers."
+                _record_l34_activity(outline, 6, "reading_short_answer")
+                page2_subtitle = _ws_activity_instruction("reading_short_answer")
             else:
                 page2_q = _reading_cloze_items(reading_text, used_q, max_n=5)
-                page2_subtitle = "Read the passage. Complete the sentences."
+                _record_l34_activity(outline, 6, "reading_summary_cloze")
+                page2_subtitle = _ws_activity_instruction("reading_summary_cloze")
             if len(page2_q) < 3:
                 page2_q = _reading_ext_items(outline, data, used_q, max_n=5)
-                page2_subtitle = "Read the passage and answer the questions."
+                _record_l34_activity(outline, 6, "reading_short_answer")
+                page2_subtitle = _ws_activity_instruction("reading_short_answer")
             _build_reading_page(
                 new_page(), brand_rgb, reading_text, page1_q,
                 subtitle=page1_subtitle,
