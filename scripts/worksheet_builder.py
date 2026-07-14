@@ -486,7 +486,7 @@ def _official_sentence_frame_mc_items(
         if wrong_ans:
             wrong = re.sub(r"_{3,}", wrong_ans, prompt, count=1)
         else:
-            wrong = _false_tf_variant(correct).rstrip(".!?") + "."
+            continue
         if not wrong or wrong.lower() == correct.lower():
             continue
         key = correct.lower()
@@ -948,10 +948,82 @@ def _word_fill_meaning_items(pairs: list[dict], max_n: int = 5) -> list[dict]:
     out: list[dict] = []
     for p in pairs[:max_n]:
         w = str(p.get("word", "")).strip()
-        if not w:
-            continue
         d = str(p.get("def", "")).strip()
-        out.append({"clue": d or "Write the word.", "answer": w, "hint": _first_letter_mask(w)})
+        if not w or " " in w or _bad_placeholder_text(d):
+            continue
+        out.append({"clue": d, "answer": w, "hint": _first_letter_mask(w)})
+    return out
+
+
+def _bad_placeholder_text(text: str) -> bool:
+    low = str(text or "").strip().lower()
+    if not low:
+        return True
+    bad = (
+        "placeholder", "todo", "word from the story", "meaning of ",
+        "look back at the book", "text does not say this", "it is not true that",
+        "copied exactly", "ai generated",
+    )
+    return any(x in low for x in bad)
+
+
+def _valid_definition_pair(pair: dict) -> bool:
+    word = _clean_text(pair.get("word", ""))
+    definition = _clean_text(pair.get("def", ""))
+    if not word or not definition or _bad_placeholder_text(definition):
+        return False
+    return word.lower() not in {x.lower() for x in re.findall(r"[A-Za-z][A-Za-z'-]*", definition)}
+
+
+def _valid_mc_item(item: dict, *, min_options: int = 2, max_options: int = 4) -> bool:
+    q = _clean_text(item.get("q", ""))
+    opts = [_clean_text(o) for o in (item.get("options") or [])[:max_options]]
+    opts = [o for o in opts if o]
+    if not q or _bad_placeholder_text(q) or len(opts) < min_options:
+        return False
+    if len({o.lower() for o in opts}) != len(opts):
+        return False
+    try:
+        correct = int(item.get("correct", 0))
+    except Exception:
+        return False
+    return 0 <= correct < len(opts)
+
+
+def _valid_short_item(item: dict) -> bool:
+    q = _clean_text(item.get("q", ""))
+    if not q or _bad_placeholder_text(q):
+        return False
+    if q.lower().startswith(("what ", "who ", "where ", "when ", "why ", "how ")):
+        return q.endswith("?")
+    return True
+
+
+def _valid_tf_item(item: dict) -> bool:
+    q = _clean_text(item.get("q", ""))
+    return bool(q and not _bad_placeholder_text(q) and q.endswith("."))
+
+
+def _sanitize_reading_items(items: list[dict], *, preferred_kind: str | None = None,
+                            max_n: int = 5) -> list[dict]:
+    out: list[dict] = []
+    seen: set[str] = set()
+    for item in items or []:
+        kind = item.get("kind", preferred_kind or "")
+        ok = (
+            _valid_mc_item(item, min_options=2) if kind == "mc"
+            else _valid_tf_item(item) if kind == "tf"
+            else _valid_short_item(item)
+        )
+        if not ok:
+            continue
+        key = _reading_question_key(item.get("q", ""))
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        out.append(item)
+        if len(out) >= max_n:
+            break
     return out
 
 
@@ -1057,26 +1129,27 @@ def _clean_vocab_clue_kind(word: str) -> str:
 def _riddle_mc_items(pairs: list[dict], max_n: int = 4) -> list[dict]:
     """L3 词汇②：四选一谜语猜词。stem=释义，options=正确词 + 同表干扰词。"""
     import random as _rnd
-    words = [str(p.get("word", "")).strip() for p in pairs if str(p.get("word", "")).strip()]
+    clean_pairs = [p for p in (pairs or []) if _valid_definition_pair(p)]
+    words = [str(p.get("word", "")).strip() for p in clean_pairs if str(p.get("word", "")).strip()]
     out: list[dict] = []
-    for p in pairs:
+    for p in clean_pairs:
         w = str(p.get("word", "")).strip()
         d = str(p.get("def", "")).strip()
-        if not w or not d:
-            continue
         distractors = [x for x in words if x.lower() != w.lower()]
         rnd = _rnd.Random(hash(w) & 0xFFFFFFFF)
         rnd.shuffle(distractors)
-        opts = [w] + distractors[:3]
-        if len(opts) < 3:
+        opts = [w] + distractors[:2]
+        if len(opts) < 2:
             continue
         rnd.shuffle(opts)
-        out.append({
+        item = {
             "kind": "mc",
             "q": f"Which word means: {d}?",
             "options": opts,
             "correct": opts.index(w),
-        })
+        }
+        if _valid_mc_item(item, min_options=2):
+            out.append(item)
         if len(out) >= max_n:
             break
     return out
@@ -1680,14 +1753,19 @@ def _fill_same_kind_reading_questions(
         if kind == "tf":
             q = sent + "."
             if idx % 2 == 1:
-                q = "It is not true that " + sent[0].lower() + sent[1:] + "."
+                q = _false_tf_variant(sent)
+                if not q:
+                    continue
             out.append({"kind": "tf", "q": q})
             seen.add(q.lower())
         elif kind == "mc":
+            wrong = _false_tf_variant(sent).rstrip(".!?")
+            if not wrong or wrong.lower() == sent.lower():
+                continue
             out.append({
                 "kind": "mc",
                 "q": "Which sentence is in the story?",
-                "options": [sent + ".", "Mia goes to the park.", "Mia has no plan."],
+                "options": [sent + ".", wrong + "."],
                 "correct": 0,
             })
             seen.add("which sentence is in the story?")
@@ -1739,9 +1817,6 @@ def _false_tf_variant(sentence: str) -> str:
     for pat, repl in replacements:
         if re.search(pat, sentence, flags=re.I):
             return re.sub(pat, repl, sentence, count=1, flags=re.I).rstrip(".!?") + "."
-    core = sentence.rstrip(".!?").strip()
-    if core:
-        return "It is not true that " + core[0].lower() + core[1:] + "."
     return ""
 
 
@@ -1765,6 +1840,9 @@ def _mixed_tf_items(reading_text: str, *, max_n: int = 4) -> list[dict]:
         for s in _split_story_sentences(story)
         if 18 <= len(s.strip()) <= 100
     ]
+    if len(sents) > max_n:
+        idxs = sorted({round(i * (len(sents) - 1) / (max_n - 1)) for i in range(max_n)})
+        sents = [sents[i] for i in idxs]
     out: list[dict] = []
     seen: set[str] = set()
     for idx, sent in enumerate(sents):
@@ -1775,6 +1853,8 @@ def _mixed_tf_items(reading_text: str, *, max_n: int = 4) -> list[dict]:
             ans = True
         else:
             q = _false_tf_variant(sent)
+            if not q:
+                continue
             ans = False
         key = q.lower()
         if q and key not in seen:
@@ -1842,14 +1922,7 @@ def _reading_mc_sentence_items(reading_text: str, *, max_n: int = 5) -> list[dic
         false_one = _false_tf_variant(sent).rstrip(".!?")
         if not false_one or false_one.lower() == sent.lower():
             continue
-        false_two = ""
-        for other in reversed(sents):
-            if other.lower() != sent.lower() and other.lower() != false_one.lower():
-                false_two = other
-                break
-        if not false_two:
-            false_two = "The text does not say this."
-        opts = [sent + ".", false_one + ".", false_two.rstrip(".!?") + "."]
+        opts = [sent + ".", false_one + "."]
         key = sent.lower()
         if key in seen:
             continue
@@ -1858,12 +1931,14 @@ def _reading_mc_sentence_items(reading_text: str, *, max_n: int = 5) -> list[dic
         rnd = random.Random(hash(sent) & 0xFFFFFFFF)
         correct = opts[0]
         rnd.shuffle(opts)
-        out.append({
+        item = {
             "kind": "mc",
             "q": "Which sentence matches the passage?",
             "options": opts,
             "correct": opts.index(correct),
-        })
+        }
+        if _valid_mc_item(item, min_options=2):
+            out.append(item)
     return out[:max_n]
 
 
@@ -2314,14 +2389,18 @@ def build_worksheet(
             reading_variant = (_ws_seed(outline) // 11) % 3
             if reading_variant == 1:
                 page1_q = _reading_mc_sentence_items(reading_text, max_n=5)
+                page1_q = _sanitize_reading_items(page1_q, preferred_kind="mc", max_n=5)
                 if len(page1_q) < 4:
                     page1_q = _mixed_tf_items(reading_text, max_n=5)
+                    page1_q = _sanitize_reading_items(page1_q, preferred_kind="tf", max_n=5)
                 _record_l34_activity(outline, 5, "reading_supported_sentence_choice")
                 page1_subtitle = _ws_activity_instruction("reading_supported_sentence_choice")
             else:
                 page1_q = _mixed_tf_items(reading_text, max_n=5)
+                page1_q = _sanitize_reading_items(page1_q, preferred_kind="tf", max_n=5)
                 if len(page1_q) < 4:
                     page1_q = _fill_same_kind_reading_questions(rq_uni[:5], "tf", reading_text, max_n=5)
+                    page1_q = _sanitize_reading_items(page1_q, preferred_kind="tf", max_n=5)
                 _record_l34_activity(outline, 5, "reading_true_false_literal")
                 page1_subtitle = _ws_activity_instruction("reading_true_false_literal")
             used_q = {_reading_question_key(q.get("q") or "") for q in page1_q}
@@ -2335,22 +2414,27 @@ def build_worksheet(
                 page2_subtitle = ""
             elif lvl_n >= 4 and reading_variant == 0:
                 page2_q = _reading_text_correction_items(reading_text, max_n=4)
+                page2_q = _sanitize_reading_items(page2_q, preferred_kind="short", max_n=4)
                 _record_l34_activity(outline, 6, "reading_text_based_correction")
                 page2_subtitle = _ws_activity_instruction("reading_text_based_correction")
             elif lvl_n >= 4 and reading_variant == 1:
                 page2_q = _reading_cause_effect_items(reading_text, max_n=4)
+                page2_q = _sanitize_reading_items(page2_q, preferred_kind="short", max_n=4)
                 _record_l34_activity(outline, 6, "reading_cause_effect")
                 page2_subtitle = _ws_activity_instruction("reading_cause_effect")
             elif reading_variant == 2:
                 page2_q = _reading_short_answer_items(reading_text, max_n=5)
+                page2_q = _sanitize_reading_items(page2_q, preferred_kind="short", max_n=5)
                 _record_l34_activity(outline, 6, "reading_short_answer")
                 page2_subtitle = _ws_activity_instruction("reading_short_answer")
             else:
-                page2_q = _reading_cloze_items(reading_text, used_q, max_n=5)
+                page2_q = _reading_cloze_items(reading_text, used_q, max_n=4)
+                page2_q = _sanitize_reading_items(page2_q, preferred_kind="short", max_n=4)
                 _record_l34_activity(outline, 6, "reading_summary_cloze")
                 page2_subtitle = _ws_activity_instruction("reading_summary_cloze")
-            if len(page2_q) < 3:
-                page2_q = _reading_ext_items(outline, data, used_q, max_n=5)
+            if len(page2_q) < 4:
+                page2_q = _reading_short_answer_items(reading_text, max_n=5)
+                page2_q = _sanitize_reading_items(page2_q, preferred_kind="short", max_n=5)
                 _record_l34_activity(outline, 6, "reading_short_answer")
                 page2_subtitle = _ws_activity_instruction("reading_short_answer")
             _build_reading_page(
@@ -3254,6 +3338,12 @@ def _flow_lines(slide, items: list[str], area_top: float, area_h: float,
     """
     if not items:
         return
+    while font_pt > 11:
+        line_h_try = font_pt / 72.0 * 1.20
+        heights_try = [_est_lines(t, box_w, font_pt) * line_h_try + 0.06 for t in items]
+        if sum(heights_try) + gap_min * max(0, len(items) - 1) <= area_h:
+            break
+        font_pt -= 0.5
     line_h = font_pt / 72.0 * 1.20
     pad = 0.06
     heights = [_est_lines(t, box_w, font_pt) * line_h + pad for t in items]
@@ -5196,11 +5286,11 @@ def _build_l34_graphic_organizer_page(slide, brand_rgb: tuple, data: dict,
 
     if is_nonfic or mode == "l3bubble":
         center = "Topic"
-        labels = ["Fact 1", "Fact 2", "New Word", "I learned"]
+        labels = ["Topic", "Fact 1", "Fact 2", "Example"]
         prompts = [
             _l34_short_topic(outline),
             "",
-            words[0] if words else "",
+            "",
             "",
         ]
         blank_slots = {1, 2, 3}
@@ -5230,11 +5320,11 @@ def _build_l34_graphic_organizer_page(slide, brand_rgb: tuple, data: dict,
         blank_slots = {1, 2, 3}
     else:
         center = "Story"
-        labels = ["Problem", "Action", "Important Word", "Result"]
+        labels = ["Beginning", "Middle", "Action", "End"]
         prompts = [
             story_bits[0] if story_bits else "",
             "",
-            words[0] if words else "",
+            "",
             "",
         ]
         blank_slots = {1, 2, 3}
@@ -5279,7 +5369,7 @@ def _build_l34_graphic_organizer_page(slide, brand_rgb: tuple, data: dict,
         p2 = tf.add_paragraph()
         p2.alignment = PP_ALIGN.LEFT
         p2.space_before = Pt(8)
-        p2.text = prompts[i] if i < len(prompts) and prompts[i] else "Look back at the book."
+        p2.text = prompts[i] if i < len(prompts) and prompts[i] else ""
         for rr in p2.runs:
             rr.font.name = FONT
             rr.font.size = Pt(12.5)
@@ -5342,7 +5432,14 @@ def _build_l34_writing_page(slide, brand_rgb: tuple, outline: BookOutline) -> No
     lvl = _level_num(getattr(outline, "level", "") or "")
     example = _display_sentence_frame(outline)
     sig = _frame_signature(example)
-    if sig == "will":
+    is_nonfic = "non" in (getattr(outline, "fiction_type", "") or "").lower()
+    if is_nonfic:
+        starters = [
+            f"The topic is {ANSWER_BLANK}.",
+            f"One fact is {ANSWER_BLANK}.",
+            f"Another fact is {ANSWER_BLANK}.",
+        ]
+    elif sig == "will":
         starters = [
             f"I will {ANSWER_BLANK}.",
             f"I will {ANSWER_BLANK} first.",
@@ -5362,12 +5459,12 @@ def _build_l34_writing_page(slide, brand_rgb: tuple, outline: BookOutline) -> No
         ]
     else:
         starters = [
-            f"This story is about {ANSWER_BLANK}.",
             f"First, {ANSWER_BLANK}.",
-            f"I think {ANSWER_BLANK}.",
+            f"Then, {ANSWER_BLANK}.",
+            f"At the end, {ANSWER_BLANK}.",
         ]
-    if lvl >= 4:
-        starters = starters[:2] + [f"My favorite part is {ANSWER_BLANK}."]
+    if lvl >= 4 and not is_nonfic and sig not in {"will", "there"}:
+        starters = starters[:2] + [f"At the end, {ANSWER_BLANK} because {ANSWER_BLANK}."]
 
     top = CONTENT_Y + 1.36
     box = slide.shapes.add_shape(
