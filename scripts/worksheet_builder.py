@@ -1857,6 +1857,15 @@ def _false_tf_variant(sentence: str) -> str:
         (r"\bcold days\b", "hot days"),
         (r"\byellow leaves and fruits\b", "green leaves and flowers"),
         (r"\bwhite snow\b", "hot sun"),
+        (r"\bwhite coat\b", "red coat"),
+        (r"\bhospital\b", "school"),
+        (r"\bkitchen\b", "park"),
+        (r"\bhat and an apron\b", "helmet and boots"),
+        (r"\bhelmet and boots\b", "hat and an apron"),
+        (r"\bstrong boots\b", "soft slippers"),
+        (r"\bon the farm\b", "in the hospital"),
+        (r"\bin the office\b", "on the farm"),
+        (r"\bwork safely\b", "work slowly"),
         (r"\bhide and sleep\b", "come out and play"),
         (r"\bswim and have fun\b", "hide and sleep"),
         (r"\bspring\b", "winter"),
@@ -1876,6 +1885,7 @@ def _false_tf_variant(sentence: str) -> str:
         (r"\bhome\b", "school"),
         (r"\bwear\b", "find"),
         (r"\bwears\b", "finds"),
+        (r"\bvery different\b", "the same"),
         (r"\bdifferent\b", "the same"),
         (r"\bclean\b", "dirty"),
         (r"\bsafe\b", "unsafe"),
@@ -1993,6 +2003,38 @@ def _reading_mc_sentence_items(reading_text: str, *, max_n: int = 5) -> list[dic
     ]
     out: list[dict] = []
     seen: set[str] = set()
+
+    def _fact_choice_stem(sentence: str) -> str:
+        """Make Page 5 stems specific enough that MC items do not look duplicated."""
+        low = sentence.lower()
+        subject_match = re.match(
+            r"^((?:A|An|The|Some|Many|Different)\s+[A-Za-z]+|[A-Z][a-z]+(?:\s+and\s+[A-Z][a-z]+)?|[A-Za-z]+s)\b",
+            sentence,
+        )
+        if subject_match:
+            subject = subject_match.group(1).strip().lower()
+            if subject not in {"this", "that", "these", "those", "their"}:
+                return f"Choose the fact about {subject}."
+        topic_rules = [
+            (("wear", "uniform", "helmet", "boots", "suit", "clothes"), "clothes"),
+            (("worker", "work", "job", "doctor", "chef", "farmer", "firefighter"), "work"),
+            (("family", "families", "parents", "children"), "families"),
+            (("school", "class", "student", "teacher"), "school"),
+            (("home", "room", "house"), "home"),
+            (("plan", "first", "next", "then", "finally", "every day"), "the plan"),
+            (("animal", "animals", "live", "eat"), "animals"),
+            (("place", "city", "country", "world"), "places"),
+        ]
+        for keys, topic in topic_rules:
+            if any(k in low for k in keys):
+                return f"Choose the fact about {topic}."
+        m = re.match(r"^(A|An|The|Some|Many|Different)?\s*([A-Z][a-z]+|[a-z]+)", sentence)
+        if m:
+            raw = " ".join(x for x in m.groups() if x).strip().lower()
+            if raw and raw not in {"a", "an", "the", "some", "many", "different"}:
+                return f"Choose the fact about {raw}."
+        return "Choose the correct fact."
+
     for sent in sents:
         if len(out) >= max_n:
             break
@@ -2010,7 +2052,7 @@ def _reading_mc_sentence_items(reading_text: str, *, max_n: int = 5) -> list[dic
         rnd.shuffle(opts)
         item = {
             "kind": "mc",
-            "q": "Which sentence matches the passage?",
+            "q": _fact_choice_stem(sent),
             "options": opts,
             "correct": opts.index(correct),
         }
@@ -2054,18 +2096,23 @@ def _reading_short_answer_items(reading_text: str, *, max_n: int = 5) -> list[di
         if not text or text.endswith("?"):
             return None
         subj_re = r"(i|we|they|he|she|it|[A-Z][a-z]+|(?:A|An|The|Some|Many|Different) [a-z]+)"
-        plural_subjects = {"we", "they", "people", "children", "kids", "students", "families", "animals", "jobs", "some jobs"}
+        plural_subjects = {
+            "we", "they", "people", "children", "kids", "students", "families",
+            "animals", "jobs", "workers", "some jobs",
+        }
 
         def _is_plural_subject(subj: str) -> bool:
             low = (subj or "").strip().lower()
             if low in plural_subjects:
                 return True
             m = re.match(r"^(some|many|different)\s+([a-z]+)$", low)
-            return bool(m and (m.group(2).endswith("s") or m.group(2) in plural_subjects))
+            if m and (m.group(2).endswith("s") or m.group(2) in plural_subjects):
+                return True
+            return bool(low.endswith("s") and not low.endswith("ss"))
 
         def _student_subject(subj: str) -> str:
             low = (subj or "").strip().lower()
-            if low in plural_subjects or re.match(r"^(a|an|the|some|many|different)\s+", subj or "", flags=re.I):
+            if _is_plural_subject(subj) or re.match(r"^(a|an|the|some|many|different)\s+", subj or "", flags=re.I):
                 return low
             return subj
 
@@ -2641,6 +2688,7 @@ def build_worksheet(
                 new_page(), brand_rgb, reading_text, page1_q,
                 subtitle=page1_subtitle,
                 start_no=1, show_passage=show_passage,
+                force_single_col=True,
             )
             if use_sequence_page:
                 _build_l34_sequence_reading_page(
@@ -4648,16 +4696,24 @@ def _build_reading_page(
         return sum(rh) + (len(rh) + 1) * 0.16 <= avail_h
 
     # 题干字号：固定梯度 → 上限 = 正文 - 1（保证 正文 > 题干），向下自适应直到放得下
+    compact_mc_page = bool(
+        show_passage
+        and force_single_col
+        and qs
+        and all((q.get("kind", "mc") == "mc") for q in qs)
+    )
+    stem_min = 8.5 if compact_mc_page else 10.0
+    min_keep = 4 if compact_mc_page else 2
     stem_cap = max(10.5, float(read_pt) - 1.0) if show_passage else 12.5
-    stem_pt = 10.0
+    stem_pt = stem_min
     cand = stem_cap
-    while cand >= 10.0:
+    while cand >= stem_min:
         if _fits(cand):
             stem_pt = cand
             break
         cand -= 0.5
     # Bug2：即便降到最小字号仍放不下（题太多/太长）→ 从末尾裁题直到放下，杜绝核心内容跑出页面。
-    while not _fits(stem_pt) and sum(len(c) for c in col_qs) > 2:
+    while not _fits(stem_pt) and sum(len(c) for c in col_qs) > min_keep:
         flat = [q for c in col_qs for q in c][:-1]
         if len(flat) >= 2 and two_col:
             mid = (len(flat) + 1) // 2
