@@ -995,7 +995,7 @@ def _valid_short_item(item: dict) -> bool:
     if not q or _bad_placeholder_text(q):
         return False
     if q.lower().startswith(("what ", "who ", "where ", "when ", "why ", "how ")):
-        return q.endswith("?")
+        return "?" in q
     return True
 
 
@@ -1813,6 +1813,19 @@ def _false_tf_variant(sentence: str) -> str:
         (r"\bproud\b", "worried"),
         (r"\bmany\b", "a few"),
         (r"\bwill\b", "will not"),
+        (r"\bwork\b", "play"),
+        (r"\bschool\b", "home"),
+        (r"\bhome\b", "school"),
+        (r"\bwear\b", "find"),
+        (r"\bwears\b", "finds"),
+        (r"\bdifferent\b", "the same"),
+        (r"\bclean\b", "dirty"),
+        (r"\bsafe\b", "unsafe"),
+        (r"\btidy\b", "messy"),
+        (r"\bthree or more\b", "only one"),
+        (r"\bone\b", "two"),
+        (r"\btwo\b", "three"),
+        (r"\bthree\b", "one"),
     ]
     for pat, repl in replacements:
         if re.search(pat, sentence, flags=re.I):
@@ -1838,8 +1851,11 @@ def _mixed_tf_items(reading_text: str, *, max_n: int = 4) -> list[dict]:
     sents = [
         capitalize_names(s.strip().rstrip(".!?"))
         for s in _split_story_sentences(story)
-        if 18 <= len(s.strip()) <= 100
+        if 18 <= len(s.strip()) <= 100 and not s.strip().endswith("?")
     ]
+    if len(sents) > max_n and max_n > 1:
+        idxs = sorted({round(i * (len(sents) - 1) / (max_n - 1)) for i in range(max_n)})
+        sents = [sents[i] for i in idxs]
     if len(sents) > max_n:
         idxs = sorted({round(i * (len(sents) - 1) / (max_n - 1)) for i in range(max_n)})
         sents = [sents[i] for i in idxs]
@@ -1875,8 +1891,11 @@ def _reading_cloze_items(reading_text: str, exclude: set[str] | None = None,
     sents = [
         capitalize_names(s.strip().rstrip(".!?"))
         for s in _split_story_sentences(story)
-        if 18 <= len(s.strip()) <= 100
+        if 18 <= len(s.strip()) <= 100 and not s.strip().endswith("?")
     ]
+    if len(sents) > max_n and max_n > 1:
+        idxs = sorted({round(i * (len(sents) - 1) / (max_n - 1)) for i in range(max_n)})
+        sents = [sents[i] for i in idxs]
     out: list[dict] = []
     seen: set[str] = set()
     for sent in sents:
@@ -1948,18 +1967,86 @@ def _reading_short_answer_items(reading_text: str, *, max_n: int = 5) -> list[di
     sents = [
         capitalize_names(s.strip().rstrip(".!?"))
         for s in _split_story_sentences(story)
-        if 18 <= len(s.strip()) <= 92
-    ]
-    stems = [
-        "What does the passage say first?",
-        "Write one thing from the passage.",
-        "What is one important detail?",
-        "What happens next?",
-        "Write one word or phrase from the passage.",
+        if 18 <= len(s.strip()) <= 92 and not s.strip().endswith("?")
     ]
     out: list[dict] = []
-    for i, sent in enumerate(sents[:max_n]):
-        out.append({"kind": "short", "q": stems[i % len(stems)], "answer": sent})
+    seen: set[str] = set()
+
+    def _push(q: str, answer: str) -> None:
+        q = _clean_text(q)
+        answer = _clean_text(answer)
+        if not q or not answer:
+            return
+        if q.lower().startswith(("what ", "who ", "where ", "when ", "why ", "how ")) and "?" not in q:
+            q += "?"
+        key = _reading_question_key(q)
+        if key in seen:
+            return
+        seen.add(key)
+        out.append({"kind": "short", "q": q, "answer": answer})
+
+    def _article_phrase(noun: str) -> str:
+        noun = _clean_text(noun)
+        if not noun:
+            return noun
+        return noun if re.match(r"^(a|an|the|some|many|different|clean)\b", noun, flags=re.I) else noun
+
+    def _make_fact_question(sent: str) -> tuple[str, str] | None:
+        text = _clean_text(sent).rstrip(".!?")
+        if not text or text.endswith("?"):
+            return None
+        wear_match = re.match(r"^(i|we|they|he|she|it|[A-Z][a-z]+)\s+(wear|wears)\s+(.+?)\s+for\s+(.+?)$", text, flags=re.I)
+        if wear_match:
+            subj, verb, obj, context = wear_match.groups()
+            cue = obj.split(" and ")[0].split(",")[0].strip()
+            plural_subjects = {"we", "they", "people", "children", "kids", "students", "families", "animals", "jobs", "some jobs"}
+            aux = "do" if subj.lower() in {"i"} | plural_subjects else "does"
+            subj_text = subj.lower() if subj.lower() in plural_subjects else subj
+            return f"What {aux} {subj_text} wear for {context}? Clue: {cue}.", obj
+        patterns = [
+            (r"^(people|children|kids|students|families|animals|jobs|some jobs)\s+(.+?)$", "What do {subj} do?", "{rest}"),
+            (r"^(i|we|they|he|she|it|[A-Z][a-z]+)\s+(wear|wears|use|uses|need|needs|have|has|make|makes|choose|chooses|keep|keeps|help|helps|bring|brings|live|lives|go|goes|see|sees|like|likes)\s+(.+?)$", "What does {subj} {verb_base}?", "{obj}"),
+            (r"^(.+?)\s+(is|are|was|were)\s+(.+?)$", "What {be} {subj}?", "{obj}"),
+            (r"^(.+?)\s+can\s+(.+?)$", "What can {subj} do?", "{obj}"),
+            (r"^(.+?)\s+will\s+(.+?)$", "What will {subj} do?", "{obj}"),
+        ]
+        for pat, qtpl, atpl in patterns:
+            m = re.match(pat, text)
+            if not m:
+                continue
+            groups = m.groups()
+            if len(groups) == 2:
+                subj, obj = groups
+                data = {"subj": subj, "obj": obj, "rest": obj, "be": ""}
+            elif len(groups) == 3:
+                subj, verb, obj = groups
+                verb_base = {
+                    "wears": "wear", "uses": "use", "needs": "need", "has": "have",
+                    "makes": "make", "chooses": "choose", "keeps": "keep", "helps": "help",
+                    "brings": "bring", "lives": "live", "goes": "go", "sees": "see",
+                    "likes": "like",
+                }.get(verb.lower(), verb.lower())
+                data = {"subj": subj, "verb": verb, "verb_base": verb_base, "obj": obj,
+                        "rest": f"{verb} {obj}", "be": verb}
+            else:
+                continue
+            q = qtpl.format(**data)
+            a = atpl.format(**data)
+            if len(a.split()) <= 12:
+                return q, _article_phrase(a)
+        return None
+
+    for sent in sents:
+        if len(out) >= max_n:
+            break
+        made = _make_fact_question(sent)
+        if made:
+            _push(made[0], made[1])
+            continue
+        if sent.strip().endswith("?"):
+            continue
+        if len(out) < max_n:
+            _push("Copy one fact from the passage.", sent)
     return out[:max_n]
 
 
@@ -2437,6 +2524,13 @@ def build_worksheet(
                 page2_q = _sanitize_reading_items(page2_q, preferred_kind="short", max_n=5)
                 _record_l34_activity(outline, 6, "reading_short_answer")
                 page2_subtitle = _ws_activity_instruction("reading_short_answer")
+            if len(page2_q) < 4:
+                alt_q = _reading_cloze_items(reading_text, used_q, max_n=4)
+                alt_q = _sanitize_reading_items(alt_q, preferred_kind="short", max_n=4)
+                if len(alt_q) > len(page2_q):
+                    page2_q = alt_q
+                    _record_l34_activity(outline, 6, "reading_summary_cloze")
+                    page2_subtitle = _ws_activity_instruction("reading_summary_cloze")
             _build_reading_page(
                 new_page(), brand_rgb, reading_text, page1_q,
                 subtitle=page1_subtitle,
@@ -2445,13 +2539,13 @@ def build_worksheet(
             if use_sequence_page:
                 _build_l34_sequence_reading_page(
                     new_page(), brand_rgb, reading_text, sequence_events,
-                    start_no=len(page1_q) + 1,
+                    start_no=1,
                 )
             else:
                 _build_reading_page(
                     new_page(), brand_rgb, reading_text, page2_q,
                     subtitle=page2_subtitle,
-                    start_no=len(page1_q) + 1, show_passage=show_passage,
+                    start_no=1, show_passage=show_passage,
                     force_single_col=True,
                 )
         else:
@@ -2470,7 +2564,7 @@ def build_worksheet(
                                 subtitle=sub_uni, start_no=1, show_passage=show_passage)
             if len(page2_q) >= 3:
                 _build_reading_page(new_page(), brand_rgb, reading_text, page2_q,
-                                    subtitle=sub_uni, start_no=len(page1_q) + 1, show_passage=show_passage)
+                                    subtitle=sub_uni, start_no=1, show_passage=show_passage)
             else:
                 ext = _reading_ext_items(outline, data, used_q, max_n=4)
                 if len(ext) < 3:
@@ -2478,7 +2572,7 @@ def build_worksheet(
                 _build_reading_fill_page(
                     new_page(), brand_rgb, "Reading",
                     "Read the story again and answer the questions.",
-                    ext, start_no=len(page1_q) + 1)
+                    ext, start_no=1)
     else:
         # 横版阅读页（用户拍板 2026-06-06）：①同页题型必须统一（全选择 or 全判断，绝不混排）；
         # ②锁定 4 题（2×2 行对齐：左右各 2，横向两题对齐、纵向两题对齐）。先用归一后的同质题；
