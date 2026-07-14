@@ -1182,12 +1182,13 @@ def _cloze_mc_items(fills: list[dict], word_bank: list[str], max_n: int = 4) -> 
 
 
 def _build_l34_vocab2(new_page, brand_rgb: tuple, data: dict,
-                      images: Optional[list[Path]], seed: int) -> None:
+                      images: Optional[list[Path]], seed: int,
+                      lvl_n: int = 3) -> None:
     """L3/L4 vocabulary application page with deterministic activity rotation."""
     pairs = data.get("match_pairs") or []
     fills = data.get("fill_blanks") or []
     bank = data.get("word_bank") or []
-    activity = seed % 3
+    activity = seed % (4 if lvl_n >= 4 else 3)
 
     def _do_context_fill() -> bool:
         if fills:
@@ -1212,7 +1213,15 @@ def _build_l34_vocab2(new_page, brand_rgb: tuple, data: dict,
             return True
         return False
 
+    def _do_definition_match() -> bool:
+        if len(pairs) >= 4:
+            _build_p1_match(new_page(), brand_rgb, pairs, images or [])
+            return True
+        return False
+
     choices = [_do_context_fill, _do_clue_choice, _do_write_word]
+    if lvl_n >= 4:
+        choices.append(_do_definition_match)
     for offset in range(len(choices)):
         if choices[(activity + offset) % len(choices)]():
             return
@@ -1221,11 +1230,12 @@ def _build_l34_vocab2(new_page, brand_rgb: tuple, data: dict,
 
 def _build_l34_sentence2(new_page, brand_rgb: tuple, outline: BookOutline,
                          frame_fills: list[dict], frame_bank: list[str],
-                         fallback: list[dict], seed: int) -> None:
+                         fallback: list[dict], seed: int,
+                         lvl_n: int = 3) -> None:
     """Second L3/L4 sentence page with stable variety while preserving syllabus frame."""
     frame_copy = _official_sentence_frame_practice_items(outline, max_n=4)
     cloze_mc = _cloze_mc_items(frame_fills, frame_bank, max_n=4)
-    activity = (seed // 5) % 2
+    activity = (seed // 5) % (3 if lvl_n >= 4 else 2)
 
     def _do_guided_write() -> bool:
         if frame_copy:
@@ -1246,7 +1256,31 @@ def _build_l34_sentence2(new_page, brand_rgb: tuple, outline: BookOutline,
             return True
         return False
 
+    def _do_correct_sentence() -> bool:
+        if len(frame_fills) >= 3:
+            items = []
+            for item in frame_fills[:4]:
+                sent = _clean_text(item.get("sentence", ""))
+                ans = _clean_text(item.get("answer", ""))
+                if not sent or not ans or "___" not in sent:
+                    continue
+                correct = re.sub(r"_{3,}", ans, sent, count=1)
+                wrong = _false_tf_variant(correct).rstrip(".!?") + "."
+                if wrong and wrong.lower() != correct.lower():
+                    items.append({"prompt": f"Correct the sentence: {wrong}"})
+            if len(items) >= 3:
+                _build_prompt_line_page(
+                    new_page(), brand_rgb, items, "Sentences",
+                    "Correct each sentence.",
+                    prompt_key="prompt",
+                    fallback=fallback,
+                )
+                return True
+        return False
+
     choices = [_do_guided_write, _do_choose_word]
+    if lvl_n >= 4:
+        choices.append(_do_correct_sentence)
     for offset in range(len(choices)):
         if choices[(activity + offset) % len(choices)]():
             return
@@ -1829,6 +1863,48 @@ def _reading_short_answer_items(reading_text: str, *, max_n: int = 5) -> list[di
     return out[:max_n]
 
 
+def _reading_text_correction_items(reading_text: str, *, max_n: int = 4) -> list[dict]:
+    """L4 A2 reading: correct one wrong detail from the passage."""
+    story = _to_us_spelling(reading_text or "")
+    sents = [
+        capitalize_names(s.strip().rstrip(".!?"))
+        for s in _split_story_sentences(story)
+        if 18 <= len(s.strip()) <= 88
+    ]
+    out: list[dict] = []
+    seen: set[str] = set()
+    for sent in sents:
+        wrong = _false_tf_variant(sent).rstrip(".!?")
+        if not wrong or wrong.lower() == sent.lower():
+            continue
+        key = wrong.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append({"kind": "short", "q": f"Correct the sentence: {wrong}.", "answer": sent})
+        if len(out) >= max_n:
+            break
+    return out
+
+
+def _reading_cause_effect_items(reading_text: str, *, max_n: int = 4) -> list[dict]:
+    """L4 A2 reading: simple cause/effect or detail connection prompts."""
+    story = _to_us_spelling(reading_text or "")
+    sents = [
+        capitalize_names(s.strip().rstrip(".!?"))
+        for s in _split_story_sentences(story)
+        if 18 <= len(s.strip()) <= 92
+    ]
+    out: list[dict] = []
+    for i in range(min(len(sents) - 1, max_n)):
+        out.append({
+            "kind": "short",
+            "q": f"What happens after this? {sents[i]}.",
+            "answer": sents[i + 1],
+        })
+    return out
+
+
 def _reading_sequence_events(reading_text: str, *, max_n: int = 5) -> list[str]:
     """Short story events for a written sequence activity."""
     story = _to_us_spelling(reading_text or "")
@@ -2030,7 +2106,7 @@ def build_worksheet(
         else:
             _build_p2_fill(new_page(), brand_rgb, data["fill_blanks"], data["word_bank"], images)
     else:  # L3/L4 词汇②：跨书轮换题型，避免每本都只做语境填空。
-        _build_l34_vocab2(new_page, brand_rgb, data, images, _ws_seed(outline))
+        _build_l34_vocab2(new_page, brand_rgb, data, images, _ws_seed(outline), lvl_n)
 
     # ===== 2 句型页（考点 = 本课语法焦点；学什么考什么）=====
     # 时态自适应（用户拍板 2026-06-06）：现在时为主的文本（如非虚构科普）→ 现在时考点
@@ -2091,7 +2167,7 @@ def build_worksheet(
 
     if official_sentences_done:
         _build_l34_sentence2(new_page, brand_rgb, outline, frame_fills, frame_bank,
-                             sent_fb, _ws_seed(outline))
+                             sent_fb, _ws_seed(outline), lvl_n)
     elif lvl_n == 3:
         frame_copy = _sentence_frame_copy_items(outline, max_n=4)
         _build_prompt_line_page(
@@ -2224,6 +2300,12 @@ def build_worksheet(
             if use_sequence_page:
                 page2_q = []
                 page2_subtitle = ""
+            elif lvl_n >= 4 and reading_variant == 0:
+                page2_q = _reading_text_correction_items(reading_text, max_n=4)
+                page2_subtitle = "Correct the wrong sentences."
+            elif lvl_n >= 4 and reading_variant == 1:
+                page2_q = _reading_cause_effect_items(reading_text, max_n=4)
+                page2_subtitle = "Write what happens next."
             elif reading_variant == 2:
                 page2_q = _reading_short_answer_items(reading_text, max_n=5)
                 page2_subtitle = "Read the passage. Write short answers."
