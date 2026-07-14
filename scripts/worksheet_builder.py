@@ -1144,6 +1144,78 @@ def _cloze_mc_items(fills: list[dict], word_bank: list[str], max_n: int = 4) -> 
     return out
 
 
+def _build_l34_vocab2(new_page, brand_rgb: tuple, data: dict,
+                      images: Optional[list[Path]], seed: int) -> None:
+    """L3/L4 vocabulary application page with deterministic activity rotation."""
+    pairs = data.get("match_pairs") or []
+    fills = data.get("fill_blanks") or []
+    bank = data.get("word_bank") or []
+    activity = seed % 3
+
+    def _do_context_fill() -> bool:
+        if fills:
+            _build_p2_fill(new_page(), brand_rgb, fills, bank, images)
+            return True
+        return False
+
+    def _do_clue_choice() -> bool:
+        riddles = _riddle_mc_items(pairs, max_n=4)
+        if len(riddles) >= 3:
+            _build_mcq_page(new_page(), brand_rgb, "Vocabulary",
+                            "Read each clue and circle the correct word.",
+                            riddles, answer_paren=False)
+            return True
+        return False
+
+    def _do_write_word() -> bool:
+        items = _word_fill_meaning_items(pairs, max_n=4)
+        if len(items) >= 3:
+            _build_word_fill_page(new_page(), brand_rgb, items, "Vocabulary",
+                                  "Read the meaning and write the word.")
+            return True
+        return False
+
+    choices = [_do_context_fill, _do_clue_choice, _do_write_word]
+    for offset in range(len(choices)):
+        if choices[(activity + offset) % len(choices)]():
+            return
+    _build_p2_fill(new_page(), brand_rgb, fills, bank, images)
+
+
+def _build_l34_sentence2(new_page, brand_rgb: tuple, outline: BookOutline,
+                         frame_fills: list[dict], frame_bank: list[str],
+                         fallback: list[dict], seed: int) -> None:
+    """Second L3/L4 sentence page with stable variety while preserving syllabus frame."""
+    frame_copy = _official_sentence_frame_practice_items(outline, max_n=4)
+    cloze_mc = _cloze_mc_items(frame_fills, frame_bank, max_n=4)
+    activity = (seed // 5) % 2
+
+    def _do_guided_write() -> bool:
+        if frame_copy:
+            _build_prompt_line_page(
+                new_page(), brand_rgb, frame_copy, "Sentences",
+                f"Write your own sentences. Follow the example: {_display_sentence_frame(outline)}",
+                prompt_key="prompt",
+                fallback=fallback,
+            )
+            return True
+        return False
+
+    def _do_choose_word() -> bool:
+        if len(cloze_mc) >= 3:
+            _build_mcq_page(new_page(), brand_rgb, "Sentences",
+                            "Choose the correct words to complete each sentence.",
+                            cloze_mc)
+            return True
+        return False
+
+    choices = [_do_guided_write, _do_choose_word]
+    for offset in range(len(choices)):
+        if choices[(activity + offset) % len(choices)]():
+            return
+    _do_guided_write()
+
+
 # ---------- 官方 A4 模板（底版/母版）----------
 # 7 个 slide：index = 级别数字（Smart=0, L1=1 … L6=6），各带原生 Logo 图 / Name 角标 / 配色 / 页脚。
 _WS_TEMPLATE = Path(__file__).resolve().parent.parent / "assets" / "templates" / "Worksheet_A4_L0-L6.pptx"
@@ -1658,6 +1730,68 @@ def _reading_cloze_items(reading_text: str, exclude: set[str] | None = None,
     return out[:max_n]
 
 
+def _reading_mc_sentence_items(reading_text: str, *, max_n: int = 5) -> list[dict]:
+    """Create controlled MC reading items from actual story sentences."""
+    story = _to_us_spelling(reading_text or "")
+    sents = [
+        capitalize_names(s.strip().rstrip(".!?"))
+        for s in _split_story_sentences(story)
+        if 18 <= len(s.strip()) <= 88
+    ]
+    out: list[dict] = []
+    seen: set[str] = set()
+    for sent in sents:
+        if len(out) >= max_n:
+            break
+        false_one = _false_tf_variant(sent).rstrip(".!?")
+        if not false_one or false_one.lower() == sent.lower():
+            continue
+        false_two = ""
+        for other in reversed(sents):
+            if other.lower() != sent.lower() and other.lower() != false_one.lower():
+                false_two = other
+                break
+        if not false_two:
+            false_two = "The text does not say this."
+        opts = [sent + ".", false_one + ".", false_two.rstrip(".!?") + "."]
+        key = sent.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        # Deterministic light shuffle based on the sentence.
+        rnd = random.Random(hash(sent) & 0xFFFFFFFF)
+        correct = opts[0]
+        rnd.shuffle(opts)
+        out.append({
+            "kind": "mc",
+            "q": "Which sentence matches the passage?",
+            "options": opts,
+            "correct": opts.index(correct),
+        })
+    return out[:max_n]
+
+
+def _reading_short_answer_items(reading_text: str, *, max_n: int = 5) -> list[dict]:
+    """Simple text-evidence short-answer items for L3/L4 Reading page variety."""
+    story = _to_us_spelling(reading_text or "")
+    sents = [
+        capitalize_names(s.strip().rstrip(".!?"))
+        for s in _split_story_sentences(story)
+        if 18 <= len(s.strip()) <= 92
+    ]
+    stems = [
+        "What does the passage say first?",
+        "Write one thing from the passage.",
+        "What is one important detail?",
+        "What happens next?",
+        "Write one word or phrase from the passage.",
+    ]
+    out: list[dict] = []
+    for i, sent in enumerate(sents[:max_n]):
+        out.append({"kind": "short", "q": stems[i % len(stems)], "answer": sent})
+    return out[:max_n]
+
+
 def _build_l4_vocab2(new_page, brand_rgb: tuple, data: dict,
                      images: Optional[list[Path]], seed: int) -> None:
     """L4 词汇②页：在 4 种词汇题型间【按书轮换】（每种版式自身恒定、内容紧扣本书词汇），
@@ -1790,19 +1924,8 @@ def build_worksheet(
                                   "Complete each word using the correct ending.")
         else:
             _build_p2_fill(new_page(), brand_rgb, data["fill_blanks"], data["word_bank"], images)
-    elif lvl_n == 3:  # L3 词汇②：按 SOP 做词汇运用，避免 P1/P2 连续拼写。
-        riddles = _riddle_mc_items(data["match_pairs"], max_n=4)
-        if data.get("fill_blanks"):
-            _build_p2_fill(new_page(), brand_rgb, data["fill_blanks"], data["word_bank"], images)
-        elif len(riddles) >= 3:
-            # 用户标杆 L3-30：圈词题 → 指令用 "circle"，题干不带 "(   )" 作答括号（直接圈选项）。
-            _build_mcq_page(new_page(), brand_rgb, "Vocabulary",
-                            "Read each clue and circle the correct word.", riddles,
-                            answer_paren=False)
-        else:
-            _build_p2_fill(new_page(), brand_rgb, data["fill_blanks"], data["word_bank"], images)
-    else:  # l34（L4）词汇②：跨书轮换 4 种词汇题型（版式各自恒定 → 内容多样），告别"每本都原文挖空"
-        _build_l4_vocab2(new_page, brand_rgb, data, images, _ws_seed(outline))
+    else:  # L3/L4 词汇②：跨书轮换题型，避免每本都只做语境填空。
+        _build_l34_vocab2(new_page, brand_rgb, data, images, _ws_seed(outline))
 
     # ===== 2 句型页（考点 = 本课语法焦点；学什么考什么）=====
     # 时态自适应（用户拍板 2026-06-06）：现在时为主的文本（如非虚构科普）→ 现在时考点
@@ -1853,13 +1976,8 @@ def build_worksheet(
                        fallback=sent_fb)
 
     if official_sentences_done:
-        frame_copy = _official_sentence_frame_practice_items(outline, max_n=4)
-        _build_prompt_line_page(
-            new_page(), brand_rgb, frame_copy, "Sentences",
-            f"Write your own sentences. Follow the example: {_display_sentence_frame(outline)}",
-            prompt_key="prompt",
-            fallback=sent_fb,
-        )
+        _build_l34_sentence2(new_page, brand_rgb, outline, frame_fills, frame_bank,
+                             sent_fb, _ws_seed(outline))
     elif lvl_n == 3:
         frame_copy = _sentence_frame_copy_items(outline, max_n=4)
         _build_prompt_line_page(
@@ -1973,21 +2091,35 @@ def build_worksheet(
 
     if mode == "reading":
         if lvl_n in (3, 4):
-            page1_q = _mixed_tf_items(reading_text, max_n=5)
-            if len(page1_q) < 4:
-                page1_q = _fill_same_kind_reading_questions(rq_uni[:5], "tf", reading_text, max_n=5)
+            reading_variant = (_ws_seed(outline) // 11) % 3
+            if reading_variant == 1:
+                page1_q = _reading_mc_sentence_items(reading_text, max_n=5)
+                if len(page1_q) < 4:
+                    page1_q = _mixed_tf_items(reading_text, max_n=5)
+                page1_subtitle = "Read the passage. Circle the correct sentence."
+            else:
+                page1_q = _mixed_tf_items(reading_text, max_n=5)
+                if len(page1_q) < 4:
+                    page1_q = _fill_same_kind_reading_questions(rq_uni[:5], "tf", reading_text, max_n=5)
+                page1_subtitle = "Read the passage. Write T (true) or F (false)."
             used_q = {_reading_question_key(q.get("q") or "") for q in page1_q}
-            page2_q = _reading_cloze_items(reading_text, used_q, max_n=5)
+            if reading_variant == 2:
+                page2_q = _reading_short_answer_items(reading_text, max_n=5)
+                page2_subtitle = "Read the passage. Write short answers."
+            else:
+                page2_q = _reading_cloze_items(reading_text, used_q, max_n=5)
+                page2_subtitle = "Read the passage. Complete the sentences."
             if len(page2_q) < 3:
                 page2_q = _reading_ext_items(outline, data, used_q, max_n=5)
+                page2_subtitle = "Read the passage and answer the questions."
             _build_reading_page(
                 new_page(), brand_rgb, reading_text, page1_q,
-                subtitle="Read the passage. Write T (true) or F (false).",
+                subtitle=page1_subtitle,
                 start_no=1, show_passage=show_passage,
             )
             _build_reading_page(
                 new_page(), brand_rgb, reading_text, page2_q,
-                subtitle="Read the passage. Complete the sentences.",
+                subtitle=page2_subtitle,
                 start_no=len(page1_q) + 1, show_passage=show_passage,
                 force_single_col=True,
             )
@@ -3309,9 +3441,9 @@ def _build_mcq_page(slide, brand_rgb: tuple, title: str, subtitle: str,
     def _cpl(pt: float, w: float) -> int:
         return max(8, int(6.6 * w * (12.5 / pt)))
 
-    def _opts_line(q: dict) -> str:
+    def _opts_lines(q: dict) -> list[str]:
         opts = [_clean_text(o) for o in (q.get("options") or []) if str(o).strip()][:4]
-        return "        ".join(f"{chr(65 + j)}. {o}" for j, o in enumerate(opts))
+        return [f"{chr(65 + j)}. {o}" for j, o in enumerate(opts)]
 
     def _stem_text(q: dict, i: int) -> str:
         s = f"{start_no + i}. {capitalize_names(_clean_text(q.get('q', '')))}"
@@ -3326,7 +3458,10 @@ def _build_mcq_page(slide, brand_rgb: tuple, title: str, subtitle: str,
         out = []
         for i, q in enumerate(qs):
             slines = max(1, _m.ceil(len(_stem_text(q, i)) / _cpl(sp, box_w)))
-            olines = max(1, _m.ceil(len(_opts_line(q)) / _cpl(op, box_w - 0.20)))
+            olines = sum(
+                max(1, _m.ceil(len(opt) / _cpl(op, box_w - 0.30)))
+                for opt in _opts_lines(q)
+            ) or 1
             out.append(slines * lh_s + olines * lh_o + 0.16)
         return out
 
@@ -3352,16 +3487,17 @@ def _build_mcq_page(slide, brand_rgb: tuple, title: str, subtitle: str,
         p.alignment = PP_ALIGN.LEFT
         p.line_spacing = 1.14
         _emit_with_underscore_lock(p, _stem_text(q, i), int(round(stem_pt)), BLACK, bold=False)
-        p2 = tf.add_paragraph()
-        p2.alignment = PP_ALIGN.LEFT
-        p2.line_spacing = 1.14
-        p2.space_before = Pt(4)
-        _set_indent(p2, 0.30)
-        ro = p2.add_run()
-        ro.text = _opts_line(q)
-        ro.font.name = FONT
-        ro.font.size = Pt(opt_pt)
-        ro.font.color.rgb = BLACK
+        for opt in _opts_lines(q):
+            p2 = tf.add_paragraph()
+            p2.alignment = PP_ALIGN.LEFT
+            p2.line_spacing = 1.10
+            p2.space_before = Pt(3)
+            _set_indent(p2, 0.30)
+            ro = p2.add_run()
+            ro.text = opt
+            ro.font.name = FONT
+            ro.font.size = Pt(opt_pt)
+            ro.font.color.rgb = BLACK
 
 
 def _build_reading_fill_page(slide, brand_rgb: tuple, title: str, subtitle: str,
