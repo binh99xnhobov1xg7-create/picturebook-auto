@@ -450,6 +450,43 @@ def _official_sentence_frame_fill_items(outline: BookOutline, max_n: int = 4) ->
     return fills, bank[:max_n]
 
 
+def _official_sentence_frame_mc_items(
+    outline: BookOutline, fills: list[dict], bank: list[str], max_n: int = 4
+) -> list[dict]:
+    """Sentence recognition page: choose the sentence that matches the syllabus frame."""
+    out: list[dict] = []
+    answers = [str(w).strip() for w in (bank or []) if str(w).strip()]
+    seen: set[str] = set()
+    for item in fills or []:
+        prompt = _clean_text(item.get("sentence", ""))
+        ans = _clean_text(item.get("answer", ""))
+        if not prompt or not ans or "___" not in prompt:
+            continue
+        correct = re.sub(r"_{3,}", ans, prompt, count=1)
+        wrong_ans = ""
+        for other in answers:
+            if other.lower() != ans.lower():
+                wrong_ans = other
+                break
+        if wrong_ans:
+            wrong = re.sub(r"_{3,}", wrong_ans, prompt, count=1)
+        else:
+            wrong = _false_tf_variant(correct).rstrip(".!?") + "."
+        if not wrong or wrong.lower() == correct.lower():
+            continue
+        key = correct.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        options = [correct, wrong]
+        if (hash(correct) & 1) == 1:
+            options = [wrong, correct]
+        out.append({"options": options, "correct": options.index(correct)})
+        if len(out) >= max_n:
+            break
+    return out
+
+
 def _official_sentence_frame_practice_items(outline: BookOutline, max_n: int = 4) -> list[dict]:
     """Second sentence page: guided production using the same official frame."""
     pattern, example = _syllabus_sentence_source(outline)
@@ -1792,6 +1829,74 @@ def _reading_short_answer_items(reading_text: str, *, max_n: int = 5) -> list[di
     return out[:max_n]
 
 
+def _reading_sequence_events(reading_text: str, *, max_n: int = 5) -> list[str]:
+    """Short story events for a written sequence activity."""
+    story = _to_us_spelling(reading_text or "")
+    events: list[str] = []
+    seen: set[str] = set()
+    for sent in _split_story_sentences(story):
+        text = capitalize_names(sent.strip().rstrip(".!?"))
+        if not text or len(text) < 18 or len(text) > 88:
+            continue
+        key = text.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        events.append(text + ".")
+        if len(events) >= max_n:
+            break
+    return events
+
+
+def _build_l34_sequence_reading_page(slide, brand_rgb: tuple, reading_text: str,
+                                     events: list[str], *, start_no: int = 1) -> None:
+    """Reading page variant: number story events in order."""
+    _add_title(slide, "Reading", "Number the events in order.")
+    text = _clean_text(reading_text)
+    read_pt = 11.5 if len(text) > 520 else 12.5
+    text_top = CONTENT_Y + 1.35
+    text_h = 1.55 if len(text) > 520 else 1.85
+    text_box = slide.shapes.add_shape(
+        MSO_SHAPE.ROUNDED_RECTANGLE,
+        Inches(CONTENT_X + 0.40), Inches(text_top),
+        Inches(CONTENT_W - 0.80), Inches(text_h),
+    )
+    text_box.adjustments[0] = 0.03
+    text_box.fill.solid()
+    text_box.fill.fore_color.rgb = WHITE
+    text_box.line.color.rgb = RGBColor(*brand_rgb)
+    text_box.line.width = Pt(1.5)
+    text_box.shadow.inherit = False
+    tf = text_box.text_frame
+    tf.margin_left = tf.margin_right = Inches(0.20)
+    tf.margin_top = Inches(0.08)
+    tf.margin_bottom = Inches(0.06)
+    tf.word_wrap = True
+    p = tf.paragraphs[0]
+    p.alignment = PP_ALIGN.LEFT
+    p.line_spacing = 1.15
+    r = p.add_run()
+    r.text = text
+    r.font.name = FONT
+    r.font.size = Pt(read_pt)
+    r.font.color.rgb = BLACK
+
+    items = list(events[:5])
+    rnd = random.Random(hash("|".join(items)) & 0xFFFFFFFF)
+    scrambled = items[:]
+    for _ in range(8):
+        rnd.shuffle(scrambled)
+        if scrambled != items:
+            break
+    body = [f"{start_no + i}.  ____  {event}" for i, event in enumerate(scrambled)]
+    _flow_lines(
+        slide, body, text_top + text_h + 0.22,
+        CONTENT_Y + CONTENT_H - 0.30 - (text_top + text_h + 0.22),
+        CONTENT_X + 0.78, CONTENT_W - 1.56, 15,
+        gap_min=0.14, gap_max=0.48,
+    )
+
+
 def _build_l4_vocab2(new_page, brand_rgb: tuple, data: dict,
                      images: Optional[list[Path]], seed: int) -> None:
     """L4 词汇②页：在 4 种词汇题型间【按书轮换】（每种版式自身恒定、内容紧扣本书词汇），
@@ -1942,12 +2047,21 @@ def build_worksheet(
     if lvl_n >= 3:
         frame_fills, frame_bank = _official_sentence_frame_fill_items(outline, max_n=4)
         if frame_fills:
-            _build_p2_fill(
-                new_page(), brand_rgb, frame_fills, frame_bank, images,
-                title="Sentences",
-                subtitle=f"Use the example: {_display_sentence_frame(outline)}",
-                fallback=sent_fb,
-            )
+            frame_mcs = _official_sentence_frame_mc_items(outline, frame_fills, frame_bank, max_n=4)
+            if frame_mcs:
+                _build_p3_sentence(
+                    new_page(), brand_rgb, frame_mcs, images,
+                    show_images=(sentence_image_mode != "none"),
+                    subtitle=f"Tick (\u2713) the sentence that matches the example: {_display_sentence_frame(outline)}",
+                    fallback=sent_fb,
+                )
+            else:
+                _build_p2_fill(
+                    new_page(), brand_rgb, frame_fills, frame_bank, images,
+                    title="Sentences",
+                    subtitle=f"Use the example: {_display_sentence_frame(outline)}",
+                    fallback=sent_fb,
+                )
             official_sentences_done = True
     if not official_sentences_done:
         if tense == "present":
@@ -2103,7 +2217,14 @@ def build_worksheet(
                     page1_q = _fill_same_kind_reading_questions(rq_uni[:5], "tf", reading_text, max_n=5)
                 page1_subtitle = "Read the passage. Write T (true) or F (false)."
             used_q = {_reading_question_key(q.get("q") or "") for q in page1_q}
-            if reading_variant == 2:
+            is_nonfic_reading = "non" in (getattr(outline, "fiction_type", "") or "").lower()
+            sequence_events = _reading_sequence_events(reading_text, max_n=5)
+            use_sequence_page = (not is_nonfic_reading and len(sequence_events) >= 4
+                                 and reading_variant == 2)
+            if use_sequence_page:
+                page2_q = []
+                page2_subtitle = ""
+            elif reading_variant == 2:
                 page2_q = _reading_short_answer_items(reading_text, max_n=5)
                 page2_subtitle = "Read the passage. Write short answers."
             else:
@@ -2117,12 +2238,18 @@ def build_worksheet(
                 subtitle=page1_subtitle,
                 start_no=1, show_passage=show_passage,
             )
-            _build_reading_page(
-                new_page(), brand_rgb, reading_text, page2_q,
-                subtitle=page2_subtitle,
-                start_no=len(page1_q) + 1, show_passage=show_passage,
-                force_single_col=True,
-            )
+            if use_sequence_page:
+                _build_l34_sequence_reading_page(
+                    new_page(), brand_rgb, reading_text, sequence_events,
+                    start_no=len(page1_q) + 1,
+                )
+            else:
+                _build_reading_page(
+                    new_page(), brand_rgb, reading_text, page2_q,
+                    subtitle=page2_subtitle,
+                    start_no=len(page1_q) + 1, show_passage=show_passage,
+                    force_single_col=True,
+                )
         else:
             ordered = rq_uni
             first_kind = rq_kind if rq_kind in ("mc", "tf") else "tf"
