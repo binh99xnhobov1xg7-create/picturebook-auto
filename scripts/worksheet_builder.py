@@ -46,7 +46,11 @@ from text_format import (
     smart_format_answer,
     is_sentence_like,
 )
-from worksheet_activity_policy import instruction as _ws_activity_instruction
+from worksheet_activity_policy import (
+    activity_min_items as _ws_activity_min_items,
+    allowed_activity_codes as _ws_allowed_activity_codes,
+    instruction as _ws_activity_instruction,
+)
 
 
 # ---------- 几何尺寸 ----------
@@ -169,6 +173,37 @@ def _record_l34_activity(outline: Optional[BookOutline], page: int, code: str) -
         activity_map[page] = code
     except Exception:
         return
+
+
+def _l34_activity_order(outline: BookOutline, page: int, *, seed: int,
+                        include_optional: bool = False) -> list[str]:
+    lvl = _level_num(getattr(outline, "level", "") or "")
+    text_type = getattr(outline, "fiction_type", "") or ""
+    codes = _ws_allowed_activity_codes(
+        page,
+        level=lvl,
+        text_type=text_type,
+        include_optional=include_optional,
+    )
+    if not codes:
+        return []
+    offset = seed % len(codes)
+    return codes[offset:] + codes[:offset]
+
+
+def _l34_min_items(code: str, default: int = 4) -> int:
+    return _ws_activity_min_items(code, default)
+
+
+def _l34_go_activity_code(outline: BookOutline, go_mode: str) -> str:
+    """Map the rendered organizer mode to the worksheet activity bank."""
+    is_nonfic = "non" in (getattr(outline, "fiction_type", "") or "").lower()
+    mode = (go_mode or "").strip().lower()
+    if is_nonfic:
+        return "go_fact_web"
+    if mode in {"timeline", "sequence", "planchart"}:
+        return "go_sequence_chart"
+    return "go_problem_plan_result"
 
 
 # ============================================================
@@ -1277,11 +1312,11 @@ def _build_l34_vocab2(new_page, brand_rgb: tuple, data: dict,
     pairs = data.get("match_pairs") or []
     fills = data.get("fill_blanks") or []
     bank = data.get("word_bank") or []
-    activity = seed % (4 if lvl_n >= 4 else 3)
+    activity_codes = _l34_activity_order(outline, 2, seed=seed, include_optional=False)
 
     def _do_context_fill() -> bool:
-        if fills:
-            code = "vocab_multi_word_cloze" if any(" " in str(w).strip() for w in bank) else "vocab_contextual_word_bank_cloze"
+        code = "vocab_multi_word_cloze" if any(" " in str(w).strip() for w in bank) else "vocab_contextual_word_bank_cloze"
+        if len(fills) >= _l34_min_items(code, 3):
             _record_l34_activity(outline, 2, code)
             _build_p2_fill(new_page(), brand_rgb, fills, bank, images)
             return True
@@ -1289,7 +1324,7 @@ def _build_l34_vocab2(new_page, brand_rgb: tuple, data: dict,
 
     def _do_clue_choice() -> bool:
         riddles = _riddle_mc_items(pairs, max_n=4)
-        if len(riddles) >= 3:
+        if len(riddles) >= _l34_min_items("vocab_contextual_choice", 3):
             _record_l34_activity(outline, 2, "vocab_contextual_choice")
             _build_mcq_page(new_page(), brand_rgb, "Vocabulary",
                             _ws_activity_instruction("vocab_contextual_choice"),
@@ -1299,7 +1334,7 @@ def _build_l34_vocab2(new_page, brand_rgb: tuple, data: dict,
 
     def _do_write_word() -> bool:
         items = _word_fill_meaning_items(pairs, max_n=4)
-        if len(items) >= 3:
+        if len(items) >= _l34_min_items("vocab_contextual_clue_write", 3):
             _record_l34_activity(outline, 2, "vocab_contextual_clue_write")
             _build_word_fill_page(new_page(), brand_rgb, items, "Vocabulary",
                                   _ws_activity_instruction("vocab_contextual_clue_write"))
@@ -1307,17 +1342,22 @@ def _build_l34_vocab2(new_page, brand_rgb: tuple, data: dict,
         return False
 
     def _do_definition_match() -> bool:
-        if len(pairs) >= 4:
+        if len([p for p in pairs if _valid_definition_pair(p)]) >= _l34_min_items("vocab_word_definition_matching", 4):
             _record_l34_activity(outline, 2, "vocab_word_definition_matching")
             _build_p1_match(new_page(), brand_rgb, pairs, images or [])
             return True
         return False
 
-    choices = [_do_context_fill, _do_clue_choice, _do_write_word]
-    if lvl_n >= 4:
-        choices.append(_do_definition_match)
-    for offset in range(len(choices)):
-        if choices[(activity + offset) % len(choices)]():
+    choices = {
+        "vocab_contextual_word_bank_cloze": _do_context_fill,
+        "vocab_multi_word_cloze": _do_context_fill,
+        "vocab_contextual_choice": _do_clue_choice,
+        "vocab_contextual_clue_write": _do_write_word,
+        "vocab_word_definition_matching": _do_definition_match,
+    }
+    for code in activity_codes:
+        fn = choices.get(code)
+        if fn and fn():
             return
     _record_l34_activity(outline, 2, "vocab_contextual_word_bank_cloze")
     _build_p2_fill(new_page(), brand_rgb, fills, bank, images)
@@ -1330,10 +1370,10 @@ def _build_l34_sentence2(new_page, brand_rgb: tuple, outline: BookOutline,
     """Second L3/L4 sentence page with stable variety while preserving syllabus frame."""
     frame_copy = _official_sentence_frame_practice_items(outline, max_n=4)
     cloze_mc = _cloze_mc_items(frame_fills, frame_bank, max_n=4)
-    activity = (seed // 5) % (3 if lvl_n >= 4 else 2)
+    activity_codes = _l34_activity_order(outline, 4, seed=seed // 5, include_optional=False)
 
     def _do_guided_write() -> bool:
-        if frame_copy:
+        if len(frame_copy) >= _l34_min_items("sentence_guided_writing", 3):
             _record_l34_activity(outline, 4, "sentence_guided_writing")
             _build_prompt_line_page(
                 new_page(), brand_rgb, frame_copy, "Sentences",
@@ -1345,7 +1385,7 @@ def _build_l34_sentence2(new_page, brand_rgb: tuple, outline: BookOutline,
         return False
 
     def _do_choose_word() -> bool:
-        if len(cloze_mc) >= 3:
+        if len(cloze_mc) >= _l34_min_items("sentence_grammar_word_cloze", 3):
             _record_l34_activity(outline, 4, "sentence_grammar_word_cloze")
             _build_mcq_page(new_page(), brand_rgb, "Sentences",
                             _ws_activity_instruction("sentence_grammar_word_cloze"),
@@ -1354,7 +1394,7 @@ def _build_l34_sentence2(new_page, brand_rgb: tuple, outline: BookOutline,
         return False
 
     def _do_correct_sentence() -> bool:
-        if len(frame_fills) >= 3:
+        if len(frame_fills) >= _l34_min_items("sentence_grammar_correction", 3):
             items = []
             for item in frame_fills[:4]:
                 sent = _clean_text(item.get("sentence", ""))
@@ -1365,7 +1405,7 @@ def _build_l34_sentence2(new_page, brand_rgb: tuple, outline: BookOutline,
                 wrong = _false_tf_variant(correct).rstrip(".!?") + "."
                 if wrong and wrong.lower() != correct.lower():
                     items.append({"prompt": f"Correct the sentence: {wrong}"})
-            if len(items) >= 3:
+            if len(items) >= _l34_min_items("sentence_grammar_correction", 3):
                 _record_l34_activity(outline, 4, "sentence_grammar_correction")
                 _build_prompt_line_page(
                     new_page(), brand_rgb, items, "Sentences",
@@ -1376,11 +1416,15 @@ def _build_l34_sentence2(new_page, brand_rgb: tuple, outline: BookOutline,
                 return True
         return False
 
-    choices = [_do_guided_write, _do_choose_word]
-    if lvl_n >= 4:
-        choices.append(_do_correct_sentence)
-    for offset in range(len(choices)):
-        if choices[(activity + offset) % len(choices)]():
+    choices = {
+        "sentence_complete_frame": _do_guided_write,
+        "sentence_guided_writing": _do_guided_write,
+        "sentence_grammar_word_cloze": _do_choose_word,
+        "sentence_grammar_correction": _do_correct_sentence,
+    }
+    for code in activity_codes:
+        fn = choices.get(code)
+        if fn and fn():
             return
     _do_guided_write()
 
@@ -1995,17 +2039,18 @@ def _reading_short_answer_items(reading_text: str, *, max_n: int = 5) -> list[di
         text = _clean_text(sent).rstrip(".!?")
         if not text or text.endswith("?"):
             return None
-        wear_match = re.match(r"^(i|we|they|he|she|it|[A-Z][a-z]+)\s+(wear|wears)\s+(.+?)\s+for\s+(.+?)$", text, flags=re.I)
+        subj_re = r"(i|we|they|he|she|it|[A-Z][a-z]+|(?:A|An|The) [a-z]+)"
+        wear_match = re.match(rf"^{subj_re}\s+(wear|wears)\s+(.+?)\s+for\s+(.+?)$", text, flags=re.I)
         if wear_match:
             subj, verb, obj, context = wear_match.groups()
             cue = obj.split(" and ")[0].split(",")[0].strip()
             plural_subjects = {"we", "they", "people", "children", "kids", "students", "families", "animals", "jobs", "some jobs"}
             aux = "do" if subj.lower() in {"i"} | plural_subjects else "does"
-            subj_text = subj.lower() if subj.lower() in plural_subjects else subj
+            subj_text = subj.lower() if subj.lower() in plural_subjects or re.match(r"^(a|an|the)\s+", subj, flags=re.I) else subj
             return f"What {aux} {subj_text} wear for {context}? Clue: {cue}.", obj
         patterns = [
             (r"^(people|children|kids|students|families|animals|jobs|some jobs)\s+(.+?)$", "What do {subj} do?", "{rest}"),
-            (r"^(i|we|they|he|she|it|[A-Z][a-z]+)\s+(wear|wears|use|uses|need|needs|have|has|make|makes|choose|chooses|keep|keeps|help|helps|bring|brings|live|lives|go|goes|see|sees|like|likes)\s+(.+?)$", "What does {subj} {verb_base}?", "{obj}"),
+            (rf"^{subj_re}\s+(wear|wears|use|uses|need|needs|have|has|make|makes|choose|chooses|keep|keeps|help|helps|bring|brings|live|lives|go|goes|see|sees|like|likes)\s+(.+?)$", "What does {subj} {verb_base}?", "{obj}"),
             (r"^(.+?)\s+(is|are|was|were)\s+(.+?)$", "What {be} {subj}?", "{obj}"),
             (r"^(.+?)\s+can\s+(.+?)$", "What can {subj} do?", "{obj}"),
             (r"^(.+?)\s+will\s+(.+?)$", "What will {subj} do?", "{obj}"),
@@ -2020,6 +2065,8 @@ def _reading_short_answer_items(reading_text: str, *, max_n: int = 5) -> list[di
                 data = {"subj": subj, "obj": obj, "rest": obj, "be": ""}
             elif len(groups) == 3:
                 subj, verb, obj = groups
+                if re.match(r"^(a|an|the)\s+", subj, flags=re.I):
+                    subj = subj.lower()
                 verb_base = {
                     "wears": "wear", "uses": "use", "needs": "need", "has": "have",
                     "makes": "make", "chooses": "choose", "keeps": "keep", "helps": "help",
@@ -2278,7 +2325,16 @@ def build_worksheet(
     # 词汇页①：L3/L4 按 SOP 固定为理解页，优先图文/词义匹配，不再与 P2 连续做拼写题。
     _build_p1_match(new_page(), brand_rgb, data["match_pairs"], images)
     if lvl_n in (3, 4):
-        _record_l34_activity(outline, 1, "vocab_word_definition_matching")
+        valid_defs = len([p for p in data["match_pairs"] if _valid_definition_pair(p)])
+        img_count = len([p for p in (images or []) if p and Path(p).exists()])
+        page1_code = (
+            "vocab_word_definition_matching"
+            if valid_defs >= _l34_min_items("vocab_word_definition_matching", 4)
+            else "vocab_word_picture_matching"
+            if img_count >= _l34_min_items("vocab_word_picture_matching", 4)
+            else "vocab_word_definition_matching"
+        )
+        _record_l34_activity(outline, 1, page1_code)
     # 词汇页② 分级：L0-2 看义/首字母写词；L3 谜语四选一；L4 原文挖空；L5-6 构词补全
     if band == "l02":
         wf = _word_fill_meaning_items(data["match_pairs"], max_n=6)
@@ -2343,6 +2399,8 @@ def build_worksheet(
         if len(sent_mcs) < 3 and data.get("sentence_mcs"):
             sent_mcs = (sent_mcs + data["sentence_mcs"])[:4]
             mc_sub = "Tick (\u2713) the correct sentence."
+        if lvl_n in (3, 4):
+            _record_l34_activity(outline, 3, "sentence_correct_sentence_choice")
         _build_p3_sentence(new_page(), brand_rgb, sent_mcs, images,
                            show_images=(sentence_image_mode != "none"), subtitle=mc_sub,
                            fallback=sent_fb)
@@ -2473,64 +2531,74 @@ def build_worksheet(
 
     if mode == "reading":
         if lvl_n in (3, 4):
-            reading_variant = (_ws_seed(outline) // 11) % 3
-            if reading_variant == 1:
-                page1_q = _reading_mc_sentence_items(reading_text, max_n=5)
-                page1_q = _sanitize_reading_items(page1_q, preferred_kind="mc", max_n=5)
-                if len(page1_q) < 4:
-                    page1_q = _mixed_tf_items(reading_text, max_n=5)
-                    page1_q = _sanitize_reading_items(page1_q, preferred_kind="tf", max_n=5)
-                _record_l34_activity(outline, 5, "reading_supported_sentence_choice")
-                page1_subtitle = _ws_activity_instruction("reading_supported_sentence_choice")
-            else:
+            page1_q = []
+            page1_code = ""
+            for code in _l34_activity_order(outline, 5, seed=_ws_seed(outline) // 11):
+                if code == "reading_supported_sentence_choice":
+                    candidate = _reading_mc_sentence_items(reading_text, max_n=5)
+                    candidate = _sanitize_reading_items(candidate, preferred_kind="mc", max_n=5)
+                elif code == "reading_true_false_literal":
+                    candidate = _mixed_tf_items(reading_text, max_n=5)
+                    candidate = _sanitize_reading_items(candidate, preferred_kind="tf", max_n=5)
+                    if len(candidate) < 4:
+                        candidate = _fill_same_kind_reading_questions(rq_uni[:5], "tf", reading_text, max_n=5)
+                        candidate = _sanitize_reading_items(candidate, preferred_kind="tf", max_n=5)
+                else:
+                    continue
+                if len(candidate) >= _l34_min_items(code, 4):
+                    page1_q = candidate
+                    page1_code = code
+                    break
+            if not page1_q:
                 page1_q = _mixed_tf_items(reading_text, max_n=5)
                 page1_q = _sanitize_reading_items(page1_q, preferred_kind="tf", max_n=5)
-                if len(page1_q) < 4:
-                    page1_q = _fill_same_kind_reading_questions(rq_uni[:5], "tf", reading_text, max_n=5)
-                    page1_q = _sanitize_reading_items(page1_q, preferred_kind="tf", max_n=5)
-                _record_l34_activity(outline, 5, "reading_true_false_literal")
-                page1_subtitle = _ws_activity_instruction("reading_true_false_literal")
+                page1_code = "reading_true_false_literal"
+            _record_l34_activity(outline, 5, page1_code)
+            page1_subtitle = _ws_activity_instruction(page1_code)
             used_q = {_reading_question_key(q.get("q") or "") for q in page1_q}
             is_nonfic_reading = "non" in (getattr(outline, "fiction_type", "") or "").lower()
             sequence_events = _reading_sequence_events(reading_text, max_n=5)
-            use_sequence_page = (not is_nonfic_reading and len(sequence_events) >= 4
-                                 and reading_variant == 2)
-            if use_sequence_page:
-                page2_q = []
-                _record_l34_activity(outline, 6, "reading_sequence_ordering")
-                page2_subtitle = ""
-            elif lvl_n >= 4 and reading_variant == 0:
-                page2_q = _reading_text_correction_items(reading_text, max_n=4)
-                page2_q = _sanitize_reading_items(page2_q, preferred_kind="short", max_n=4)
-                _record_l34_activity(outline, 6, "reading_text_based_correction")
-                page2_subtitle = _ws_activity_instruction("reading_text_based_correction")
-            elif lvl_n >= 4 and reading_variant == 1:
-                page2_q = _reading_cause_effect_items(reading_text, max_n=4)
-                page2_q = _sanitize_reading_items(page2_q, preferred_kind="short", max_n=4)
-                _record_l34_activity(outline, 6, "reading_cause_effect")
-                page2_subtitle = _ws_activity_instruction("reading_cause_effect")
-            elif reading_variant == 2:
+            use_sequence_page = False
+            page2_q = []
+            page2_subtitle = ""
+            page2_code = ""
+            # Page 6 is integration, so use pedagogy-first bank priority rather
+            # than pure rotation: sequence/structure before summary fallback.
+            for code in _l34_activity_order(outline, 6, seed=0):
+                if code == "reading_sequence_ordering":
+                    if not is_nonfic_reading and len(sequence_events) >= _l34_min_items(code, 4):
+                        use_sequence_page = True
+                        page2_code = code
+                        page2_q = []
+                        break
+                    continue
+                if code == "reading_text_based_correction":
+                    candidate = _reading_text_correction_items(reading_text, max_n=4)
+                    candidate = _sanitize_reading_items(candidate, preferred_kind="short", max_n=4)
+                elif code == "reading_cause_effect":
+                    candidate = _reading_cause_effect_items(reading_text, max_n=4)
+                    candidate = _sanitize_reading_items(candidate, preferred_kind="short", max_n=4)
+                elif code == "reading_short_answer":
+                    candidate = _reading_short_answer_items(reading_text, max_n=5)
+                    candidate = _sanitize_reading_items(candidate, preferred_kind="short", max_n=5)
+                elif code == "reading_summary_cloze":
+                    candidate = _reading_cloze_items(reading_text, used_q, max_n=4)
+                    candidate = _sanitize_reading_items(candidate, preferred_kind="short", max_n=4)
+                else:
+                    continue
+                if len(candidate) >= _l34_min_items(code, 4):
+                    page2_q = candidate
+                    page2_code = code
+                    break
+            if not page2_code:
                 page2_q = _reading_short_answer_items(reading_text, max_n=5)
                 page2_q = _sanitize_reading_items(page2_q, preferred_kind="short", max_n=5)
-                _record_l34_activity(outline, 6, "reading_short_answer")
-                page2_subtitle = _ws_activity_instruction("reading_short_answer")
-            else:
-                page2_q = _reading_cloze_items(reading_text, used_q, max_n=4)
-                page2_q = _sanitize_reading_items(page2_q, preferred_kind="short", max_n=4)
-                _record_l34_activity(outline, 6, "reading_summary_cloze")
-                page2_subtitle = _ws_activity_instruction("reading_summary_cloze")
-            if len(page2_q) < 4:
-                page2_q = _reading_short_answer_items(reading_text, max_n=5)
-                page2_q = _sanitize_reading_items(page2_q, preferred_kind="short", max_n=5)
-                _record_l34_activity(outline, 6, "reading_short_answer")
-                page2_subtitle = _ws_activity_instruction("reading_short_answer")
-            if len(page2_q) < 4:
-                alt_q = _reading_cloze_items(reading_text, used_q, max_n=4)
-                alt_q = _sanitize_reading_items(alt_q, preferred_kind="short", max_n=4)
-                if len(alt_q) > len(page2_q):
-                    page2_q = alt_q
-                    _record_l34_activity(outline, 6, "reading_summary_cloze")
-                    page2_subtitle = _ws_activity_instruction("reading_summary_cloze")
+                page2_code = "reading_short_answer" if len(page2_q) >= 4 else "reading_summary_cloze"
+                if len(page2_q) < 4:
+                    page2_q = _reading_cloze_items(reading_text, used_q, max_n=4)
+                    page2_q = _sanitize_reading_items(page2_q, preferred_kind="short", max_n=4)
+            _record_l34_activity(outline, 6, page2_code)
+            page2_subtitle = "" if use_sequence_page else _ws_activity_instruction(page2_code)
             _build_reading_page(
                 new_page(), brand_rgb, reading_text, page1_q,
                 subtitle=page1_subtitle,
@@ -2632,6 +2700,8 @@ def build_worksheet(
 
     # Page 7: Graphic Organizer. Page 8: Writing.
     if lvl_n in (3, 4):
+        _record_l34_activity(outline, 7, _l34_go_activity_code(outline, go_mode))
+        _record_l34_activity(outline, 8, "writing_organizer_to_writing")
         _build_l34_graphic_organizer_page(new_page(), brand_rgb, data, outline, go_mode)
         _build_l34_writing_page(new_page(), brand_rgb, outline)
     else:
@@ -6010,6 +6080,23 @@ _KID_DICT: dict[str, str] = {
     "parts of the world": "different places on Earth",
     "season":    "one part of the year, like spring or summer",
     "seasons":   "the four parts of the year: spring, summer, autumn, and winter",
+    # L3-L4 common planning, places, and work words.
+    "week":      "seven days from Monday to Sunday",
+    "homework":  "school work that students do at home",
+    "plan":      "an idea about what to do and when to do it",
+    "practice":  "to do something many times to get better",
+    "ocean":     "a very large area of salt water",
+    "mountain":  "a very high piece of land",
+    "desert":    "a dry place with very little rain",
+    "travel":    "to go from one place to another",
+    "doctor":    "a person who helps sick people get better",
+    "chef":      "a person whose job is to cook food",
+    "firefighter": "a person who helps stop fires",
+    "builder":   "a person who builds or fixes buildings",
+    "helmet":    "a hard hat that protects your head",
+    "apron":     "clothing worn over the front of the body to keep clean",
+    "boots":     "strong shoes that cover the feet and ankles",
+    "hard hat":  "a strong hat that protects a worker's head",
 }
 
 
