@@ -505,22 +505,57 @@ def _official_sentence_frame_mc_items(
 ) -> list[dict]:
     """Sentence recognition page: choose the sentence that matches the syllabus frame."""
     out: list[dict] = []
-    answers = [str(w).strip() for w in (bank or []) if str(w).strip()]
     seen: set[str] = set()
+
+    def _verb_3rd(base: str) -> str:
+        base = (base or "").strip()
+        if not base:
+            return base
+        if base.endswith(("s", "x", "z", "ch", "sh", "o")):
+            return base + "es"
+        if base.endswith("y") and len(base) > 1 and base[-2].lower() not in "aeiou":
+            return base[:-1] + "ies"
+        return base + "s"
+
+    def _wrong_sentence_variant(sentence: str) -> str:
+        """Make one clear grammar/pattern error without creating nonsense phrases."""
+        s = sentence.strip().rstrip(".!?")
+        replacements = [
+            (r"\bthere are\b", "there is"),
+            (r"\bthere is\b", "there are"),
+            (r"\bcan ([a-z]+)\b", lambda m: "can " + _verb_3rd(m.group(1))),
+            (r"\bwill ([a-z]+)\b", lambda m: "will " + _verb_3rd(m.group(1))),
+            (r"\bI wear\b", "I wears"),
+            (r"\bI use\b", "I uses"),
+            (r"\bPeople wear\b", "People wears"),
+            (r"\bWorkers wear\b", "Workers wears"),
+            (r"\bFamilies can\b", "Families can"),
+            (r"\bSome families are\b", "Some families is"),
+            (r"\bSome families (cook|play|go|live|make|help|share|give)\b",
+             lambda m: "Some families " + _verb_3rd(m.group(1))),
+            (r"\bSome ocean animals live\b", "Some ocean animals lives"),
+            (r"\bOcean animals live\b", "Ocean animals lives"),
+            (r"\bCoral reefs are\b", "Coral reefs is"),
+            (r"\bKelp looks\b", "Kelp look"),
+            (r"\bA ([a-z]+) wears\b", lambda m: f"A {m.group(1)} wear"),
+            (r"\bThe ([a-z]+) wears\b", lambda m: f"The {m.group(1)} wear"),
+            (r"\bThey keep\b", "They keeps"),
+            (r"\bThey make\b", "They makes"),
+        ]
+        for pat, repl in replacements:
+            if re.search(pat, s, flags=re.I):
+                wrong = re.sub(pat, repl, s, count=1, flags=re.I)
+                return wrong.rstrip(".!?") + "."
+        return ""
+
     for item in fills or []:
         prompt = _clean_text(item.get("sentence", ""))
         ans = _clean_text(item.get("answer", ""))
         if not prompt or not ans or "___" not in prompt:
             continue
         correct = re.sub(r"_{3,}", ans, prompt, count=1)
-        wrong_ans = ""
-        for other in answers:
-            if other.lower() != ans.lower():
-                wrong_ans = other
-                break
-        if wrong_ans:
-            wrong = re.sub(r"_{3,}", wrong_ans, prompt, count=1)
-        else:
+        wrong = _wrong_sentence_variant(correct)
+        if not wrong:
             continue
         if not wrong or wrong.lower() == correct.lower():
             continue
@@ -1999,7 +2034,7 @@ def _reading_mc_sentence_items(reading_text: str, *, max_n: int = 5) -> list[dic
     sents = [
         capitalize_names(s.strip().rstrip(".!?"))
         for s in _split_story_sentences(story)
-        if 18 <= len(s.strip()) <= 88
+        if 18 <= len(s.strip()) <= 88 and not s.strip().endswith("?")
     ]
     out: list[dict] = []
     seen: set[str] = set()
@@ -2095,10 +2130,22 @@ def _reading_short_answer_items(reading_text: str, *, max_n: int = 5) -> list[di
         text = _clean_text(sent).rstrip(".!?")
         if not text or text.endswith("?"):
             return None
-        subj_re = r"(i|we|they|he|she|it|[A-Z][a-z]+|(?:A|An|The|Some|Many|Different) [a-z]+)"
+        there_match = re.match(r"^there\s+(is|are)\s+(.+?)$", text, flags=re.I)
+        if there_match:
+            be, obj = there_match.groups()
+            near_match = re.match(r"(.+?)\s+near\s+(.+?)(?:\s+with\s+.+)?$", obj, flags=re.I)
+            if near_match:
+                thing, place = near_match.groups()
+                return f"What is near {place}?", _article_phrase(thing)
+            return "What does the passage say there are?", _article_phrase(obj)
+        subj_re = (
+            r"(i|we|they|he|she|it|Mia and Tommy|Some ocean animals|Ocean animals|"
+            r"Coral reefs|Deep-sea fish|[A-Z][a-z]+|(?:A|An|The|Some|Many|Different) [a-z]+(?: [a-z]+)?)"
+        )
         plural_subjects = {
             "we", "they", "people", "children", "kids", "students", "families",
-            "animals", "jobs", "workers", "some jobs",
+            "animals", "jobs", "workers", "some jobs", "ocean animals",
+            "some ocean animals", "coral reefs", "deep-sea fish",
         }
 
         def _is_plural_subject(subj: str) -> bool:
@@ -2116,6 +2163,10 @@ def _reading_short_answer_items(reading_text: str, *, max_n: int = 5) -> list[di
                 return low
             return subj
 
+        looks_like_match = re.match(rf"^{subj_re}\s+looks\s+like\s+(.+?)$", text, flags=re.I)
+        if looks_like_match:
+            subj, obj = looks_like_match.groups()
+            return f"What does {_student_subject(subj)} look like?", obj
         wear_match = re.match(rf"^{subj_re}\s+(wear|wears)\s+(.+?)\s+for\s+(.+?)$", text, flags=re.I)
         if wear_match:
             subj, verb, obj, context = wear_match.groups()
@@ -2132,7 +2183,7 @@ def _reading_short_answer_items(reading_text: str, *, max_n: int = 5) -> list[di
             (r"^(.+?)\s+will\s+(.+?)$", "What will {subj} do?", "{obj}"),
         ]
         for pat, qtpl, atpl in patterns:
-            m = re.match(pat, text)
+            m = re.match(pat, text, flags=re.I)
             if not m:
                 continue
             groups = m.groups()
@@ -6193,6 +6244,10 @@ _KID_DICT: dict[str, str] = {
     "apron":     "clothing worn over the front of the body to keep clean",
     "boots":     "strong shoes that cover the feet and ankles",
     "hard hat":  "a strong hat that protects a worker's head",
+    "kelp":      "a large brown sea plant that grows in the ocean",
+    "seal":      "an ocean animal with flippers that can swim well",
+    "tropical":  "from a warm place near the equator",
+    "equator":   "an imaginary line around the middle of the Earth",
     "look different": "to not look the same",
     "go on walks": "to walk outside for fun or exercise",
     "far apart": "with a long distance between people or places",
