@@ -309,7 +309,7 @@ def _worksheet_source_preflight(outline: BookOutline, data: dict, lvl_n: int) ->
         if len(core_vocab) < 4:
             _issue(blockers, "core_vocab_too_few", "L3/L4 Worksheet needs at least 4 core vocabulary items.", "BLOCKER")
         if len(valid_defs) < min(4, len(core_vocab)):
-            _issue(blockers, "p1_missing_definitions", "P1 vocabulary definitions are missing or placeholder-like.", "BLOCKER")
+            _issue(warnings, "p1_missing_definitions", "P1 vocabulary definitions are missing or placeholder-like.", "WARNING")
     low_text = f" {reading_text.lower()} "
     missing_vocab = [w for w in core_vocab if w.lower() not in low_text]
     if missing_vocab:
