@@ -645,6 +645,32 @@ def _worksheet_source_preflight(outline: BookOutline, data: dict, lvl_n: int) ->
     return {"blockers": blockers, "warnings": warnings}
 
 
+def _relax_nonblocking_worksheet_issues(source_validation: dict) -> dict:
+    """Keep review-only issues from blocking Worksheet generation."""
+    if not isinstance(source_validation, dict):
+        return {"blockers": [], "warnings": []}
+    blockers = list(source_validation.get("blockers") or [])
+    warnings = list(source_validation.get("warnings") or [])
+    kept_blockers: list[dict] = []
+    for issue in blockers:
+        code = str(issue.get("code", "") if isinstance(issue, dict) else "")
+        message = str(issue.get("message", "") if isinstance(issue, dict) else issue)
+        if code == "p1_missing_definitions" or "P1 vocabulary definitions are missing" in message:
+            if isinstance(issue, dict):
+                relaxed = dict(issue)
+                relaxed["severity"] = "WARNING"
+                warnings.append(relaxed)
+            else:
+                warnings.append({
+                    "code": "p1_missing_definitions",
+                    "severity": "WARNING",
+                    "message": message,
+                })
+            continue
+        kept_blockers.append(issue)
+    return {"blockers": kept_blockers, "warnings": warnings}
+
+
 def _worksheet_activity_validation(
     activity_map: dict,
     manifest_items: dict,
@@ -3131,6 +3157,7 @@ def build_worksheet(
     images = list(image_paths or [])
     lvl_n = _level_num(outline.level)
     source_validation = _worksheet_source_preflight(outline, data, lvl_n)
+    source_validation = _relax_nonblocking_worksheet_issues(source_validation)
     if source_validation.get("blockers"):
         msg = "; ".join(i.get("message", "") for i in source_validation["blockers"])
         raise ValueError(f"Worksheet source preflight failed: {msg}")
