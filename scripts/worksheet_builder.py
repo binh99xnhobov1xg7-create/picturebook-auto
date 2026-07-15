@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import contextlib
 import hashlib
+import json
 import random
 import re
 from pathlib import Path
@@ -175,6 +176,20 @@ def _record_l34_activity(outline: Optional[BookOutline], page: int, code: str) -
         return
 
 
+def _record_worksheet_items(outline: Optional[BookOutline], page: int, items: list[dict]) -> None:
+    """Record structured page items for the worksheet manifest and later TG sync."""
+    if outline is None:
+        return
+    try:
+        page_items = getattr(outline, "_worksheet_manifest_items", None)
+        if not isinstance(page_items, dict):
+            page_items = {}
+            setattr(outline, "_worksheet_manifest_items", page_items)
+        page_items[page] = list(items or [])
+    except Exception:
+        return
+
+
 def _l34_activity_order(outline: BookOutline, page: int, *, seed: int,
                         include_optional: bool = False) -> list[str]:
     lvl = _level_num(getattr(outline, "level", "") or "")
@@ -204,6 +219,168 @@ def _l34_go_activity_code(outline: BookOutline, go_mode: str) -> str:
     if mode in {"timeline", "sequence", "planchart"}:
         return "go_sequence_chart"
     return "go_problem_plan_result"
+
+
+def _worksheet_manifest_path(out_path: Path) -> Path:
+    return out_path.with_name(out_path.stem + "_manifest.json")
+
+
+def _worksheet_lesson_id(outline: BookOutline) -> str:
+    lvl = _level_num(getattr(outline, "level", "") or "")
+    book_raw = str(getattr(outline, "book_number", "") or "").strip()
+    digits = "".join(ch for ch in book_raw if ch.isdigit())
+    return f"L{lvl}-B{digits or book_raw or 'unknown'}"
+
+
+def _worksheet_story_sentences(text: str) -> list[dict]:
+    rows: list[dict] = []
+    for idx, sent in enumerate(re.split(r"(?<=[.!?])\s+", _clean_text(text or "")), 1):
+        sent = sent.strip()
+        if sent:
+            rows.append({"id": f"S{idx}", "text": sent})
+    return rows
+
+
+def _worksheet_content_hash(text: str) -> str:
+    normalized = re.sub(r"\s+", " ", _clean_text(text or "")).strip().lower()
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:16] if normalized else ""
+
+
+def _worksheet_image_checks(images: list[Path]) -> list[dict]:
+    checks: list[dict] = []
+    for idx, raw in enumerate(images or []):
+        path = Path(raw)
+        row = {
+            "index": idx,
+            "path": str(path),
+            "exists": path.exists(),
+            "bytes": path.stat().st_size if path.exists() else 0,
+            "width": None,
+            "height": None,
+            "blank_like": None,
+        }
+        if path.exists():
+            try:
+                from PIL import Image, ImageStat  # type: ignore
+                with Image.open(str(path)) as im:
+                    row["width"], row["height"] = im.size
+                    stat = ImageStat.Stat(im.convert("RGB").resize((32, 32)))
+                    row["blank_like"] = max(stat.stddev or [0]) < 2.0
+            except Exception:
+                row["blank_like"] = None
+        checks.append(row)
+    return checks
+
+
+def _worksheet_go_type(outline: BookOutline, go_mode: str = "") -> str:
+    explicit = (
+        getattr(outline, "graphic_organizer", "")
+        or getattr(outline, "graphic_organizer_desc", "")
+        or ""
+    ).strip()
+    if explicit:
+        return explicit
+    code = _l34_go_activity_code(outline, go_mode)
+    return {
+        "go_sequence_chart": "Sequence Chart",
+        "go_problem_plan_result": "Problem-Plan-Result Chart",
+        "go_fact_web": "Fact Web",
+        "go_compare_chart": "Comparison Chart",
+    }.get(code, code)
+
+
+def _worksheet_source_preflight(outline: BookOutline, data: dict, lvl_n: int) -> dict:
+    blockers: list[dict] = []
+    warnings: list[dict] = []
+    title = (getattr(outline, "title", "") or "").strip()
+    reading_text = _clean_text(data.get("reading_text", "") or getattr(outline, "story_text", ""))
+    pairs = list(data.get("match_pairs") or [])
+    core_vocab = [str(p.get("word", "")).strip() for p in pairs if str(p.get("word", "")).strip()]
+    valid_defs = [p for p in pairs if _valid_definition_pair(p)]
+
+    def _issue(bucket: list[dict], code: str, message: str, severity: str) -> None:
+        bucket.append({"code": code, "severity": severity, "message": message})
+
+    if not title:
+        _issue(blockers, "missing_title", "Worksheet title is empty.", "BLOCKER")
+    if not reading_text:
+        _issue(blockers, "missing_passage", "Book passage text is empty.", "BLOCKER")
+    if lvl_n in (3, 4):
+        if len(core_vocab) < 4:
+            _issue(blockers, "core_vocab_too_few", "L3/L4 Worksheet needs at least 4 core vocabulary items.", "BLOCKER")
+        if len(valid_defs) < min(4, len(core_vocab)):
+            _issue(blockers, "p1_missing_definitions", "P1 vocabulary definitions are missing or placeholder-like.", "BLOCKER")
+    low_text = f" {reading_text.lower()} "
+    missing_vocab = [w for w in core_vocab if w.lower() not in low_text]
+    if missing_vocab:
+        _issue(
+            warnings,
+            "core_vocab_not_in_passage",
+            "Core vocabulary not found verbatim in passage: " + ", ".join(missing_vocab),
+            "WARNING",
+        )
+    return {"blockers": blockers, "warnings": warnings}
+
+
+def _write_worksheet_manifest(
+    outline: BookOutline,
+    out_path: Path,
+    data: dict,
+    images: list[Path],
+    go_mode: str,
+    source_validation: dict,
+) -> Path:
+    reading_text = _clean_text(data.get("reading_text", "") or getattr(outline, "story_text", ""))
+    activity_map = getattr(outline, "_worksheet_activity_types", {}) or {}
+    manifest_items = getattr(outline, "_worksheet_manifest_items", {}) or {}
+    pairs = [
+        {"word": str(p.get("word", "")).strip(), "definition": str(p.get("def", "")).strip()}
+        for p in (data.get("match_pairs") or [])
+        if str(p.get("word", "")).strip()
+    ]
+    manifest = {
+        "schema_version": "worksheet_manifest_v1",
+        "lesson_spec": {
+            "lesson_id": _worksheet_lesson_id(outline),
+            "level": _level_num(getattr(outline, "level", "") or ""),
+            "book_number": str(getattr(outline, "book_number", "") or ""),
+            "title": str(getattr(outline, "title", "") or ""),
+            "source_version": "S&S",
+            "content_hash": _worksheet_content_hash(reading_text),
+            "core_vocabulary": [p["word"] for p in pairs],
+            "target_pattern": _sentence_frame_text(outline),
+            "sample_sentence": _display_sentence_frame(outline),
+            "reading_skill": str(getattr(outline, "reading_skill", "") or ""),
+            "reading_strategy": str(getattr(outline, "reading_strategy", "") or ""),
+            "graphic_organizer_type": _worksheet_go_type(outline, go_mode),
+            "asset_lesson_id": _worksheet_lesson_id(outline),
+        },
+        "passage_sentences": _worksheet_story_sentences(reading_text),
+        "page_plan": [{"page": page, "activity_code": activity_map.get(page, "")} for page in range(1, 9)],
+        "items": {
+            "page_1": pairs,
+            "page_2": manifest_items.get(2, []),
+            "page_3": manifest_items.get(3, []),
+            "page_4": manifest_items.get(4, []),
+            "page_5": manifest_items.get(5, []),
+            "page_6": manifest_items.get(6, []),
+            "page_7": {
+                "graphic_organizer_type": _worksheet_go_type(outline, go_mode),
+                "activity_code": activity_map.get(7, ""),
+            },
+            "page_8": {
+                "activity_code": activity_map.get(8, ""),
+                "must_use_go": True,
+                "target_pattern": _sentence_frame_text(outline),
+            },
+        },
+        "image_checks": _worksheet_image_checks(images),
+        "validation_results": source_validation,
+        "release_status": "blocked" if source_validation.get("blockers") else "review_required",
+    }
+    path = _worksheet_manifest_path(out_path)
+    path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+    return path
 
 
 # ============================================================
@@ -1367,6 +1544,7 @@ def _build_l34_vocab2(new_page, brand_rgb: tuple, data: dict,
         code = "vocab_multi_word_cloze" if any(" " in str(w).strip() for w in bank) else "vocab_contextual_word_bank_cloze"
         if len(fills) >= _l34_min_items(code, 3):
             _record_l34_activity(outline, 2, code)
+            _record_worksheet_items(outline, 2, fills)
             _build_p2_fill(new_page(), brand_rgb, fills, bank, images)
             return True
         return False
@@ -1375,6 +1553,7 @@ def _build_l34_vocab2(new_page, brand_rgb: tuple, data: dict,
         riddles = _riddle_mc_items(pairs, max_n=4)
         if len(riddles) >= _l34_min_items("vocab_contextual_choice", 3):
             _record_l34_activity(outline, 2, "vocab_contextual_choice")
+            _record_worksheet_items(outline, 2, riddles)
             _build_mcq_page(new_page(), brand_rgb, "Vocabulary",
                             _ws_activity_instruction("vocab_contextual_choice"),
                             riddles, answer_paren=False)
@@ -1385,6 +1564,7 @@ def _build_l34_vocab2(new_page, brand_rgb: tuple, data: dict,
         items = _word_fill_meaning_items(pairs, max_n=4)
         if len(items) >= _l34_min_items("vocab_contextual_clue_write", 3):
             _record_l34_activity(outline, 2, "vocab_contextual_clue_write")
+            _record_worksheet_items(outline, 2, items)
             _build_word_fill_page(new_page(), brand_rgb, items, "Vocabulary",
                                   _ws_activity_instruction("vocab_contextual_clue_write"))
             return True
@@ -1393,6 +1573,7 @@ def _build_l34_vocab2(new_page, brand_rgb: tuple, data: dict,
     def _do_definition_match() -> bool:
         if len([p for p in pairs if _valid_definition_pair(p)]) >= _l34_min_items("vocab_word_definition_matching", 4):
             _record_l34_activity(outline, 2, "vocab_word_definition_matching")
+            _record_worksheet_items(outline, 2, pairs)
             _build_p1_match(new_page(), brand_rgb, pairs, images or [])
             return True
         return False
@@ -1409,6 +1590,7 @@ def _build_l34_vocab2(new_page, brand_rgb: tuple, data: dict,
         if fn and fn():
             return
     _record_l34_activity(outline, 2, "vocab_contextual_word_bank_cloze")
+    _record_worksheet_items(outline, 2, fills)
     _build_p2_fill(new_page(), brand_rgb, fills, bank, images)
 
 
@@ -1424,6 +1606,7 @@ def _build_l34_sentence2(new_page, brand_rgb: tuple, outline: BookOutline,
     def _do_guided_write() -> bool:
         if len(frame_copy) >= _l34_min_items("sentence_guided_writing", 3):
             _record_l34_activity(outline, 4, "sentence_guided_writing")
+            _record_worksheet_items(outline, 4, frame_copy)
             _build_prompt_line_page(
                 new_page(), brand_rgb, frame_copy, "Sentences",
                 f"{_ws_activity_instruction('sentence_guided_writing')} Follow the example: {_display_sentence_frame(outline)}",
@@ -1436,6 +1619,7 @@ def _build_l34_sentence2(new_page, brand_rgb: tuple, outline: BookOutline,
     def _do_choose_word() -> bool:
         if len(cloze_mc) >= _l34_min_items("sentence_grammar_word_cloze", 3):
             _record_l34_activity(outline, 4, "sentence_grammar_word_cloze")
+            _record_worksheet_items(outline, 4, cloze_mc)
             _build_mcq_page(new_page(), brand_rgb, "Sentences",
                             _ws_activity_instruction("sentence_grammar_word_cloze"),
                             cloze_mc)
@@ -1456,6 +1640,7 @@ def _build_l34_sentence2(new_page, brand_rgb: tuple, outline: BookOutline,
                     items.append({"prompt": f"Correct the sentence: {wrong}"})
             if len(items) >= _l34_min_items("sentence_grammar_correction", 3):
                 _record_l34_activity(outline, 4, "sentence_grammar_correction")
+                _record_worksheet_items(outline, 4, items)
                 _build_prompt_line_page(
                     new_page(), brand_rgb, items, "Sentences",
                     _ws_activity_instruction("sentence_grammar_correction"),
@@ -2424,6 +2609,10 @@ def build_worksheet(
         logo_icon = BRAND_DIR / "dino_logo.png"  # 兜底
     images = list(image_paths or [])
     lvl_n = _level_num(outline.level)
+    source_validation = _worksheet_source_preflight(outline, data, lvl_n)
+    if source_validation.get("blockers"):
+        msg = "; ".join(i.get("message", "") for i in source_validation["blockers"])
+        raise ValueError(f"Worksheet source preflight failed: {msg}")
 
     # v2.2：优先以官方 A4 模板为底版（按级别克隆 slide → 100% 还原边框/Logo/Name/配色/页脚）；
     # 模板缺失时退回旧的自绘外框。
@@ -2456,6 +2645,7 @@ def build_worksheet(
     # ===== 2 词汇页（分级选型；学什么考什么）=====
     # 词汇页①：L3/L4 按 SOP 固定为理解页，优先图文/词义匹配，不再与 P2 连续做拼写题。
     _build_p1_match(new_page(), brand_rgb, data["match_pairs"], images)
+    _record_worksheet_items(outline, 1, data["match_pairs"])
     if lvl_n in (3, 4):
         valid_defs = len([p for p in data["match_pairs"] if _valid_definition_pair(p)])
         img_count = len([p for p in (images or []) if p and Path(p).exists()])
@@ -2504,6 +2694,7 @@ def build_worksheet(
             frame_mcs = _official_sentence_frame_mc_items(outline, frame_fills, frame_bank, max_n=4)
             if frame_mcs:
                 _record_l34_activity(outline, 3, "sentence_target_pattern_choice")
+                _record_worksheet_items(outline, 3, frame_mcs)
                 _build_p3_sentence(
                     new_page(), brand_rgb, frame_mcs, images,
                     show_images=(sentence_image_mode != "none"),
@@ -2512,6 +2703,7 @@ def build_worksheet(
                 )
             else:
                 _record_l34_activity(outline, 3, "sentence_complete_frame")
+                _record_worksheet_items(outline, 3, frame_fills)
                 _build_p2_fill(
                     new_page(), brand_rgb, frame_fills, frame_bank, images,
                     title="Sentences",
@@ -2690,6 +2882,7 @@ def build_worksheet(
                 page1_q = _sanitize_reading_items(page1_q, preferred_kind="tf", max_n=5)
                 page1_code = "reading_true_false_literal"
             _record_l34_activity(outline, 5, page1_code)
+            _record_worksheet_items(outline, 5, page1_q)
             page1_subtitle = _ws_activity_instruction(page1_code)
             used_q = {_reading_question_key(q.get("q") or "") for q in page1_q}
             is_nonfic_reading = "non" in (getattr(outline, "fiction_type", "") or "").lower()
@@ -2705,7 +2898,10 @@ def build_worksheet(
                     if not is_nonfic_reading and len(sequence_events) >= _l34_min_items(code, 4):
                         use_sequence_page = True
                         page2_code = code
-                        page2_q = []
+                        page2_q = [
+                            {"event": event, "answer_order": idx + 1, "is_open": False}
+                            for idx, event in enumerate(sequence_events)
+                        ]
                         break
                     continue
                 if code == "reading_text_based_correction":
@@ -2734,6 +2930,7 @@ def build_worksheet(
                     page2_q = _reading_cloze_items(reading_text, used_q, max_n=4)
                     page2_q = _sanitize_reading_items(page2_q, preferred_kind="short", max_n=4)
             _record_l34_activity(outline, 6, page2_code)
+            _record_worksheet_items(outline, 6, page2_q)
             page2_subtitle = "" if use_sequence_page else _ws_activity_instruction(page2_code)
             _build_reading_page(
                 new_page(), brand_rgb, reading_text, page1_q,
@@ -2875,6 +3072,7 @@ def build_worksheet(
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     prs.save(str(out_path))
+    _write_worksheet_manifest(outline, out_path, data, images, go_mode, source_validation)
     return out_path
 
 

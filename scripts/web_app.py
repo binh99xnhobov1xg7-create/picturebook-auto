@@ -2395,6 +2395,7 @@ def _build_and_assemble_teaching_kit(
     extract_path = run_dir / f"{name_prefix}_Teaching_Extract.txt"
 
     build_worksheet(outline, ws_path, image_paths=image_paths)
+    ws_manifest_path = ws_path.with_name(f"{ws_path.stem}_manifest.json")
     build_reading_report(outline, rr_path, with_answers=rr_answers)
     build_teacher_guide(outline, tg_path)
     _write_teaching_extract_txt(outline, ec, extract_path)
@@ -2404,13 +2405,14 @@ def _build_and_assemble_teaching_kit(
 
     kit_zip = run_dir / f"{name_prefix}_Teaching_Kit.zip"
     with zipfile.ZipFile(kit_zip, "w", zipfile.ZIP_DEFLATED) as z:
-        for p in (ws_path, rr_path, tg_path):
+        for p in (ws_path, ws_manifest_path, rr_path, tg_path):
             if p and Path(p).is_file():
                 pp = Path(p)
                 z.write(pp, arcname=pp.name)
 
     return {
         "ws": ws_path, "rr": rr_path, "tg": tg_path,
+        "ws_manifest": ws_manifest_path,
         "extract": extract_path, "zip": kit_zip,
         "rr_ws_final_pdf": rrws_result.final_pdf,
         "rr_ws_check_report": check_report,
@@ -2515,8 +2517,14 @@ def _build_worksheet_only(
     ws_path = run_dir / f"{name_prefix}_Worksheet.pptx"
     extract_path = run_dir / f"{name_prefix}_Teaching_Extract.txt"
     build_worksheet(outline, ws_path, image_paths=image_paths)
+    ws_manifest_path = ws_path.with_name(f"{ws_path.stem}_manifest.json")
     _write_teaching_extract_txt(outline, ec, extract_path)
-    return {"ws": ws_path, "extract": extract_path, "name_prefix": name_prefix}  # type: ignore[dict-item]
+    return {
+        "ws": ws_path,
+        "ws_manifest": ws_manifest_path,
+        "extract": extract_path,
+        "name_prefix": name_prefix,
+    }  # type: ignore[dict-item]
 
 
 def _merge_tg_worksheet_sections(uploaded: list[dict], fallback: list[dict]) -> list[dict]:
@@ -3002,6 +3010,9 @@ def _render_upload_download_row(paths: dict) -> None:
             if p.is_file():
                 with open(p, "rb") as fh:
                     st.download_button(f"⬇️ {label}", fh.read(), file_name=p.name, key=f"up_dl_{key}")
+    manifest_p = Path(paths.get("ws_manifest", ""))
+    if manifest_p.is_file():
+        _download_button(manifest_p, "⬇️ 下载 Worksheet 质量清单 JSON")
 
 
 def _render_upload_batch_mode() -> None:
@@ -3339,13 +3350,17 @@ def _render_upload_ws_only_mode() -> None:
     st.success("Worksheet 已单独生成。")
     ws_path = Path(paths.get("ws", ""))
     extract_path = Path(paths.get("extract", ""))
-    cols = st.columns(2)
+    manifest_path = Path(paths.get("ws_manifest", ""))
+    cols = st.columns(3)
     with cols[0]:
         if ws_path.is_file():
             _download_button(ws_path, "⬇️ 下载 Worksheet PPTX", primary=True)
     with cols[1]:
         if extract_path.is_file():
             _download_button(extract_path, "⬇️ 下载抽取摘要")
+    with cols[2]:
+        if manifest_path.is_file():
+            _download_button(manifest_path, "⬇️ 下载质量清单 JSON")
 
 
 def _render_upload_tg_only_mode() -> None:
