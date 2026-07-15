@@ -242,8 +242,7 @@ L34_WORKSHEET_ACTIVITIES: dict[str, WorksheetActivity] = {
         l4_support="Longer target-pattern sentences.",
         required_fields=("scrambled_words", "answer"),
         min_items=3,
-        priority=50,
-        optional=True,
+        priority=35,
     ),
 
     # Page 5: Reading direct facts.
@@ -282,7 +281,6 @@ L34_WORKSHEET_ACTIVITIES: dict[str, WorksheetActivity] = {
         required_fields=("question", "options", "answer", "evidence"),
         min_items=4,
         priority=30,
-        optional=True,
     ),
 
     # Page 6: Reading integration.

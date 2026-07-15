@@ -48,6 +48,7 @@ from text_format import (
     is_sentence_like,
 )
 from worksheet_activity_policy import (
+    activity_required_fields as _ws_activity_required_fields,
     activity_min_items as _ws_activity_min_items,
     allowed_activity_codes as _ws_allowed_activity_codes,
     instruction as _ws_activity_instruction,
@@ -502,7 +503,40 @@ def _l34_min_items(code: str, default: int = 4) -> int:
 def _l34_go_activity_code(outline: BookOutline, go_mode: str) -> str:
     """Map the rendered organizer mode to the worksheet activity bank."""
     is_nonfic = "non" in (getattr(outline, "fiction_type", "") or "").lower()
+    explicit_go = " ".join(
+        str(getattr(outline, name, "") or "")
+        for name in (
+            "graphic_organizer",
+            "graphic_organizer_desc",
+            "reading_skill",
+            "reading_strategy",
+        )
+    ).strip().lower()
+    if explicit_go:
+        if any(k in explicit_go for k in (
+            "compare", "contrast", "venn", "same", "different",
+        )):
+            return "go_compare_chart"
+        if any(k in explicit_go for k in (
+            "timeline", "sequence", "sequencing", "plan chart", "journey",
+            "steps", "process", "order", "procedure",
+        )):
+            return "go_sequence_chart"
+        if any(k in explicit_go for k in (
+            "problem", "solution", "action", "result", "story map",
+            "story element", "swbst", "somebody", "wanted", "beginning",
+            "middle", "end",
+        )):
+            return "go_problem_plan_result"
+        if any(k in explicit_go for k in (
+            "classification", "classify", "category", "categories",
+            "fact", "fact web", "bubble", "main idea", "details",
+            "topic", "habitat", "labeled diagram",
+        )):
+            return "go_fact_web"
     mode = (go_mode or "").strip().lower()
+    if mode in {"l3bubble", "bubble", "factweb", "fact_web"}:
+        return "go_fact_web"
     if is_nonfic:
         return "go_fact_web"
     if mode in {"timeline", "sequence", "planchart"}:
@@ -611,6 +645,74 @@ def _worksheet_source_preflight(outline: BookOutline, data: dict, lvl_n: int) ->
     return {"blockers": blockers, "warnings": warnings}
 
 
+def _worksheet_activity_validation(
+    activity_map: dict,
+    manifest_items: dict,
+) -> dict:
+    blockers: list[dict] = []
+    warnings: list[dict] = []
+
+    def _issue(bucket: list[dict], code: str, message: str, severity: str) -> None:
+        bucket.append({"code": code, "severity": severity, "message": message})
+
+    for page in range(1, 9):
+        code = str(activity_map.get(page, "") or "").strip()
+        if not code:
+            _issue(warnings, f"p{page}_missing_activity", f"Page {page} has no recorded activity code.", "WARNING")
+            continue
+        required = _ws_activity_required_fields(code)
+        if page <= 6:
+            items = manifest_items.get(page, [])
+            if not isinstance(items, list) or not items:
+                _issue(warnings, f"p{page}_missing_items", f"Page {page} has no structured worksheet items.", "WARNING")
+                continue
+            missing_counts = 0
+            for item in items:
+                if not isinstance(item, dict):
+                    missing_counts += 1
+                    continue
+                for field in required:
+                    if field in {"answer_map", "word_bank"}:
+                        continue
+                    if field == "answer" and (
+                        item.get("answer") or item.get("correct") is not None or item.get("answer_order") is not None
+                    ):
+                        continue
+                    if field == "definition" and item.get("def"):
+                        continue
+                    if field == "clue" and item.get("q"):
+                        continue
+                    if field == "sentence" and (item.get("sentence") or item.get("q") or item.get("prompt")):
+                        continue
+                    if field == "sentence_frame" and (
+                        item.get("sentence") or item.get("prompt") or item.get("q") or item.get("options")
+                    ):
+                        continue
+                    if field == "question" and item.get("q"):
+                        continue
+                    if field == "statement" and item.get("q"):
+                        continue
+                    if field == "summary_sentence" and item.get("q"):
+                        continue
+                    if field == "events" and item.get("event"):
+                        continue
+                    if field == "wrong_sentence" and item.get("prompt", "").lower().startswith("correct"):
+                        continue
+                    if field == "scrambled_words" and item.get("scrambled"):
+                        continue
+                    if not item.get(field):
+                        missing_counts += 1
+                        break
+            if missing_counts:
+                _issue(
+                    warnings,
+                    f"p{page}_missing_required_fields",
+                    f"Page {page} activity {code} has {missing_counts} item(s) missing required fields: {', '.join(required)}.",
+                    "WARNING",
+                )
+    return {"blockers": blockers, "warnings": warnings}
+
+
 def _write_worksheet_manifest(
     outline: BookOutline,
     out_path: Path,
@@ -627,6 +729,13 @@ def _write_worksheet_manifest(
         for p in (data.get("match_pairs") or [])
         if str(p.get("word", "")).strip()
     ]
+    activity_validation = _worksheet_activity_validation(activity_map, manifest_items)
+    validation_results = {
+        "source_preflight": source_validation,
+        "activity_validation": activity_validation,
+        "blockers": list(source_validation.get("blockers", [])) + list(activity_validation.get("blockers", [])),
+        "warnings": list(source_validation.get("warnings", [])) + list(activity_validation.get("warnings", [])),
+    }
     manifest = {
         "schema_version": "worksheet_manifest_v1",
         "lesson_spec": {
@@ -645,7 +754,14 @@ def _write_worksheet_manifest(
             "asset_lesson_id": _worksheet_lesson_id(outline),
         },
         "passage_sentences": _worksheet_story_sentences(reading_text),
-        "page_plan": [{"page": page, "activity_code": activity_map.get(page, "")} for page in range(1, 9)],
+        "page_plan": [
+            {
+                "page": page,
+                "activity_code": activity_map.get(page, ""),
+                "required_fields": list(_ws_activity_required_fields(activity_map.get(page, ""))),
+            }
+            for page in range(1, 9)
+        ],
         "items": {
             "page_1": manifest_items.get(1, pairs),
             "page_2": manifest_items.get(2, []),
@@ -653,19 +769,19 @@ def _write_worksheet_manifest(
             "page_4": manifest_items.get(4, []),
             "page_5": manifest_items.get(5, []),
             "page_6": manifest_items.get(6, []),
-            "page_7": {
+            "page_7": manifest_items.get(7, {
                 "graphic_organizer_type": _worksheet_go_type(outline, go_mode),
                 "activity_code": activity_map.get(7, ""),
-            },
-            "page_8": {
+            }),
+            "page_8": manifest_items.get(8, {
                 "activity_code": activity_map.get(8, ""),
                 "must_use_go": True,
                 "target_pattern": _sentence_frame_text(outline),
-            },
+            }),
         },
         "image_checks": _worksheet_image_checks(images),
-        "validation_results": source_validation,
-        "release_status": "blocked" if source_validation.get("blockers") else "review_required",
+        "validation_results": validation_results,
+        "release_status": "blocked" if validation_results.get("blockers") else "review_required",
     }
     path = _worksheet_manifest_path(out_path)
     path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -1092,6 +1208,56 @@ def _official_sentence_frame_practice_items(outline: BookOutline, max_n: int = 4
         if p and p.lower() not in seen:
             seen.add(p.lower())
             out.append({"prompt": p})
+        if len(out) >= max_n:
+            break
+    return out
+
+
+def _official_sentence_reorder_items(outline: BookOutline, max_n: int = 4) -> list[dict]:
+    """Controlled P4 activity: reorder words from real target-pattern sentences."""
+    pattern, example = _syllabus_sentence_source(outline)
+    signature = _frame_signature(pattern or example)
+    sources: list[str] = []
+    if example:
+        sources.append(example)
+    sources.extend(_story_sentences_for_grammar(outline))
+
+    out: list[dict] = []
+    seen: set[str] = set()
+    for sent in sources:
+        clean = _clean_text(sent).strip()
+        if not clean or clean.lower() in seen:
+            continue
+        low = f" {clean.lower()} "
+        if signature == "will" and " will " not in low:
+            continue
+        if signature == "there" and not re.search(r"\bthere\s+(is|are|was|were)\b", low):
+            continue
+        if signature == "modal" and not re.search(r"\b(can|could|cannot|can't)\b", low):
+            continue
+        if signature == "because" and " because " not in low:
+            continue
+        if signature == "when" and " when " not in low:
+            continue
+        words = re.findall(r"[A-Za-z][A-Za-z'-]*|[.,!?]", clean)
+        word_only = [w for w in words if re.search(r"[A-Za-z]", w)]
+        if not (4 <= len(word_only) <= 12):
+            continue
+        order = list(range(len(word_only)))
+        rnd = random.Random(hash(clean) & 0xFFFFFFFF)
+        for _ in range(10):
+            rnd.shuffle(order)
+            if order != list(range(len(word_only))):
+                break
+        scrambled = " / ".join(word_only[i] for i in order)
+        answer = clean if clean.endswith((".", "!", "?")) else clean + "."
+        out.append({
+            "scrambled": scrambled,
+            "scrambled_words": word_only,
+            "answer": answer,
+            "source": "syllabus_example" if clean == example else "book_text",
+        })
+        seen.add(clean.lower())
         if len(out) >= max_n:
             break
     return out
@@ -1890,6 +2056,7 @@ def _build_l34_sentence2(new_page, brand_rgb: tuple, outline: BookOutline,
     """Second L3/L4 sentence page with stable variety while preserving syllabus frame."""
     frame_copy = _official_sentence_frame_practice_items(outline, max_n=4)
     cloze_mc = _cloze_mc_items(frame_fills, frame_bank, max_n=4)
+    reorder_items = _official_sentence_reorder_items(outline, max_n=4)
     activity_codes = _l34_activity_order(outline, 4, seed=seed // 5, include_optional=False)
 
     def _do_guided_write() -> bool:
@@ -1926,7 +2093,11 @@ def _build_l34_sentence2(new_page, brand_rgb: tuple, outline: BookOutline,
                 correct = re.sub(r"_{3,}", ans, sent, count=1)
                 wrong = _false_tf_variant(correct).rstrip(".!?") + "."
                 if wrong and wrong.lower() != correct.lower():
-                    items.append({"prompt": f"Correct the sentence: {wrong}"})
+                    items.append({
+                        "prompt": f"Correct the sentence: {wrong}",
+                        "wrong_sentence": wrong,
+                        "correct_sentence": correct,
+                    })
             if len(items) >= _l34_min_items("sentence_grammar_correction", 3):
                 _record_l34_activity(outline, 4, "sentence_grammar_correction")
                 _record_worksheet_items(outline, 4, items)
@@ -1939,11 +2110,25 @@ def _build_l34_sentence2(new_page, brand_rgb: tuple, outline: BookOutline,
                 return True
         return False
 
+    def _do_reorder_words() -> bool:
+        if len(reorder_items) >= _l34_min_items("sentence_reorder_words", 3):
+            _record_l34_activity(outline, 4, "sentence_reorder_words")
+            _record_worksheet_items(outline, 4, reorder_items)
+            _build_prompt_line_page(
+                new_page(), brand_rgb, reorder_items, "Sentences",
+                _ws_activity_instruction("sentence_reorder_words"),
+                prompt_key="scrambled",
+                fallback=fallback,
+            )
+            return True
+        return False
+
     choices = {
         "sentence_complete_frame": _do_guided_write,
         "sentence_guided_writing": _do_guided_write,
         "sentence_grammar_word_cloze": _do_choose_word,
         "sentence_grammar_correction": _do_correct_sentence,
+        "sentence_reorder_words": _do_reorder_words,
     }
     for code in activity_codes:
         fn = choices.get(code)
@@ -2564,6 +2749,8 @@ def _reading_mc_sentence_items(reading_text: str, *, max_n: int = 5) -> list[dic
             "q": _fact_choice_stem(sent),
             "options": opts,
             "correct": opts.index(correct),
+            "answer": correct,
+            "evidence": sent + ".",
         }
         if _valid_mc_item(item, min_options=2):
             out.append(item)
@@ -2592,7 +2779,7 @@ def _reading_short_answer_items(reading_text: str, *, max_n: int = 5) -> list[di
         if key in seen:
             return
         seen.add(key)
-        out.append({"kind": "short", "q": q, "answer": answer})
+        out.append({"kind": "short", "q": q, "answer": answer, "evidence": answer})
 
     def _article_phrase(noun: str) -> str:
         noun = _clean_text(noun)
@@ -2703,6 +2890,42 @@ def _reading_short_answer_items(reading_text: str, *, max_n: int = 5) -> list[di
     return out[:max_n]
 
 
+def _reading_literal_mc_items(reading_text: str, *, max_n: int = 5) -> list[dict]:
+    """Page 5 literal MC: direct fact questions with one answer option."""
+    facts = _reading_short_answer_items(reading_text, max_n=max(6, max_n + 2))
+    answers: list[str] = []
+    for item in facts:
+        ans = _clean_text(item.get("answer", ""))
+        if ans and ans.lower() not in {a.lower() for a in answers} and len(ans.split()) <= 8:
+            answers.append(ans)
+    out: list[dict] = []
+    for item in facts:
+        q = _clean_text(item.get("q", ""))
+        answer = _clean_text(item.get("answer", ""))
+        if not q or not answer or answer not in answers:
+            continue
+        distractors = [a for a in answers if a.lower() != answer.lower()]
+        if len(distractors) < 2:
+            continue
+        rnd = random.Random(hash(q + "|" + answer) & 0xFFFFFFFF)
+        rnd.shuffle(distractors)
+        options = [answer] + distractors[:2]
+        rnd.shuffle(options)
+        mc = {
+            "kind": "mc",
+            "q": q,
+            "options": options,
+            "correct": options.index(answer),
+            "answer": answer,
+            "evidence": answer,
+        }
+        if _valid_mc_item(mc, min_options=3):
+            out.append(mc)
+        if len(out) >= max_n:
+            break
+    return out
+
+
 def _reading_text_correction_items(reading_text: str, *, max_n: int = 4) -> list[dict]:
     """L4 A2 reading: correct one wrong detail from the passage."""
     story = _to_us_spelling(reading_text or "")
@@ -2721,7 +2944,14 @@ def _reading_text_correction_items(reading_text: str, *, max_n: int = 4) -> list
         if key in seen:
             continue
         seen.add(key)
-        out.append({"kind": "short", "q": f"Correct the sentence: {wrong}.", "answer": sent})
+        out.append({
+            "kind": "short",
+            "q": f"Correct the sentence: {wrong}.",
+            "answer": sent,
+            "wrong_sentence": wrong + ".",
+            "correct_sentence": sent + ".",
+            "evidence": sent + ".",
+        })
         if len(out) >= max_n:
             break
     return out
@@ -2741,6 +2971,8 @@ def _reading_cause_effect_items(reading_text: str, *, max_n: int = 4) -> list[di
             "kind": "short",
             "q": f"What happens after this? {sents[i]}.",
             "answer": sents[i + 1],
+            "cause": sents[i] + ".",
+            "effect": sents[i + 1] + ".",
         })
     return out
 
@@ -3169,6 +3401,9 @@ def build_worksheet(
                     if len(candidate) < 4:
                         candidate = _fill_same_kind_reading_questions(rq_uni[:5], "tf", reading_text, max_n=5)
                         candidate = _sanitize_reading_items(candidate, preferred_kind="tf", max_n=5)
+                elif code == "reading_literal_mc":
+                    candidate = _reading_literal_mc_items(reading_text, max_n=5)
+                    candidate = _sanitize_reading_items(candidate, preferred_kind="mc", max_n=5)
                 else:
                     continue
                 if len(candidate) >= _l34_min_items(code, 4):
@@ -3191,7 +3426,14 @@ def build_worksheet(
             page2_code = ""
             # Page 6 is integration, so use pedagogy-first bank priority rather
             # than pure rotation: sequence/structure before summary fallback.
-            for code in _l34_activity_order(outline, 6, seed=0):
+            page6_signal = " ".join(
+                str(getattr(outline, name, "") or "")
+                for name in ("reading_skill", "reading_strategy", "graphic_organizer", "graphic_organizer_desc")
+            ).lower()
+            page6_seed = 0 if any(k in page6_signal for k in (
+                "sequence", "sequencing", "process", "steps", "timeline", "order"
+            )) else ((_ws_seed(outline) // 17) + book_no_seed)
+            for code in _l34_activity_order(outline, 6, seed=page6_seed):
                 if code == "reading_sequence_ordering":
                     if not is_nonfic_reading and len(sequence_events) >= _l34_min_items(code, 4):
                         use_sequence_page = True
@@ -3332,8 +3574,22 @@ def build_worksheet(
 
     # Page 7: Graphic Organizer. Page 8: Writing.
     if lvl_n in (3, 4):
-        _record_l34_activity(outline, 7, _l34_go_activity_code(outline, go_mode))
+        go_code = _l34_go_activity_code(outline, go_mode)
+        _record_l34_activity(outline, 7, go_code)
         _record_l34_activity(outline, 8, "writing_organizer_to_writing")
+        _record_worksheet_items(outline, 7, [{
+            "graphic_organizer_type": _worksheet_go_type(outline, go_mode),
+            "activity_code": go_code,
+            "labels": [],
+            "word_bank": [str(w).strip() for w in (outline.vocabulary_for_display or data.get("word_bank") or []) if str(w).strip()][:6],
+            "fillable_fields": 3,
+        }])
+        _record_worksheet_items(outline, 8, [{
+            "organizer_reference": _worksheet_go_type(outline, go_mode),
+            "sentence_starters": True,
+            "writing_lines": 4 if lvl_n <= 3 else 5,
+            "target_pattern": _sentence_frame_text(outline),
+        }])
         _build_l34_graphic_organizer_page(new_page(), brand_rgb, data, outline, go_mode)
         _build_l34_writing_page(new_page(), brand_rgb, outline)
     else:
@@ -6086,12 +6342,27 @@ def _build_l34_graphic_organizer_page(slide, brand_rgb: tuple, data: dict,
     muted = RGBColor(0x6B, 0x72, 0x80)
     is_nonfic = "non" in (getattr(outline, "fiction_type", "") or "").lower()
     mode = (go_mode or "").lower()
+    go_code = _l34_go_activity_code(outline, go_mode)
+    explicit_go = (
+        str(getattr(outline, "graphic_organizer", "") or "") + " "
+        + str(getattr(outline, "graphic_organizer_desc", "") or "")
+    ).lower()
     words = [str(w).strip() for w in (outline.vocabulary_for_display or data.get("word_bank") or []) if str(w).strip()]
     story_bits = _l34_clean_story_bits(outline, 4)
 
-    if is_nonfic or mode == "l3bubble":
-        center = "Topic"
-        labels = ["Topic", "Fact 1", "Fact 2", "Example"]
+    if go_code == "go_compare_chart":
+        center = "Compare"
+        labels = ["Same", "Different 1", "Different 2", "Evidence"]
+        prompts = ["", "", "", ""]
+        blank_slots = {0, 1, 2, 3}
+    elif go_code == "go_fact_web":
+        center = "Facts"
+        if any(k in explicit_go for k in ("classification", "classify", "category", "categories", "habitat")):
+            labels = ["Topic", "Group 1", "Group 2", "Example"]
+        elif any(k in explicit_go for k in ("main idea", "details")):
+            labels = ["Main Idea", "Detail 1", "Detail 2", "Example"]
+        else:
+            labels = ["Topic", "Fact 1", "Fact 2", "Example"]
         prompts = [
             _l34_short_topic(outline),
             "",
@@ -6099,7 +6370,7 @@ def _build_l34_graphic_organizer_page(slide, brand_rgb: tuple, data: dict,
             "",
         ]
         blank_slots = {1, 2, 3}
-    elif mode == "planchart":
+    elif mode == "planchart" or ("plan" in explicit_go and go_code == "go_sequence_chart"):
         center = "Plan"
         labels = ["First", "Next", "Time", "Result"]
         rows = _plan_chart_rows(outline)
@@ -6113,7 +6384,7 @@ def _build_l34_graphic_organizer_page(slide, brand_rgb: tuple, data: dict,
         bank = ["first", "clean her room", "every day", "play for one hour"]
         if any(k in " ".join((r.get("clue", "") for r in rows)).lower() for k in ("homework", "piano")):
             words = bank
-    elif mode == "timeline":
+    elif go_code == "go_sequence_chart":
         center = "Sequence"
         labels = ["First", "Next", "Then", "Finally"]
         prompts = [
@@ -6125,7 +6396,10 @@ def _build_l34_graphic_organizer_page(slide, brand_rgb: tuple, data: dict,
         blank_slots = {1, 2, 3}
     else:
         center = "Story"
-        labels = ["Beginning", "Middle", "Action", "End"]
+        if "solution" in explicit_go:
+            labels = ["Problem", "Action", "Solution", "Result"]
+        else:
+            labels = ["Beginning", "Middle", "Action", "End"]
         prompts = [
             story_bits[0] if story_bits else "",
             "",
@@ -6238,7 +6512,38 @@ def _build_l34_writing_page(slide, brand_rgb: tuple, outline: BookOutline) -> No
     example = _display_sentence_frame(outline)
     sig = _frame_signature(example)
     is_nonfic = "non" in (getattr(outline, "fiction_type", "") or "").lower()
-    if is_nonfic:
+    go_mode = str(getattr(outline, "_worksheet_second_reading_mode", "") or "")
+    go_code = _l34_go_activity_code(outline, go_mode)
+    explicit_go = (
+        str(getattr(outline, "graphic_organizer", "") or "") + " "
+        + str(getattr(outline, "graphic_organizer_desc", "") or "")
+    ).lower()
+    if go_code == "go_compare_chart":
+        starters = [
+            f"They are the same because {ANSWER_BLANK}.",
+            f"One difference is {ANSWER_BLANK}.",
+            f"The text shows {ANSWER_BLANK}.",
+        ]
+    elif go_code == "go_fact_web":
+        if any(k in explicit_go for k in ("classification", "classify", "category", "categories", "habitat")):
+            starters = [
+                f"The topic is {ANSWER_BLANK}.",
+                f"One group is {ANSWER_BLANK}.",
+                f"Another group is {ANSWER_BLANK}.",
+            ]
+        else:
+            starters = [
+                f"The topic is {ANSWER_BLANK}.",
+                f"One fact is {ANSWER_BLANK}.",
+                f"Another fact is {ANSWER_BLANK}.",
+            ]
+    elif go_code == "go_sequence_chart":
+        starters = [
+            f"First, {ANSWER_BLANK}.",
+            f"Next, {ANSWER_BLANK}.",
+            f"At the end, {ANSWER_BLANK}.",
+        ]
+    elif is_nonfic:
         starters = [
             f"The topic is {ANSWER_BLANK}.",
             f"One fact is {ANSWER_BLANK}.",
