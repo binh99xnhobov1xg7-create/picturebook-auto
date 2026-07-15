@@ -144,6 +144,295 @@ MM_GREEN_DARK = RGBColor(0xA8, 0xD3, 0xA6)
 
 # Reading 红框
 READ_BORDER = RGBColor(0xE9, 0x52, 0x83)
+# P1 Activity Bank renderers.
+
+def _visual_vocab_items(pairs: list[dict], images: list[Path], max_n: int = 4) -> list[dict]:
+    items: list[dict] = []
+    story_images = [p for p in (images or [])[2:] if p and Path(p).exists()]
+    for i, pair in enumerate(pairs or []):
+        word = str(pair.get("word", "")).strip()
+        if not word:
+            continue
+        kind = _clean_vocab_clue_kind(word)
+        img = story_images[i % len(story_images)] if story_images else None
+        if not kind and img is None:
+            continue
+        row = dict(pair)
+        row["visual_kind"] = kind
+        row["img"] = img
+        items.append(row)
+        if len(items) >= max_n:
+            break
+    return items
+
+
+def _meaning_mc_items(pairs: list[dict], max_n: int = 4) -> list[dict]:
+    clean_pairs = [p for p in (pairs or []) if _valid_definition_pair(p)]
+    defs = [str(p.get("def", "")).strip() for p in clean_pairs if str(p.get("def", "")).strip()]
+    out: list[dict] = []
+    for pair in clean_pairs[:max_n]:
+        word = str(pair.get("word", "")).strip()
+        correct = str(pair.get("def", "")).strip()
+        if not word or not correct:
+            continue
+        wrong = [d for d in defs if d and d != correct]
+        opts = [correct] + wrong[:2]
+        rnd = random.Random(hash((word.lower(), "meaning")) & 0xFFFFFFFF)
+        rnd.shuffle(opts)
+        out.append({
+            "kind": "mc",
+            "q": f"What does {word} mean?",
+            "options": opts,
+            "correct": opts.index(correct),
+            "answer": correct,
+        })
+    return out
+
+
+def _draw_vocab_visual_box(slide, brand_rgb: tuple, word: str, img: Optional[Path],
+                           x: float, y: float, w: float, h: float) -> None:
+    placed = _draw_clean_vocab_clue(slide, _clean_vocab_clue_kind(word), x, y, w, h, brand_rgb)
+    if placed:
+        return
+    if img and Path(img).exists():
+        try:
+            from PIL import Image as _PILImg
+            with _PILImg.open(str(img)) as _pim:
+                iw, ih = _pim.size
+            aspect = iw / ih if ih else 1.35
+            fit_h = h
+            fit_w = fit_h * aspect
+            if fit_w > w:
+                fit_w = w
+                fit_h = fit_w / aspect
+            off_x = x + (w - fit_w) / 2
+            off_y = y + (h - fit_h) / 2
+            slide.shapes.add_picture(str(img), Inches(off_x), Inches(off_y),
+                                     width=Inches(fit_w), height=Inches(fit_h))
+            return
+        except Exception:
+            pass
+    _draw_image_placeholder(slide, x, y, w, h)
+
+
+def _build_p1_word_picture_match(slide, brand_rgb: tuple, items: list[dict]) -> None:
+    _add_title(slide, "Vocabulary", _ws_activity_instruction("vocab_word_picture_matching"))
+    n = min(len(items), 4)
+    if n == 0:
+        return
+    order = _derange_order(n)
+    area_top = CONTENT_Y + 1.38
+    area_h = CONTENT_H - 1.78
+    gap = 0.22
+    row_h = (area_h - gap * (n - 1)) / n
+    word_x = CONTENT_X + 0.70
+    word_w = 3.00
+    pic_x = CONTENT_X + 5.05
+    pic_w = CONTENT_W - 5.75
+
+    for i, item in enumerate(items[:n]):
+        y = area_top + i * (row_h + gap)
+        badge = slide.shapes.add_shape(MSO_SHAPE.OVAL, Inches(word_x), Inches(y + 0.10),
+                                       Inches(0.42), Inches(0.42))
+        badge.fill.solid()
+        badge.fill.fore_color.rgb = RGBColor(*brand_rgb)
+        badge.line.fill.background()
+        badge.shadow.inherit = False
+        bp = badge.text_frame.paragraphs[0]
+        bp.alignment = PP_ALIGN.CENTER
+        br = bp.add_run()
+        br.text = str(i + 1)
+        br.font.name = FONT
+        br.font.size = Pt(12)
+        br.font.bold = True
+        br.font.color.rgb = WHITE
+
+        wc = slide.shapes.add_shape(MSO_SHAPE.ROUNDED_RECTANGLE,
+                                    Inches(word_x + 0.55), Inches(y),
+                                    Inches(word_w), Inches(row_h))
+        wc.adjustments[0] = 0.25
+        wc.fill.solid()
+        wc.fill.fore_color.rgb = RGBColor(*brand_rgb)
+        wc.line.fill.background()
+        wc.shadow.inherit = False
+        tf = wc.text_frame
+        tf.vertical_anchor = MSO_ANCHOR.MIDDLE
+        tf.word_wrap = True
+        p = tf.paragraphs[0]
+        p.alignment = PP_ALIGN.CENTER
+        r = p.add_run()
+        r.text = _clean_text(item.get("word", ""))
+        r.font.name = FONT
+        r.font.size = Pt(18 if len(r.text) <= 14 else 14)
+        r.font.color.rgb = WHITE
+
+        visual_item = items[order[i]] if order[i] < len(items) else item
+        lb = slide.shapes.add_shape(MSO_SHAPE.OVAL, Inches(pic_x), Inches(y + 0.10),
+                                    Inches(0.42), Inches(0.42))
+        lb.fill.solid()
+        lb.fill.fore_color.rgb = RGBColor(*brand_rgb)
+        lb.line.fill.background()
+        lb.shadow.inherit = False
+        lp = lb.text_frame.paragraphs[0]
+        lp.alignment = PP_ALIGN.CENTER
+        lr = lp.add_run()
+        lr.text = chr(65 + i)
+        lr.font.name = FONT
+        lr.font.size = Pt(12)
+        lr.font.bold = True
+        lr.font.color.rgb = WHITE
+        _draw_vocab_visual_box(slide, brand_rgb, str(visual_item.get("word", "")),
+                               visual_item.get("img"), pic_x + 0.55, y, pic_w, row_h)
+
+
+def _build_p1_choose_picture(slide, brand_rgb: tuple, items: list[dict]) -> None:
+    _add_title(slide, "Vocabulary", _ws_activity_instruction("vocab_choose_picture"))
+    choice_rows = items if items and items[0].get("_option_items") else _picture_choice_items(items)
+    n = min(len(choice_rows), 4)
+    if n == 0:
+        return
+    top = CONTENT_Y + 1.32
+    gap_x, gap_y = 0.52, 0.28
+    cell_w = (CONTENT_W - 0.90 - gap_x) / 2
+    cell_h = (CONTENT_H - 1.72 - gap_y) / 2
+    x0 = CONTENT_X + 0.45
+    for i, item in enumerate(choice_rows[:n]):
+        rr, cc = divmod(i, 2)
+        x = x0 + cc * (cell_w + gap_x)
+        y = top + rr * (cell_h + gap_y)
+        word = str(item.get("word", "")).strip()
+        opts = item.get("_option_items") or []
+
+        tb = slide.shapes.add_textbox(Inches(x), Inches(y), Inches(cell_w), Inches(0.38))
+        tf = tb.text_frame
+        tf.margin_left = tf.margin_right = 0
+        tf.margin_top = tf.margin_bottom = 0
+        p = tf.paragraphs[0]
+        p.alignment = PP_ALIGN.LEFT
+        r = p.add_run()
+        r.text = f"{i + 1}. {word}   (      )"
+        r.font.name = FONT
+        r.font.size = Pt(17)
+        r.font.color.rgb = BLACK
+
+        opt_top = y + 0.48
+        opt_gap = 0.12
+        opt_w = (cell_w - opt_gap * 2) / 3
+        opt_h = cell_h - 0.62
+        for j, opt in enumerate(opts[:3]):
+            ox = x + j * (opt_w + opt_gap)
+            badge = slide.shapes.add_shape(MSO_SHAPE.OVAL, Inches(ox), Inches(opt_top),
+                                           Inches(0.32), Inches(0.32))
+            badge.fill.solid()
+            badge.fill.fore_color.rgb = RGBColor(*brand_rgb)
+            badge.line.fill.background()
+            badge.shadow.inherit = False
+            bp = badge.text_frame.paragraphs[0]
+            bp.alignment = PP_ALIGN.CENTER
+            br = bp.add_run()
+            br.text = chr(65 + j)
+            br.font.name = FONT
+            br.font.size = Pt(9.5)
+            br.font.bold = True
+            br.font.color.rgb = WHITE
+            _draw_vocab_visual_box(slide, brand_rgb, str(opt.get("word", "")),
+                                   opt.get("img"), ox, opt_top + 0.38, opt_w, opt_h - 0.38)
+
+
+def _picture_choice_items(items: list[dict]) -> list[dict]:
+    all_items = list(items or [])[:4]
+    out: list[dict] = []
+    for item in all_items:
+        word = str(item.get("word", "")).strip()
+        if not word:
+            continue
+        wrong = [it for it in all_items if str(it.get("word", "")).lower() != word.lower()]
+        opts = [item] + wrong[:2]
+        rnd = random.Random(hash((word.lower(), "picture_options")) & 0xFFFFFFFF)
+        rnd.shuffle(opts)
+        row = dict(item)
+        row["_option_items"] = opts
+        row["options"] = [str(o.get("word", "")).strip() for o in opts]
+        row["correct"] = next((idx for idx, opt in enumerate(opts)
+                               if str(opt.get("word", "")).lower() == word.lower()), 0)
+        row["answer"] = word
+        out.append(row)
+    return out
+
+
+def _build_l34_vocab1(new_page, brand_rgb: tuple, data: dict, images: list[Path],
+                      seed: int, outline: BookOutline) -> None:
+    pairs = list(data.get("match_pairs") or [])
+    valid_defs = [p for p in pairs if _valid_definition_pair(p)]
+    visual_items = _visual_vocab_items(pairs, images, max_n=4)
+
+    for code in _l34_activity_order(outline, 1, seed=seed, include_optional=False):
+        if code == "vocab_word_picture_matching" and len(visual_items) >= _l34_min_items(code, 4):
+            order = _derange_order(min(len(visual_items), 4))
+            answer_letters = {}
+            for row_idx, item_idx in enumerate(order):
+                if item_idx < len(visual_items):
+                    answer_letters[str(visual_items[item_idx].get("word", ""))] = chr(65 + row_idx)
+            _record_l34_activity(outline, 1, code)
+            _record_worksheet_items(outline, 1, [
+                {
+                    "word": it.get("word", ""),
+                    "visual_kind": it.get("visual_kind", ""),
+                    "answer_picture": answer_letters.get(str(it.get("word", "")), ""),
+                }
+                for it in visual_items[:4]
+            ])
+            _build_p1_word_picture_match(new_page(), brand_rgb, visual_items)
+            return
+        if code == "vocab_choose_picture" and len(visual_items) >= _l34_min_items(code, 4):
+            choice_items = _picture_choice_items(visual_items)
+            _record_l34_activity(outline, 1, code)
+            _record_worksheet_items(outline, 1, [
+                {
+                    "word": it.get("word", ""),
+                    "options": it.get("options", []),
+                    "correct": it.get("correct", 0),
+                    "answer": it.get("answer", ""),
+                    "visual_kind": it.get("visual_kind", ""),
+                }
+                for it in choice_items
+            ])
+            _build_p1_choose_picture(new_page(), brand_rgb, choice_items)
+            return
+        if code == "vocab_choose_meaning" and len(valid_defs) >= _l34_min_items(code, 4):
+            mc_items = _meaning_mc_items(pairs, max_n=4)
+            if len(mc_items) >= _l34_min_items(code, 4):
+                _record_l34_activity(outline, 1, code)
+                _record_worksheet_items(outline, 1, mc_items)
+                _build_mcq_page(new_page(), brand_rgb, "Vocabulary",
+                                _ws_activity_instruction(code), mc_items)
+                return
+        if code == "vocab_word_definition_matching" and len(valid_defs) >= _l34_min_items(code, 4):
+            _record_l34_activity(outline, 1, code)
+            _record_worksheet_items(outline, 1, pairs)
+            _build_p1_match(new_page(), brand_rgb, pairs, images)
+            return
+
+    if len(visual_items) >= 4:
+        order = _derange_order(min(len(visual_items), 4))
+        answer_letters = {}
+        for row_idx, item_idx in enumerate(order):
+            if item_idx < len(visual_items):
+                answer_letters[str(visual_items[item_idx].get("word", ""))] = chr(65 + row_idx)
+        _record_l34_activity(outline, 1, "vocab_word_picture_matching")
+        _record_worksheet_items(outline, 1, [
+            {
+                "word": it.get("word", ""),
+                "visual_kind": it.get("visual_kind", ""),
+                "answer_picture": answer_letters.get(str(it.get("word", "")), ""),
+            }
+            for it in visual_items[:4]
+        ])
+        _build_p1_word_picture_match(new_page(), brand_rgb, visual_items)
+    else:
+        _record_l34_activity(outline, 1, "vocab_word_definition_matching")
+        _record_worksheet_items(outline, 1, pairs)
+        _build_p1_match(new_page(), brand_rgb, pairs, images)
 
 
 # ============================================================
@@ -358,7 +647,7 @@ def _write_worksheet_manifest(
         "passage_sentences": _worksheet_story_sentences(reading_text),
         "page_plan": [{"page": page, "activity_code": activity_map.get(page, "")} for page in range(1, 9)],
         "items": {
-            "page_1": pairs,
+            "page_1": manifest_items.get(1, pairs),
             "page_2": manifest_items.get(2, []),
             "page_3": manifest_items.get(3, []),
             "page_4": manifest_items.get(4, []),
@@ -2647,6 +2936,15 @@ def build_worksheet(
     _build_p1_match(new_page(), brand_rgb, data["match_pairs"], images)
     _record_worksheet_items(outline, 1, data["match_pairs"])
     if lvl_n in (3, 4):
+        sld_lst = prs.slides._sldIdLst
+        old_slide = sld_lst[-1]
+        old_r_id = getattr(old_slide, "rId", None)
+        sld_lst.remove(old_slide)
+        if old_r_id:
+            with contextlib.suppress(Exception):
+                prs.part.drop_rel(old_r_id)
+        _build_l34_vocab1(new_page, brand_rgb, data, images, _ws_seed(outline), outline)
+    elif False:
         valid_defs = len([p for p in data["match_pairs"] if _valid_definition_pair(p)])
         img_count = len([p for p in (images or []) if p and Path(p).exists()])
         page1_code = (
