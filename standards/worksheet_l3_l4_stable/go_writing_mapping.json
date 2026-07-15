@@ -1,0 +1,119 @@
+﻿{
+    "version":  "0.1.0",
+    "rule":  "Page 8 writing must reference real Page 7 slot IDs.",
+    "mappings":  {
+                     "go_compare_chart":  {
+                                              "slots":  [
+                                                            {
+                                                                "slot_id":  "same",
+                                                                "label":  "How they are the same"
+                                                            },
+                                                            {
+                                                                "slot_id":  "different_1",
+                                                                "label":  "One difference"
+                                                            },
+                                                            {
+                                                                "slot_id":  "evidence",
+                                                                "label":  "Text evidence"
+                                                            }
+                                                        ],
+                                              "writing_starters":  [
+                                                                       "They are the same because ______.",
+                                                                       "One way they are different is ______.",
+                                                                       "The text says ______."
+                                                                   ]
+                                          },
+                     "go_sequence_chart":  {
+                                               "slots":  [
+                                                             {
+                                                                 "slot_id":  "first",
+                                                                 "label":  "First"
+                                                             },
+                                                             {
+                                                                 "slot_id":  "next",
+                                                                 "label":  "Next"
+                                                             },
+                                                             {
+                                                                 "slot_id":  "finally",
+                                                                 "label":  "Finally"
+                                                             }
+                                                         ],
+                                               "writing_starters":  [
+                                                                        "First, ______.",
+                                                                        "Next, ______.",
+                                                                        "Finally, ______."
+                                                                    ]
+                                           },
+                     "go_problem_plan_result":  {
+                                                    "slots":  [
+                                                                  {
+                                                                      "slot_id":  "problem",
+                                                                      "label":  "Problem"
+                                                                  },
+                                                                  {
+                                                                      "slot_id":  "action",
+                                                                      "label":  "Action / Plan"
+                                                                  },
+                                                                  {
+                                                                      "slot_id":  "result",
+                                                                      "label":  "Result"
+                                                                  }
+                                                              ],
+                                                    "writing_starters":  [
+                                                                             "The problem is ______.",
+                                                                             "The character ______.",
+                                                                             "At the end, ______."
+                                                                         ]
+                                                },
+                     "go_fact_web":  {
+                                         "slots":  [
+                                                       {
+                                                           "slot_id":  "topic",
+                                                           "label":  "Topic"
+                                                       },
+                                                       {
+                                                           "slot_id":  "fact_1",
+                                                           "label":  "Fact 1"
+                                                       },
+                                                       {
+                                                           "slot_id":  "fact_2",
+                                                           "label":  "Fact 2"
+                                                       },
+                                                       {
+                                                           "slot_id":  "example",
+                                                           "label":  "Example"
+                                                       }
+                                                   ],
+                                         "writing_starters":  [
+                                                                  "The topic is ______.",
+                                                                  "One fact is ______.",
+                                                                  "Another fact is ______."
+                                                              ]
+                                     },
+                     "go_classification_map":  {
+                                                   "slots":  [
+                                                                 {
+                                                                     "slot_id":  "category_1",
+                                                                     "label":  "Category 1"
+                                                                 },
+                                                                 {
+                                                                     "slot_id":  "category_2",
+                                                                     "label":  "Category 2"
+                                                                 },
+                                                                 {
+                                                                     "slot_id":  "category_3",
+                                                                     "label":  "Category 3"
+                                                                 },
+                                                                 {
+                                                                     "slot_id":  "evidence",
+                                                                     "label":  "Text evidence"
+                                                                 }
+                                                             ],
+                                                   "writing_starters":  [
+                                                                            "One group is ______.",
+                                                                            "Another group is ______.",
+                                                                            "The text says ______."
+                                                                        ]
+                                               }
+                 }
+}

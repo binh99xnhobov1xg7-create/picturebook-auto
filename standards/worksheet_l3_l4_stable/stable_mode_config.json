@@ -1,0 +1,40 @@
+﻿{
+  "config_id": "L3_L4_Worksheet_Stable_Mode",
+  "version": "0.1.0",
+  "status": "half_day_1",
+  "scope": ["Level 3", "Level 4"],
+  "goal": "Use a controlled 8-page worksheet path before expanding activity variety.",
+  "selection_order": [
+    "hard_eligibility",
+    "outline_alignment",
+    "reading_skill_or_go_alignment",
+    "level_fit",
+    "source_readiness",
+    "asset_readiness",
+    "priority"
+  ],
+  "disabled_in_stable_mode": [
+    "abstract_or_multiword_picture_tasks",
+    "page4_guided_free_writing",
+    "page6_plain_short_answer",
+    "reading_text_based_correction",
+    "unsupported_sequence_tasks",
+    "generic_topic_fact_example_go",
+    "generic_independent_writing_starters",
+    "answer_leaking_clues"
+  ],
+  "picture_eligibility": {
+    "allow": ["single_concrete_noun"],
+    "reject": [
+      "multiword_phrase",
+      "abstract_word",
+      "state_word",
+      "relationship_word",
+      "missing_image",
+      "duplicated_image",
+      "placeholder_image",
+      "ambiguous_image"
+    ]
+  },
+  "release_posture": "review_required"
+}

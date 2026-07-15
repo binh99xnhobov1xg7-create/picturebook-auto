@@ -365,7 +365,9 @@ def _build_l34_vocab1(new_page, brand_rgb: tuple, data: dict, images: list[Path]
                       seed: int, outline: BookOutline) -> None:
     pairs = list(data.get("match_pairs") or [])
     valid_defs = [p for p in pairs if _valid_definition_pair(p)]
-    visual_items = _visual_vocab_items(pairs, images, max_n=4)
+    visual_items = _l34_picture_eligible_vocab_items(
+        _visual_vocab_items(pairs, images, max_n=4)
+    )
 
     for code in _l34_activity_order(outline, 1, seed=seed, include_optional=False):
         if code == "vocab_word_picture_matching" and len(visual_items) >= _l34_min_items(code, 4):
@@ -374,7 +376,10 @@ def _build_l34_vocab1(new_page, brand_rgb: tuple, data: dict, images: list[Path]
             for row_idx, item_idx in enumerate(order):
                 if item_idx < len(visual_items):
                     answer_letters[str(visual_items[item_idx].get("word", ""))] = chr(65 + row_idx)
-            _record_l34_activity(outline, 1, code)
+            _record_l34_activity(
+                outline, 1, code,
+                "fallback selected only because all target words are single concrete visual words",
+            )
             _record_worksheet_items(outline, 1, [
                 {
                     "word": it.get("word", ""),
@@ -387,7 +392,7 @@ def _build_l34_vocab1(new_page, brand_rgb: tuple, data: dict, images: list[Path]
             return
         if code == "vocab_choose_picture" and len(visual_items) >= _l34_min_items(code, 4):
             choice_items = _picture_choice_items(visual_items)
-            _record_l34_activity(outline, 1, code)
+            _record_l34_activity(outline, 1, code, "selected after picture eligibility check")
             _record_worksheet_items(outline, 1, [
                 {
                     "word": it.get("word", ""),
@@ -403,13 +408,13 @@ def _build_l34_vocab1(new_page, brand_rgb: tuple, data: dict, images: list[Path]
         if code == "vocab_choose_meaning" and len(valid_defs) >= _l34_min_items(code, 4):
             mc_items = _meaning_mc_items(pairs, max_n=4)
             if len(mc_items) >= _l34_min_items(code, 4):
-                _record_l34_activity(outline, 1, code)
+                _record_l34_activity(outline, 1, code, "selected from Stable Mode fallback")
                 _record_worksheet_items(outline, 1, mc_items)
                 _build_mcq_page(new_page(), brand_rgb, "Vocabulary",
                                 _ws_activity_instruction(code), mc_items)
                 return
         if code == "vocab_word_definition_matching" and len(valid_defs) >= _l34_min_items(code, 4):
-            _record_l34_activity(outline, 1, code)
+            _record_l34_activity(outline, 1, code, "Stable Mode default: definitions before images")
             _record_worksheet_items(outline, 1, pairs)
             _build_p1_match(new_page(), brand_rgb, pairs, images)
             return
@@ -420,7 +425,10 @@ def _build_l34_vocab1(new_page, brand_rgb: tuple, data: dict, images: list[Path]
         for row_idx, item_idx in enumerate(order):
             if item_idx < len(visual_items):
                 answer_letters[str(visual_items[item_idx].get("word", ""))] = chr(65 + row_idx)
-        _record_l34_activity(outline, 1, "vocab_word_picture_matching")
+        _record_l34_activity(
+            outline, 1, "vocab_word_picture_matching",
+            "emergency visual fallback; only concrete single-word items were eligible",
+        )
         _record_worksheet_items(outline, 1, [
             {
                 "word": it.get("word", ""),
@@ -431,7 +439,10 @@ def _build_l34_vocab1(new_page, brand_rgb: tuple, data: dict, images: list[Path]
         ])
         _build_p1_word_picture_match(new_page(), brand_rgb, visual_items)
     else:
-        _record_l34_activity(outline, 1, "vocab_word_definition_matching")
+        _record_l34_activity(
+            outline, 1, "vocab_word_definition_matching",
+            "emergency definition fallback; source definitions may need expert review",
+        )
         _record_worksheet_items(outline, 1, pairs)
         _build_p1_match(new_page(), brand_rgb, pairs, images)
 
@@ -452,7 +463,12 @@ def _level_num(level: str) -> int:
         return 5
 
 
-def _record_l34_activity(outline: Optional[BookOutline], page: int, code: str) -> None:
+def _record_l34_activity(
+    outline: Optional[BookOutline],
+    page: int,
+    code: str,
+    reason: str = "",
+) -> None:
     """Record the selected L3/L4 worksheet activity for QA/TG-only workflows."""
     if outline is None:
         return
@@ -462,6 +478,12 @@ def _record_l34_activity(outline: Optional[BookOutline], page: int, code: str) -
             activity_map = {}
             setattr(outline, "_worksheet_activity_types", activity_map)
         activity_map[page] = code
+        if reason:
+            reason_map = getattr(outline, "_worksheet_activity_reasons", None)
+            if not isinstance(reason_map, dict):
+                reason_map = {}
+                setattr(outline, "_worksheet_activity_reasons", reason_map)
+            reason_map[page] = reason
     except Exception:
         return
 
@@ -482,6 +504,10 @@ def _record_worksheet_items(outline: Optional[BookOutline], page: int, items: li
 
 def _l34_activity_order(outline: BookOutline, page: int, *, seed: int,
                         include_optional: bool = False) -> list[str]:
+    if _l34_stable_mode_enabled(outline):
+        stable = _l34_stable_activity_order(outline, page)
+        if stable:
+            return stable
     lvl = _level_num(getattr(outline, "level", "") or "")
     text_type = getattr(outline, "fiction_type", "") or ""
     codes = _ws_allowed_activity_codes(
@@ -494,6 +520,74 @@ def _l34_activity_order(outline: BookOutline, page: int, *, seed: int,
         return []
     offset = seed % len(codes)
     return codes[offset:] + codes[:offset]
+
+
+def _l34_stable_mode_enabled(outline: Optional[BookOutline]) -> bool:
+    """Stable Mode keeps L3/L4 worksheet activity choice conservative."""
+    return _level_num(getattr(outline, "level", "") or "") in (3, 4)
+
+
+def _l34_stable_activity_order(outline: BookOutline, page: int) -> list[str]:
+    if page == 1:
+        return ["vocab_word_definition_matching", "vocab_word_picture_matching"]
+    if page == 2:
+        return ["vocab_contextual_word_bank_cloze", "vocab_contextual_choice"]
+    if page == 3:
+        return ["sentence_target_pattern_choice", "sentence_correct_sentence_choice"]
+    if page == 4:
+        return ["sentence_complete_frame", "sentence_reorder_words"]
+    if page == 5:
+        return ["reading_literal_mc", "reading_true_false_literal"]
+    if page == 6:
+        return _l34_stable_reading6_order(outline)
+    if page == 8:
+        return ["writing_organizer_to_writing"]
+    return []
+
+
+def _l34_stable_reading6_order(outline: BookOutline) -> list[str]:
+    signal = " ".join(
+        str(getattr(outline, name, "") or "")
+        for name in (
+            "reading_skill",
+            "reading_strategy",
+            "graphic_organizer",
+            "graphic_organizer_desc",
+        )
+    ).lower()
+    if any(k in signal for k in ("sequence", "sequencing", "timeline", "process", "steps", "order")):
+        return ["reading_sequence_ordering", "reading_summary_cloze"]
+    if any(k in signal for k in ("cause", "effect")):
+        return ["reading_cause_effect", "reading_summary_cloze"]
+    return ["reading_summary_cloze"]
+
+
+_L34_ABSTRACT_OR_RELATIONAL_VOCAB = {
+    "afraid", "alone", "because", "better", "different", "equator", "excited",
+    "fact", "family", "far", "happy", "idea", "important", "kind", "near",
+    "plan", "practice", "proud", "responsibility", "same", "special", "together",
+    "tropical", "weather", "week", "worried",
+}
+
+
+def _l34_is_single_concrete_vocab(word: str) -> bool:
+    w = re.sub(r"[^a-zA-Z\s-]", "", str(word or "")).strip().lower()
+    if not w:
+        return False
+    if " " in w or "-" in w:
+        return False
+    if w in _L34_ABSTRACT_OR_RELATIONAL_VOCAB:
+        return False
+    if w.endswith(("ness", "tion", "sion", "ment", "ity")):
+        return False
+    return True
+
+
+def _l34_picture_eligible_vocab_items(items: list[dict]) -> list[dict]:
+    return [
+        item for item in (items or [])
+        if _l34_is_single_concrete_vocab(str(item.get("word", "")))
+    ]
 
 
 def _l34_min_items(code: str, default: int = 4) -> int:
@@ -530,6 +624,10 @@ def _l34_go_activity_code(outline: BookOutline, go_mode: str) -> str:
             return "go_problem_plan_result"
         if any(k in explicit_go for k in (
             "classification", "classify", "category", "categories",
+        )):
+            return "go_classification_map"
+        if any(k in explicit_go for k in (
+            "classification", "classify", "category", "categories",
             "fact", "fact web", "bubble", "main idea", "details",
             "topic", "habitat", "labeled diagram",
         )):
@@ -542,6 +640,45 @@ def _l34_go_activity_code(outline: BookOutline, go_mode: str) -> str:
     if mode in {"timeline", "sequence", "planchart"}:
         return "go_sequence_chart"
     return "go_problem_plan_result"
+
+
+def _l34_go_slots(outline: BookOutline, go_mode: str) -> list[dict]:
+    code = _l34_go_activity_code(outline, go_mode)
+    signal = " ".join(
+        str(getattr(outline, name, "") or "")
+        for name in ("graphic_organizer", "graphic_organizer_desc", "reading_skill")
+    ).lower()
+    if code == "go_compare_chart":
+        return [
+            {"slot_id": "same", "label": "How they are the same"},
+            {"slot_id": "different_1", "label": "One difference"},
+            {"slot_id": "evidence", "label": "Text evidence"},
+        ]
+    if code == "go_sequence_chart":
+        return [
+            {"slot_id": "first", "label": "First"},
+            {"slot_id": "next", "label": "Next"},
+            {"slot_id": "finally", "label": "Finally"},
+        ]
+    if code == "go_problem_plan_result":
+        return [
+            {"slot_id": "problem", "label": "Problem"},
+            {"slot_id": "action", "label": "Action / Plan"},
+            {"slot_id": "result", "label": "Result"},
+        ]
+    if code == "go_classification_map" or any(k in signal for k in ("classification", "classify", "category", "categories")):
+        return [
+            {"slot_id": "category_1", "label": "Category 1"},
+            {"slot_id": "category_2", "label": "Category 2"},
+            {"slot_id": "category_3", "label": "Category 3"},
+            {"slot_id": "evidence", "label": "Text evidence"},
+        ]
+    return [
+        {"slot_id": "topic", "label": "Topic"},
+        {"slot_id": "fact_1", "label": "Fact 1"},
+        {"slot_id": "fact_2", "label": "Fact 2"},
+        {"slot_id": "example", "label": "Example"},
+    ]
 
 
 def _worksheet_manifest_path(out_path: Path) -> Path:
@@ -608,6 +745,7 @@ def _worksheet_go_type(outline: BookOutline, go_mode: str = "") -> str:
         "go_sequence_chart": "Sequence Chart",
         "go_problem_plan_result": "Problem-Plan-Result Chart",
         "go_fact_web": "Fact Web",
+        "go_classification_map": "Classification Map",
         "go_compare_chart": "Comparison Chart",
     }.get(code, code)
 
@@ -752,6 +890,7 @@ def _write_worksheet_manifest(
 ) -> Path:
     reading_text = _clean_text(data.get("reading_text", "") or getattr(outline, "story_text", ""))
     activity_map = getattr(outline, "_worksheet_activity_types", {}) or {}
+    activity_reason_map = getattr(outline, "_worksheet_activity_reasons", {}) or {}
     manifest_items = getattr(outline, "_worksheet_manifest_items", {}) or {}
     pairs = [
         {"word": str(p.get("word", "")).strip(), "definition": str(p.get("def", "")).strip()}
@@ -787,6 +926,7 @@ def _write_worksheet_manifest(
             {
                 "page": page,
                 "activity_code": activity_map.get(page, ""),
+                "selection_reason": activity_reason_map.get(page, ""),
                 "required_fields": list(_ws_activity_required_fields(activity_map.get(page, ""))),
             }
             for page in range(1, 9)
@@ -2018,16 +2158,19 @@ def _build_l34_vocab2(new_page, brand_rgb: tuple, data: dict,
         if str(p.get("word", "")).strip()
     ] or [str(w).strip() for w in (bank or []) if str(w).strip()]
     has_phrase_vocab = any(" " in w for w in core_words_for_type)
-    if has_phrase_vocab:
+    if has_phrase_vocab and not _l34_stable_mode_enabled(outline):
         phrase_first = ["vocab_multi_word_cloze", "vocab_contextual_word_bank_cloze"]
         activity_codes = phrase_first + [c for c in activity_codes if c not in phrase_first]
     else:
         activity_codes = [c for c in activity_codes if c != "vocab_multi_word_cloze"]
 
     def _do_context_fill() -> bool:
-        code = "vocab_multi_word_cloze" if any(" " in str(w).strip() for w in bank) else "vocab_contextual_word_bank_cloze"
+        code = "vocab_contextual_word_bank_cloze"
         if len(fills) >= _l34_min_items(code, 3):
-            _record_l34_activity(outline, 2, code)
+            _record_l34_activity(
+                outline, 2, code,
+                "Stable Mode default: use core words or complete phrases in story-based context",
+            )
             _record_worksheet_items(outline, 2, fills)
             _build_p2_fill(new_page(), brand_rgb, fills, bank, images)
             return True
@@ -2036,7 +2179,10 @@ def _build_l34_vocab2(new_page, brand_rgb: tuple, data: dict,
     def _do_clue_choice() -> bool:
         riddles = _riddle_mc_items(pairs, max_n=4)
         if len(riddles) >= _l34_min_items("vocab_contextual_choice", 3):
-            _record_l34_activity(outline, 2, "vocab_contextual_choice")
+            _record_l34_activity(
+                outline, 2, "vocab_contextual_choice",
+                "Stable Mode fallback: contextual choice when cloze data is not ready",
+            )
             _record_worksheet_items(outline, 2, riddles)
             _build_mcq_page(new_page(), brand_rgb, "Vocabulary",
                             _ws_activity_instruction("vocab_contextual_choice"),
@@ -2073,7 +2219,10 @@ def _build_l34_vocab2(new_page, brand_rgb: tuple, data: dict,
         fn = choices.get(code)
         if fn and fn():
             return
-    _record_l34_activity(outline, 2, "vocab_contextual_word_bank_cloze")
+    _record_l34_activity(
+        outline, 2, "vocab_contextual_word_bank_cloze",
+        "emergency Stable Mode fallback: preserve vocabulary application page",
+    )
     _record_worksheet_items(outline, 2, fills)
     _build_p2_fill(new_page(), brand_rgb, fills, bank, images)
 
@@ -2087,6 +2236,22 @@ def _build_l34_sentence2(new_page, brand_rgb: tuple, outline: BookOutline,
     cloze_mc = _cloze_mc_items(frame_fills, frame_bank, max_n=4)
     reorder_items = _official_sentence_reorder_items(outline, max_n=4)
     activity_codes = _l34_activity_order(outline, 4, seed=seed // 5, include_optional=False)
+
+    def _do_complete_frame() -> bool:
+        if len(frame_fills) >= _l34_min_items("sentence_complete_frame", 3):
+            _record_l34_activity(
+                outline, 4, "sentence_complete_frame",
+                "Stable Mode default: controlled sentence-frame completion",
+            )
+            _record_worksheet_items(outline, 4, frame_fills)
+            _build_p2_fill(
+                new_page(), brand_rgb, frame_fills, frame_bank,
+                [], title="Sentences",
+                subtitle=f"{_ws_activity_instruction('sentence_complete_frame')} Example: {_display_sentence_frame(outline)}",
+                fallback=fallback,
+            )
+            return True
+        return False
 
     def _do_guided_write() -> bool:
         if len(frame_copy) >= _l34_min_items("sentence_guided_writing", 3):
@@ -2141,7 +2306,10 @@ def _build_l34_sentence2(new_page, brand_rgb: tuple, outline: BookOutline,
 
     def _do_reorder_words() -> bool:
         if len(reorder_items) >= _l34_min_items("sentence_reorder_words", 3):
-            _record_l34_activity(outline, 4, "sentence_reorder_words")
+            _record_l34_activity(
+                outline, 4, "sentence_reorder_words",
+                "Stable Mode fallback: controlled sentence ordering",
+            )
             _record_worksheet_items(outline, 4, reorder_items)
             _build_prompt_line_page(
                 new_page(), brand_rgb, reorder_items, "Sentences",
@@ -2153,7 +2321,7 @@ def _build_l34_sentence2(new_page, brand_rgb: tuple, outline: BookOutline,
         return False
 
     choices = {
-        "sentence_complete_frame": _do_guided_write,
+        "sentence_complete_frame": _do_complete_frame,
         "sentence_guided_writing": _do_guided_write,
         "sentence_grammar_word_cloze": _do_choose_word,
         "sentence_grammar_correction": _do_correct_sentence,
@@ -2163,7 +2331,24 @@ def _build_l34_sentence2(new_page, brand_rgb: tuple, outline: BookOutline,
         fn = choices.get(code)
         if fn and fn():
             return
-    _do_guided_write()
+    if _do_reorder_words():
+        return
+    if _do_complete_frame():
+        return
+    if _do_choose_word():
+        return
+    emergency_items = frame_copy or fallback
+    _record_l34_activity(
+        outline, 4, "sentence_complete_frame",
+        "emergency Stable Mode fallback: bounded sentence-frame prompts",
+    )
+    _record_worksheet_items(outline, 4, emergency_items)
+    _build_prompt_line_page(
+        new_page(), brand_rgb, emergency_items, "Sentences",
+        f"{_ws_activity_instruction('sentence_complete_frame')} Example: {_display_sentence_frame(outline)}",
+        prompt_key="prompt",
+        fallback=fallback,
+    )
 
 
 # ---------- 官方 A4 模板（底版/母版）----------
@@ -3253,7 +3438,10 @@ def build_worksheet(
         if frame_fills:
             frame_mcs = _official_sentence_frame_mc_items(outline, frame_fills, frame_bank, max_n=4)
             if frame_mcs:
-                _record_l34_activity(outline, 3, "sentence_target_pattern_choice")
+                _record_l34_activity(
+                    outline, 3, "sentence_target_pattern_choice",
+                    "Stable Mode default: recognize the syllabus target pattern",
+                )
                 _record_worksheet_items(outline, 3, frame_mcs)
                 _build_p3_sentence(
                     new_page(), brand_rgb, frame_mcs, images,
@@ -3262,7 +3450,10 @@ def build_worksheet(
                     fallback=sent_fb,
                 )
             else:
-                _record_l34_activity(outline, 3, "sentence_complete_frame")
+                _record_l34_activity(
+                    outline, 3, "sentence_complete_frame",
+                    "fallback: use the syllabus sentence frame when recognition options are not ready",
+                )
                 _record_worksheet_items(outline, 3, frame_fills)
                 _build_p2_fill(
                     new_page(), brand_rgb, frame_fills, frame_bank, images,
@@ -3284,7 +3475,10 @@ def build_worksheet(
             sent_mcs = (sent_mcs + data["sentence_mcs"])[:4]
             mc_sub = "Tick (\u2713) the correct sentence."
         if lvl_n in (3, 4):
-            _record_l34_activity(outline, 3, "sentence_correct_sentence_choice")
+            _record_l34_activity(
+                outline, 3, "sentence_correct_sentence_choice",
+                "Stable Mode fallback: choose a correct sentence when no usable syllabus frame is available",
+            )
             _record_worksheet_items(outline, 3, sent_mcs)
         _build_p3_sentence(new_page(), brand_rgb, sent_mcs, images,
                            show_images=(sentence_image_mode != "none"), subtitle=mc_sub,
@@ -3454,7 +3648,10 @@ def build_worksheet(
                 page1_q = _mixed_tf_items(reading_text, max_n=5)
                 page1_q = _sanitize_reading_items(page1_q, preferred_kind="tf", max_n=5)
                 page1_code = "reading_true_false_literal"
-            _record_l34_activity(outline, 5, page1_code)
+            _record_l34_activity(
+                outline, 5, page1_code,
+                "Stable Mode: Page 5 checks directly stated literal facts",
+            )
             _record_worksheet_items(outline, 5, page1_q)
             page1_subtitle = _ws_activity_instruction(page1_code)
             used_q = {_reading_question_key(q.get("q") or "") for q in page1_q}
@@ -3464,16 +3661,9 @@ def build_worksheet(
             page2_q = []
             page2_subtitle = ""
             page2_code = ""
-            # Page 6 is integration, so use pedagogy-first bank priority rather
-            # than pure rotation: sequence/structure before summary fallback.
-            page6_signal = " ".join(
-                str(getattr(outline, name, "") or "")
-                for name in ("reading_skill", "reading_strategy", "graphic_organizer", "graphic_organizer_desc")
-            ).lower()
-            page6_seed = 0 if any(k in page6_signal for k in (
-                "sequence", "sequencing", "process", "steps", "timeline", "order"
-            )) else ((_ws_seed(outline) // 17) + book_no_seed)
-            for code in _l34_activity_order(outline, 6, seed=page6_seed):
+            # Page 6 is integration. Stable Mode maps it from Reading Skill
+            # first, then falls back to text summary cloze.
+            for code in _l34_activity_order(outline, 6, seed=0):
                 if code == "reading_sequence_ordering":
                     if not is_nonfic_reading and len(sequence_events) >= _l34_min_items(code, 4):
                         use_sequence_page = True
@@ -3503,13 +3693,13 @@ def build_worksheet(
                     page2_code = code
                     break
             if not page2_code:
-                page2_q = _reading_short_answer_items(reading_text, max_n=5)
-                page2_q = _sanitize_reading_items(page2_q, preferred_kind="short", max_n=5)
-                page2_code = "reading_short_answer" if len(page2_q) >= 4 else "reading_summary_cloze"
-                if len(page2_q) < 4:
-                    page2_q = _reading_cloze_items(reading_text, used_q, max_n=4)
-                    page2_q = _sanitize_reading_items(page2_q, preferred_kind="short", max_n=4)
-            _record_l34_activity(outline, 6, page2_code)
+                page2_q = _reading_cloze_items(reading_text, used_q, max_n=4)
+                page2_q = _sanitize_reading_items(page2_q, preferred_kind="short", max_n=4)
+                page2_code = "reading_summary_cloze"
+            _record_l34_activity(
+                outline, 6, page2_code,
+                "Stable Mode: Page 6 follows Reading Skill mapping or summary fallback",
+            )
             _record_worksheet_items(outline, 6, page2_q)
             page2_subtitle = "" if use_sequence_page else _ws_activity_instruction(page2_code)
             _build_reading_page(
@@ -3615,17 +3805,26 @@ def build_worksheet(
     # Page 7: Graphic Organizer. Page 8: Writing.
     if lvl_n in (3, 4):
         go_code = _l34_go_activity_code(outline, go_mode)
-        _record_l34_activity(outline, 7, go_code)
-        _record_l34_activity(outline, 8, "writing_organizer_to_writing")
+        go_slots = _l34_go_slots(outline, go_mode)
+        _record_l34_activity(
+            outline, 7, go_code,
+            "Stable Mode: use outline GO or Reading Skill mapped organizer",
+        )
+        _record_l34_activity(
+            outline, 8, "writing_organizer_to_writing",
+            "Stable Mode: writing must reference Page 7 organizer slots",
+        )
         _record_worksheet_items(outline, 7, [{
             "graphic_organizer_type": _worksheet_go_type(outline, go_mode),
             "activity_code": go_code,
-            "labels": [],
+            "slots": go_slots,
+            "labels": [slot["label"] for slot in go_slots],
             "word_bank": [str(w).strip() for w in (outline.vocabulary_for_display or data.get("word_bank") or []) if str(w).strip()][:6],
-            "fillable_fields": 3,
+            "fillable_fields": len(go_slots),
         }])
         _record_worksheet_items(outline, 8, [{
             "organizer_reference": _worksheet_go_type(outline, go_mode),
+            "referenced_slot_ids": [slot["slot_id"] for slot in go_slots[:3]],
             "sentence_starters": True,
             "writing_lines": 4 if lvl_n <= 3 else 5,
             "target_pattern": _sentence_frame_text(outline),
@@ -6395,9 +6594,9 @@ def _build_l34_graphic_organizer_page(slide, brand_rgb: tuple, data: dict,
         labels = ["Same", "Different 1", "Different 2", "Evidence"]
         prompts = ["", "", "", ""]
         blank_slots = {0, 1, 2, 3}
-    elif go_code == "go_fact_web":
+    elif go_code in {"go_fact_web", "go_classification_map"}:
         center = "Facts"
-        if any(k in explicit_go for k in ("classification", "classify", "category", "categories", "habitat")):
+        if go_code == "go_classification_map" or any(k in explicit_go for k in ("classification", "classify", "category", "categories", "habitat")):
             labels = ["Topic", "Group 1", "Group 2", "Example"]
         elif any(k in explicit_go for k in ("main idea", "details")):
             labels = ["Main Idea", "Detail 1", "Detail 2", "Example"]
@@ -6564,8 +6763,8 @@ def _build_l34_writing_page(slide, brand_rgb: tuple, outline: BookOutline) -> No
             f"One difference is {ANSWER_BLANK}.",
             f"The text shows {ANSWER_BLANK}.",
         ]
-    elif go_code == "go_fact_web":
-        if any(k in explicit_go for k in ("classification", "classify", "category", "categories", "habitat")):
+    elif go_code in {"go_fact_web", "go_classification_map"}:
+        if go_code == "go_classification_map" or any(k in explicit_go for k in ("classification", "classify", "category", "categories", "habitat")):
             starters = [
                 f"The topic is {ANSWER_BLANK}.",
                 f"One group is {ANSWER_BLANK}.",

@@ -1,0 +1,60 @@
+﻿{
+  "version": "0.1.0",
+  "mode": "L3_L4_Worksheet_Stable_Mode",
+  "pages": [
+    {
+      "page": 1,
+      "module": "Vocabulary Understanding",
+      "default_activity": "vocab_word_definition_matching",
+      "fallback_activity": "vocab_word_picture_matching",
+      "disabled": ["vocab_choose_picture", "vocab_choose_meaning"]
+    },
+    {
+      "page": 2,
+      "module": "Vocabulary Application",
+      "default_activity": "vocab_contextual_word_bank_cloze",
+      "fallback_activity": "vocab_contextual_choice",
+      "disabled": ["vocab_contextual_clue_write", "vocab_category_sorting"]
+    },
+    {
+      "page": 3,
+      "module": "Sentence Recognition",
+      "default_activity": "sentence_target_pattern_choice",
+      "fallback_activity": "sentence_correct_sentence_choice"
+    },
+    {
+      "page": 4,
+      "module": "Sentence Practice",
+      "default_activity": "sentence_complete_frame",
+      "fallback_activity": "sentence_reorder_words",
+      "disabled": ["sentence_guided_writing", "sentence_grammar_correction"]
+    },
+    {
+      "page": 5,
+      "module": "Reading Literal",
+      "default_activity": "reading_literal_mc",
+      "fallback_activity": "reading_true_false_literal",
+      "disabled": ["reading_supported_sentence_choice"]
+    },
+    {
+      "page": 6,
+      "module": "Reading Integrated",
+      "default_activity": "reading_skill_mapping",
+      "fallback_activity": "reading_summary_cloze",
+      "disabled": ["reading_short_answer", "reading_text_based_correction"]
+    },
+    {
+      "page": 7,
+      "module": "Graphic Organizer",
+      "default_activity": "outline_graphic_organizer",
+      "fallback_activity": "reading_skill_mapped_graphic_organizer"
+    },
+    {
+      "page": 8,
+      "module": "Writing",
+      "default_activity": "writing_organizer_to_writing",
+      "fallback_activity": null,
+      "disabled": ["writing_sentence_starters_as_independent_page"]
+    }
+  ]
+}

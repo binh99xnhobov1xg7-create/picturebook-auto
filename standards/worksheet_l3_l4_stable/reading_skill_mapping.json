@@ -1,0 +1,43 @@
+﻿{
+  "version": "0.1.0",
+  "page": 6,
+  "fallback": "reading_summary_cloze",
+  "mappings": [
+    {
+      "skill_keywords": ["sequence", "sequencing", "timeline", "process", "steps", "order"],
+      "target_activity": "reading_sequence_ordering",
+      "fallback_activity": "reading_summary_cloze"
+    },
+    {
+      "skill_keywords": ["compare", "contrast", "same", "different"],
+      "target_activity": "reading_compare_contrast",
+      "fallback_activity": "reading_summary_cloze"
+    },
+    {
+      "skill_keywords": ["classify", "classification", "category", "categories"],
+      "target_activity": "reading_classification",
+      "fallback_activity": "reading_summary_cloze"
+    },
+    {
+      "skill_keywords": ["problem", "solution"],
+      "target_activity": "reading_problem_solution",
+      "fallback_activity": "reading_summary_cloze"
+    },
+    {
+      "skill_keywords": ["main idea", "details", "supporting details"],
+      "target_activity": "reading_main_idea_details",
+      "fallback_activity": "reading_summary_cloze"
+    },
+    {
+      "skill_keywords": ["story element", "character", "setting", "event", "result"],
+      "target_activity": "reading_story_elements",
+      "fallback_activity": "reading_summary_cloze"
+    },
+    {
+      "skill_keywords": ["cause", "effect"],
+      "target_activity": "reading_cause_effect",
+      "fallback_activity": "reading_summary_cloze"
+    }
+  ],
+  "note": "Only existing implemented Page 6 activities are rendered in half-day 1. Missing mapped families fall back to summary cloze until half-day 3."
+}
