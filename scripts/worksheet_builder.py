@@ -701,10 +701,13 @@ def _worksheet_activity_validation(
                     if field in {"answer_map", "word_bank"}:
                         continue
                     if field == "answer" and (
-                        item.get("answer") or item.get("correct") is not None or item.get("answer_order") is not None
+                        item.get("answer") or item.get("correct") is not None
+                        or item.get("answer_order") is not None or item.get("is_true") is not None
                     ):
                         continue
-                    if field == "definition" and item.get("def"):
+                    if field == "definition" and (item.get("def") or item.get("definition")):
+                        continue
+                    if field == "phrase" and item.get("answer"):
                         continue
                     if field == "clue" and item.get("q"):
                         continue
@@ -3282,6 +3285,7 @@ def build_worksheet(
             mc_sub = "Tick (\u2713) the correct sentence."
         if lvl_n in (3, 4):
             _record_l34_activity(outline, 3, "sentence_correct_sentence_choice")
+            _record_worksheet_items(outline, 3, sent_mcs)
         _build_p3_sentence(new_page(), brand_rgb, sent_mcs, images,
                            show_images=(sentence_image_mode != "none"), subtitle=mc_sub,
                            fallback=sent_fb)
@@ -3301,6 +3305,8 @@ def build_worksheet(
                              sent_fb, _ws_seed(outline), lvl_n)
     elif lvl_n == 3:
         frame_copy = _sentence_frame_copy_items(outline, max_n=4)
+        _record_l34_activity(outline, 4, "sentence_guided_writing")
+        _record_worksheet_items(outline, 4, frame_copy or sent_fb)
         _build_prompt_line_page(
             new_page(), brand_rgb, frame_copy, "Sentences",
             "Write about your own plan. Use your own ideas.",
@@ -3322,6 +3328,10 @@ def build_worksheet(
                            fallback=sent_fb)
     elif tense == "present":
         # 现在时为主：l34/l56 第 2 句型页统一用现在时填空（学什么考什么）
+        if lvl_n in (3, 4):
+            sf_tmp, _ = _present_fill_items(outline, max_n=4)
+            _record_l34_activity(outline, 4, "sentence_complete_frame")
+            _record_worksheet_items(outline, 4, sf_tmp or sent_fb)
         _present_fill_page()
     elif band == "l56":
         rw = _rewrite_items(outline, max_n=6)
@@ -3342,6 +3352,9 @@ def build_worksheet(
         sent_fills, sent_bank = _tense_fill_items(outline, max_n=4)
         if not sent_fills:
             sent_fills, sent_bank = _sentence_fill_items(outline, max_n=4)
+        if lvl_n in (3, 4):
+            _record_l34_activity(outline, 4, "sentence_complete_frame")
+            _record_worksheet_items(outline, 4, sent_fills or sent_fb)
         _build_p2_fill(
             new_page(), brand_rgb, sent_fills, [], images,
             title="Sentences",
